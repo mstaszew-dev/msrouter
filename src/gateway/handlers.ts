@@ -95,10 +95,7 @@ async function handleChat(
     const result = await chain.handle(body, ac.signal);
 
     if (body.stream) {
-      // Success is the default; logging every streaming completion at INFO is
-      // pure volume (one line per request). Demote to DEBUG - the upstream
-      // provider + correlation id are still captured for debugging.
-      log.debug(
+      log.info(
         { correlationId: req.id, servedBy: result.servedBy, stream: true },
         'chat completion streaming',
       );
@@ -109,7 +106,7 @@ async function handleChat(
     const text = await result.response.text();
     const status = result.response.status;
     const json = parseUpstreamJson(text);
-    log.debug({ correlationId: req.id, servedBy: result.servedBy, status }, 'chat completion ok');
+    log.info({ correlationId: req.id, servedBy: result.servedBy, status }, 'chat completion ok');
     if (idem) storeIdemResult(idem, status, json);
     sendJson(res, status, json);
   } catch (e) {
