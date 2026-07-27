@@ -104,6 +104,8 @@ export interface ResolvedConfig {
   env: Env;
   /** OpenRouter keys in stable numeric order (deduped, trimmed). */
   openrouterKeys: string[];
+  /** OpenCode Zen keys in stable numeric order (deduped, trimmed). */
+  opencodeKeys: string[];
 }
 
 let cached: ResolvedConfig | undefined;
@@ -134,6 +136,32 @@ function collectOpenRouterKeys(raw: Record<string, string | undefined>): string[
   return keys;
 }
 
+/**
+ * Collect numbered OPENCODE_KEY1..N from the raw env. Stable ascending order by
+ * the numeric suffix; duplicates dropped. Also accepts a single
+ * OPENCODE_API_KEY appended last (legacy form, parity with
+ * collectOpenRouterKeys). Blank/whitespace values are ignored.
+ */
+function collectOpenCodeKeys(raw: Record<string, string | undefined>): string[] {
+  const numbered: Array<{ n: number; key: string }> = [];
+  for (const [k, v] of Object.entries(raw)) {
+    const m = /^OPENCODE_KEY(\d+)$/i.exec(k);
+    if (m && v && v.trim()) {
+      numbered.push({ n: Number(m[1]), key: v.trim() });
+    }
+  }
+  numbered.sort((a, b) => a.n - b.n);
+  const keys: string[] = [];
+  for (const x of numbered) {
+    if (!keys.includes(x.key)) keys.push(x.key);
+  }
+  const single = raw['OPENCODE_API_KEY'];
+  if (single && single.trim() && !keys.includes(single.trim())) {
+    keys.push(single.trim());
+  }
+  return keys;
+}
+
 export function loadEnv(raw: NodeJS.ProcessEnv = process.env): ResolvedConfig {
   const parsed = schema.safeParse(raw);
   if (!parsed.success) {
@@ -145,19 +173,20 @@ export function loadEnv(raw: NodeJS.ProcessEnv = process.env): ResolvedConfig {
     throw new Error(`Invalid environment configuration: ${parsed.error.message}`);
   }
   const openrouterKeys = collectOpenRouterKeys(raw);
+  const opencodeKeys = collectOpenCodeKeys(raw);
 
   // Production safety: at least one provider must be configured, or the
   // gateway has nothing to route to.
   const hasOpenRouter = openrouterKeys.length > 0;
-  const hasAnyFallback =
-    !!parsed.data.OPENAI_API_KEY || !!parsed.data.ZAI_API_KEY || !!parsed.data.OPENCODE_API_KEY;
+  const hasOpenCode = opencodeKeys.length > 0;
+  const hasAnyFallback = !!parsed.data.OPENAI_API_KEY || !!parsed.data.ZAI_API_KEY || hasOpenCode;
   if (parsed.data.NODE_ENV === 'production' && !hasOpenRouter && !hasAnyFallback) {
     throw new Error(
       'No provider configured: set at least one OPENROUTER_KEY* or OPENAI/ZAI/OPENCODE API key',
     );
   }
 
-  cached = { env: parsed.data, openrouterKeys };
+  cached = { env: parsed.data, openrouterKeys, opencodeKeys };
   return cached;
 }
 
