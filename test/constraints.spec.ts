@@ -109,8 +109,11 @@ describe('constraint: source files stay under 250 lines (module size budget)', (
   // smell. Every src file should stay readable in one screen.
   const files = [
     'providers/chain.ts',
+    'providers/chain-candidates.ts',
     'providers/fetch.ts',
     'providers/openrouter.ts',
+    'providers/opencode.ts',
+    'providers/rotation.ts',
     'providers/single-key.ts',
     'providers/types.ts',
     'providers/instances.ts',
@@ -183,47 +186,75 @@ describe('constraint: no raw process.env reads outside config/env.ts', () => {
   }
 });
 
-describe('constraint: provider chain ordering is documented + enforced', () => {
-  // The failover order is a product decision. Encode it so a reordering is a
-  // visible test change, not a silent diff.
-  it('chain.ts documents OpenRouter -> OpenAI -> ZAI -> OpenCode order', () => {
+describe('constraint: provider chain uses adaptive flat-sequence rotation', () => {
+  // The OLD architecture hardcoded a fixed OpenRouter->OpenAI->ZAI->OpenCode
+  // order. The NEW architecture builds one flat candidate list and demotes
+  // failing <model,provider,key> triples to the back (no TTL, in-memory only).
+  // These constraints encode the new contract so a regression to fixed order
+  // is a visible test change.
+  it('chain.ts iterates a CandidateQueue (not a hardcoded provider array)', () => {
     const code = src('providers/chain.ts');
+    expect(code).toContain('CandidateQueue');
+    expect(code).toMatch(/this\.queue\.demote/);
+    // The old fixed-order array literal must NOT come back.
+    expect(code).not.toMatch(/\[\s*'openai'\s*,\s*'zai'\s*,\s*'opencode'\s*\]/);
+  });
+
+  it('chain-candidates.ts builds the env-declared initial order', () => {
+    const code = src('providers/chain-candidates.ts');
+    expect(code).toContain('buildCandidateList');
+    // Initial order: OpenRouter keys, then OpenAI, then ZAI, then OpenCode triples.
+    expect(code).toContain("'openrouter'");
     expect(code).toContain("'openai'");
     expect(code).toContain("'zai'");
     expect(code).toContain("'opencode'");
-    // The fallback order array in runChain.
-    expect(code).toMatch(/\[\s*'openai'\s*,\s*'zai'\s*,\s*'opencode'\s*\]/);
+  });
+
+  it('rotation.ts is the shared demote-to-back primitive', () => {
+    const code = src('providers/rotation.ts');
+    expect(code).toMatch(/class CandidateQueue/);
+    expect(code).toMatch(/demote/);
   });
 });
 
 describe('constraint: short-circuit uses direct: namespace (no OpenRouter collision)', () => {
   // OpenRouter uses vendor/model ids (openai/gpt-4o, google/gemma-...). A bare
   // "openai/..." must NOT be treated as a provider pin, or OpenRouter models
-  // break. Provider pinning requires the "direct:" prefix.
-  it('chain.ts shortCircuit requires the direct: prefix', () => {
-    const code = src('providers/chain.ts');
+  // break. Provider pinning requires the "direct:" prefix. shortCircuit lives
+  // in chain-candidates.ts (extracted from chain.ts).
+  it('chain-candidates.ts shortCircuit requires the direct: prefix', () => {
+    const code = src('providers/chain-candidates.ts');
     expect(code).toMatch(/startsWith\('direct:'\)/);
     // And it must NOT pin on bare openai/ (regression guard).
     expect(code).not.toMatch(/m\.startsWith\('openai\/'\)/);
   });
 });
 
-describe('constraint: OpenCode provider naming uniformity', () => {
-  it('instances.ts uses opencode-bigpickle id for main OpenCode provider', () => {
+describe('constraint: OpenCode is a pooled provider (OPENCODE_KEY1..N)', () => {
+  // The OLD architecture had 9 separate SingleKeyProvider instances for OpenCode
+  // all sharing one OPENCODE_API_KEY. The NEW architecture has one pooled
+  // OpenCodeProvider fed by collectOpenCodeKeys, with one candidate per
+  // (model, key) triple.
+  it('instances.ts builds a single pooled OpenCodeProvider', () => {
     const code = src('providers/instances.ts');
-    expect(code).toContain("id: 'opencode-bigpickle'");
+    expect(code).toContain('OpenCodeProvider');
+    expect(code).toContain('opencodeKeys');
+    // The old per-model SingleKeyProvider instances must NOT come back.
+    expect(code).not.toContain("id: 'opencode-bigpickle'");
+    expect(code).not.toContain("id: 'opencode-nemotron'");
   });
 
-  it('chain.ts uses opencode-<name> labels in EXTRA_OPENCODE_MODELS', () => {
-    const code = src('providers/chain.ts');
-    expect(code).toContain("'opencode-nemotron'");
-    expect(code).toContain("'opencode-deepseek-flash'");
-    expect(code).toContain("'opencode-mimo'");
-    expect(code).toContain("'opencode-north-mini-code'");
-    expect(code).toContain("'opencode-laguna'");
-    expect(code).toContain("'opencode-ling'");
-    expect(code).toContain("'opencode-qwen'");
-    expect(code).toContain("'opencode-minimax'");
+  it('opencode.ts is a pooled provider keyed on (model, key) triples', () => {
+    const code = src('providers/opencode.ts');
+    expect(code).toMatch(/class OpenCodeProvider/);
+    expect(code).toMatch(/OpenCodeTriple/);
+    expect(code).toMatch(/tripleIndex/);
+  });
+
+  it('env.ts collects OPENCODE_KEY1..N into opencodeKeys', () => {
+    const code = src('config/env.ts');
+    expect(code).toContain('collectOpenCodeKeys');
+    expect(code).toContain('opencodeKeys: string[]');
   });
 
   it('env.ts includes free in default WALK_ALIAS', () => {
@@ -231,4 +262,3 @@ describe('constraint: OpenCode provider naming uniformity', () => {
     expect(code).toContain("default('mst/free,free')");
   });
 });
-

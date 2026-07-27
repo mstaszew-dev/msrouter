@@ -1,12 +1,16 @@
 /**
  * Provider factory: builds the concrete providers from validated env. Keeps
  * construction in one place so main.ts / worker.ts and tests all wire the same.
+ *
+ * OpenCode is a pooled provider (OPENCODE_KEY1..N) with one candidate per
+ * (model, key) triple. All OpenCode model variants live on this one provider.
  */
 
 import type { Logger } from 'pino';
 
 import { config } from '../config/env.js';
 
+import { OpenCodeProvider } from './opencode.js';
 import { OpenRouterProvider } from './openrouter.js';
 import { SingleKeyProvider } from './single-key.js';
 
@@ -14,21 +18,35 @@ export interface Providers {
   openrouter: OpenRouterProvider;
   openai: SingleKeyProvider;
   zai: SingleKeyProvider;
-  opencode: SingleKeyProvider;
-  opencodeNemotron: SingleKeyProvider;
-  opencodeDeepSeekFlash: SingleKeyProvider;
-  opencodeMiMo: SingleKeyProvider;
-  opencodeNorthMiniCode: SingleKeyProvider;
-  opencodeLaguna: SingleKeyProvider;
-  opencodeLing: SingleKeyProvider;
-  opencodeQwen: SingleKeyProvider;
-  opencodeMiniMax: SingleKeyProvider;
+  opencode: OpenCodeProvider;
 }
 
+/** OpenCode Zen model variants, big-pickle first. Order is preserved in the
+ *  candidate queue (model-major, key-minor). */
+const OPENCODE_MODELS = (e: {
+  OPENCODE_MODEL: string;
+  OPENCODE_NEMOTRON_MODEL: string;
+  OPENCODE_DEEPSEEK_FLASH_MODEL: string;
+  OPENCODE_MIMO_MODEL: string;
+  OPENCODE_NORTH_MINI_CODE_MODEL: string;
+  OPENCODE_LAGUNA_MODEL: string;
+  OPENCODE_LING_MODEL: string;
+  OPENCODE_QWEN_MODEL: string;
+  OPENCODE_MINIMAX_MODEL: string;
+}): readonly string[] => [
+  e.OPENCODE_MODEL,
+  e.OPENCODE_NEMOTRON_MODEL,
+  e.OPENCODE_DEEPSEEK_FLASH_MODEL,
+  e.OPENCODE_MIMO_MODEL,
+  e.OPENCODE_NORTH_MINI_CODE_MODEL,
+  e.OPENCODE_LAGUNA_MODEL,
+  e.OPENCODE_LING_MODEL,
+  e.OPENCODE_QWEN_MODEL,
+  e.OPENCODE_MINIMAX_MODEL,
+];
+
 export function buildProviders(log: Logger): Providers {
-  const { env, openrouterKeys } = config();
-  const baseUrl = env.OPENCODE_BASE_URL;
-  const apiKey = env.OPENCODE_API_KEY;
+  const { env, openrouterKeys, opencodeKeys } = config();
   const timeoutMs = env.UPSTREAM_TIMEOUT_MS;
 
   return {
@@ -53,95 +71,12 @@ export function buildProviders(log: Logger): Providers {
       timeoutMs,
       log,
     ),
-    opencode: new SingleKeyProvider(
-      {
-        id: 'opencode-bigpickle',
-        baseUrl,
-        apiKey,
-        defaultModel: env.OPENCODE_MODEL,
-      },
+    opencode: new OpenCodeProvider({
+      keys: opencodeKeys,
+      baseUrl: env.OPENCODE_BASE_URL,
+      models: OPENCODE_MODELS(env),
       timeoutMs,
       log,
-    ),
-    opencodeNemotron: new SingleKeyProvider(
-      {
-        id: 'opencode-nemotron',
-        baseUrl,
-        apiKey,
-        defaultModel: env.OPENCODE_NEMOTRON_MODEL,
-      },
-      timeoutMs,
-      log,
-    ),
-    opencodeDeepSeekFlash: new SingleKeyProvider(
-      {
-        id: 'opencode-deepseek-flash',
-        baseUrl,
-        apiKey,
-        defaultModel: env.OPENCODE_DEEPSEEK_FLASH_MODEL,
-      },
-      timeoutMs,
-      log,
-    ),
-    opencodeMiMo: new SingleKeyProvider(
-      {
-        id: 'opencode-mimo',
-        baseUrl,
-        apiKey,
-        defaultModel: env.OPENCODE_MIMO_MODEL,
-      },
-      timeoutMs,
-      log,
-    ),
-    opencodeNorthMiniCode: new SingleKeyProvider(
-      {
-        id: 'opencode-north-mini-code',
-        baseUrl,
-        apiKey,
-        defaultModel: env.OPENCODE_NORTH_MINI_CODE_MODEL,
-      },
-      timeoutMs,
-      log,
-    ),
-    opencodeLaguna: new SingleKeyProvider(
-      {
-        id: 'opencode-laguna',
-        baseUrl,
-        apiKey,
-        defaultModel: env.OPENCODE_LAGUNA_MODEL,
-      },
-      timeoutMs,
-      log,
-    ),
-    opencodeLing: new SingleKeyProvider(
-      {
-        id: 'opencode-ling',
-        baseUrl,
-        apiKey,
-        defaultModel: env.OPENCODE_LING_MODEL,
-      },
-      timeoutMs,
-      log,
-    ),
-    opencodeQwen: new SingleKeyProvider(
-      {
-        id: 'opencode-qwen',
-        baseUrl,
-        apiKey,
-        defaultModel: env.OPENCODE_QWEN_MODEL,
-      },
-      timeoutMs,
-      log,
-    ),
-    opencodeMiniMax: new SingleKeyProvider(
-      {
-        id: 'opencode-minimax',
-        baseUrl,
-        apiKey,
-        defaultModel: env.OPENCODE_MINIMAX_MODEL,
-      },
-      timeoutMs,
-      log,
-    ),
+    }),
   };
 }

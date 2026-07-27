@@ -1,8 +1,13 @@
 /**
- * Provider chain tests. Providers are stubbed so we verify the chain's
- * decision logic (rotation, fallback, short-circuit, all-fail) without real
- * network calls. Mocks at the seam (the Provider interface), never of our own
- * chain code.
+ * Provider chain adaptive-rotation tests. Verifies that:
+ *   - the flat candidate queue is built in env-declared order,
+ *   - a candidate returning KEY_FAILURE is demoted to the back,
+ *   - demoted candidates are tried last on the NEXT handle() call,
+ *   - successful calls leave the queue unchanged,
+ *   - all candidates are tried before NoProviderAvailableError,
+ *   - direct: still pins a single provider with no fallback.
+ *
+ * Providers are stubbed at the Provider interface seam (never our own chain code).
  */
 
 import type pino from 'pino';
@@ -21,45 +26,79 @@ const silentLogger = {
   debug: vi.fn(),
 } as unknown as pino.Logger;
 
-function okResponse(text: string): Response {
+function okResponse(text = '{}'): Response {
   return new Response(text, { status: 200, headers: { 'content-type': 'application/json' } });
 }
 
-function makeProviders(overrides: Partial<Providers> = {}): Providers {
-  const mk = (
-    id: string,
-    results: ProviderCallResult[],
-  ): { attempt: ReturnType<typeof vi.fn>; available: boolean; id: string } => ({
-    id,
-    available: true,
-    attempt: vi.fn(async (): Promise<ProviderCallResult> => {
-      const r = results.shift();
-      if (!r) return { kind: 'KEY_FAILURE', status: 429, message: 'exhausted stub' };
-      return r;
-    }),
+/**
+ * Build a stub Providers with a scripted OpenRouter (keyCount keys) and
+ * OpenAI/ZAI/OpenCode stubs. Each provider's `attempt` is a vi.fn the test can
+ * re-program. OpenCode is unavailable by default (0 keys) to keep the
+ * OpenRouter/OpenAI/ZAI-focused tests simple; opt in via opencodeKeys>0.
+ */
+function makeProviders(
+  overrides: {
+    openrouterKeys?: number;
+    openrouterResults?: ProviderCallResult[];
+    openaiResults?: ProviderCallResult[];
+    opencodeModels?: string[];
+    opencodeKeys?: number;
+  } = {},
+): Providers {
+  const orKeys = overrides.openrouterKeys ?? 2;
+  const orResults = overrides.openrouterResults ?? [];
+  const orAttempt = vi.fn(
+    async (
+      _b: ChatRequestBody,
+      _s: AbortSignal,
+      opts: { keyIndex?: number },
+    ): Promise<ProviderCallResult> => {
+      const i = opts.keyIndex ?? 0;
+      return orResults[i] ?? { kind: 'KEY_FAILURE', status: 429, message: 'openrouter stub' };
+    },
+  );
+
+  const openaiResults = overrides.openaiResults ?? [];
+  const openaiAttempt = vi.fn(async (): Promise<ProviderCallResult> => {
+    return openaiResults.shift() ?? { kind: 'KEY_FAILURE', status: 429, message: 'openai stub' };
   });
-  const or = {
-    id: 'openrouter',
-    available: true,
-    keyCount: 2,
-    attempt: vi.fn(async (_b: ChatRequestBody, _s: AbortSignal): Promise<ProviderCallResult> => {
-      return { kind: 'KEY_FAILURE', status: 429, message: 'openrouter stub' };
-    }),
-  };
+
+  const zaiAttempt = vi.fn(async (): Promise<ProviderCallResult> => ({
+    kind: 'KEY_FAILURE',
+    status: 429,
+    message: 'zai stub',
+  }));
+
+  const ocModels = overrides.opencodeModels ?? ['big-pickle', 'nemotron-3-ultra-free'];
+  const ocKeys = overrides.opencodeKeys ?? 0; // unavailable by default
+  const ocTriples = ocKeys * ocModels.length;
+  const ocAttempt = vi.fn(async (): Promise<ProviderCallResult> => ({
+    kind: 'KEY_FAILURE',
+    status: 429,
+    message: 'opencode stub',
+  }));
+
   return {
-    openrouter: or as never,
-    openai: mk('openai', []) as never,
-    zai: mk('zai', []) as never,
-    opencode: mk('opencode-bigpickle', []) as never,
-    opencodeNemotron: mk('opencode-nemotron', []) as never,
-    opencodeDeepSeekFlash: mk('opencode-deepseek-flash', []) as never,
-    opencodeMiMo: mk('opencode-mimo', []) as never,
-    opencodeNorthMiniCode: mk('opencode-north-mini-code', []) as never,
-    opencodeLaguna: mk('opencode-laguna', []) as never,
-    opencodeLing: mk('opencode-ling', []) as never,
-    opencodeQwen: mk('opencode-qwen', []) as never,
-    opencodeMiniMax: mk('opencode-minimax', []) as never,
-    ...overrides,
+    openrouter: {
+      id: 'openrouter',
+      available: orKeys > 0,
+      keyCount: orKeys,
+      attempt: orAttempt,
+    } as never,
+    openai: { id: 'openai', available: true, attempt: openaiAttempt } as never,
+    zai: { id: 'zai', available: true, attempt: zaiAttempt } as never,
+    opencode: {
+      id: 'opencode',
+      available: ocKeys > 0,
+      keyCount: ocKeys,
+      tripleCount: ocTriples,
+      attempt: ocAttempt,
+      queueSnapshot: () =>
+        Array.from({ length: ocTriples }, (_, i) => ({
+          model: ocModels[i % ocModels.length]!,
+          keyIdx: Math.floor(i / ocModels.length),
+        })),
+    } as never,
   };
 }
 
@@ -69,47 +108,42 @@ const baseBody: ChatRequestBody = {
   stream: false,
 };
 
+describe('ProviderChain - candidate queue construction', () => {
+  it('builds the flat queue in env-declared order (OpenRouter, OpenAI, ZAI, OpenCode)', () => {
+    const p = makeProviders({
+      openrouterKeys: 2,
+      opencodeKeys: 1,
+      opencodeModels: ['big-pickle', 'nemotron'],
+    });
+    const chain = new ProviderChain(p, silentLogger);
+    const labels = chain.queueSnapshot().map((c) => c.label);
+    expect(labels).toEqual([
+      'openrouter[key1]',
+      'openrouter[key2]',
+      'openai',
+      'zai',
+      'opencode[triple1]',
+      'opencode[triple2]',
+    ]);
+  });
+});
+
 describe('ProviderChain - alias walk (mst/free and free)', () => {
   it('walks every OpenRouter key then OpenAI/ZAI/OpenCode until first OK', async () => {
-    const openai = {
-      id: 'openai',
-      available: true,
-      attempt: vi.fn(async (): Promise<ProviderCallResult> => ({
-        kind: 'OK',
-        response: okResponse('{}'),
-      })),
-    };
-    const p = makeProviders({ openai: openai as never });
+    // OpenRouter fails on both keys; OpenAI succeeds.
+    const p = makeProviders({
+      openrouterKeys: 2,
+      openrouterResults: [
+        { kind: 'KEY_FAILURE', status: 429, message: 'rl1' },
+        { kind: 'KEY_FAILURE', status: 429, message: 'rl2' },
+      ],
+      openaiResults: [{ kind: 'OK', response: okResponse() }],
+    });
     const chain = new ProviderChain(p, silentLogger);
-
     const res = await chain.handle(
       { ...baseBody, model: 'mst/free' },
       new AbortController().signal,
     );
-
-    expect(res.response.status).toBe(200);
-    expect(res.servedBy.provider).toBe('openai');
-    // Both OpenRouter keys were tried before falling back.
-    expect(p.openrouter.attempt).toHaveBeenCalledTimes(2);
-  });
-
-  it('also walks when requested model is free (alias parity with mst/free)', async () => {
-    const openai = {
-      id: 'openai',
-      available: true,
-      attempt: vi.fn(async (): Promise<ProviderCallResult> => ({
-        kind: 'OK',
-        response: okResponse('{}'),
-      })),
-    };
-    const p = makeProviders({ openai: openai as never });
-    const chain = new ProviderChain(p, silentLogger);
-
-    const res = await chain.handle(
-      { ...baseBody, model: 'free' },
-      new AbortController().signal,
-    );
-
     expect(res.response.status).toBe(200);
     expect(res.servedBy.provider).toBe('openai');
     expect(p.openrouter.attempt).toHaveBeenCalledTimes(2);
@@ -117,15 +151,8 @@ describe('ProviderChain - alias walk (mst/free and free)', () => {
 
   it('returns OK from OpenRouter key 1 without trying fallbacks', async () => {
     const p = makeProviders({
-      openrouter: {
-        id: 'openrouter',
-        available: true,
-        keyCount: 2,
-        attempt: vi.fn(async (): Promise<ProviderCallResult> => ({
-          kind: 'OK',
-          response: okResponse('{}'),
-        })),
-      } as never,
+      openrouterKeys: 2,
+      openrouterResults: [{ kind: 'OK', response: okResponse() }],
     });
     const chain = new ProviderChain(p, silentLogger);
     await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
@@ -133,25 +160,88 @@ describe('ProviderChain - alias walk (mst/free and free)', () => {
     expect(p.openai.attempt).not.toHaveBeenCalled();
   });
 
-  it('throws NoProviderAvailableError when every provider fails', async () => {
-    const chain = new ProviderChain(makeProviders(), silentLogger);
+  it('also walks when requested model is free (alias parity)', async () => {
+    const p = makeProviders({
+      openrouterKeys: 2,
+      openrouterResults: [
+        { kind: 'KEY_FAILURE', status: 429, message: 'rl' },
+        { kind: 'KEY_FAILURE', status: 429, message: 'rl' },
+      ],
+      openaiResults: [{ kind: 'OK', response: okResponse() }],
+    });
+    const chain = new ProviderChain(p, silentLogger);
+    const res = await chain.handle({ ...baseBody, model: 'free' }, new AbortController().signal);
+    expect(res.servedBy.provider).toBe('openai');
+    expect(p.openrouter.attempt).toHaveBeenCalledTimes(2);
+  });
+
+  it('throws NoProviderAvailableError when every candidate fails', async () => {
+    const p = makeProviders({ openrouterKeys: 2 });
+    const chain = new ProviderChain(p, silentLogger);
     await expect(
       chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal),
     ).rejects.toBeInstanceOf(NoProviderAvailableError);
   });
 });
 
-describe('ProviderChain - explicit model short-circuit (direct: namespace)', () => {
-  it('direct:openai/ routes only to OpenAI', async () => {
-    const openai = {
-      id: 'openai',
-      available: true,
-      attempt: vi.fn(async (): Promise<ProviderCallResult> => ({
-        kind: 'OK',
-        response: okResponse('{}'),
-      })),
-    };
-    const p = makeProviders({ openai: openai as never });
+describe('ProviderChain - adaptive demotion', () => {
+  it('a KEY_FAILURE candidate is demoted to the back (visible on the next snapshot)', async () => {
+    // openrouter[key1] fails on first call; openai succeeds. After the call,
+    // openrouter[key1] must be at the back of the queue.
+    const p = makeProviders({
+      openrouterKeys: 1,
+      openrouterResults: [{ kind: 'KEY_FAILURE', status: 429, message: 'rl' }],
+      openaiResults: [{ kind: 'OK', response: okResponse() }],
+    });
+    const chain = new ProviderChain(p, silentLogger);
+    const before = chain.queueSnapshot().map((c) => c.label);
+    expect(before[0]).toBe('openrouter[key1]');
+
+    const res = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
+    expect(res.servedBy.provider).toBe('openai');
+
+    const after = chain.queueSnapshot().map((c) => c.label);
+    expect(after[after.length - 1]).toBe('openrouter[key1]');
+    expect(after[0]).toBe('openai');
+  });
+
+  it('a successful call leaves the queue order unchanged', async () => {
+    const p = makeProviders({
+      openrouterKeys: 1,
+      openrouterResults: [{ kind: 'OK', response: okResponse() }],
+    });
+    const chain = new ProviderChain(p, silentLogger);
+    const before = chain.queueSnapshot().map((c) => c.label);
+    await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    const after = chain.queueSnapshot().map((c) => c.label);
+    expect(after).toEqual(before);
+  });
+
+  it('repeated all-fail calls leave the queue order stable (idempotent demote)', async () => {
+    const p = makeProviders({ openrouterKeys: 1 });
+    const chain = new ProviderChain(p, silentLogger);
+    await chain
+      .handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal)
+      .catch(() => null);
+    const orderAfter1 = chain.queueSnapshot().map((c) => c.label);
+    await chain
+      .handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal)
+      .catch(() => null);
+    const orderAfter2 = chain.queueSnapshot().map((c) => c.label);
+    expect(orderAfter1).toEqual(orderAfter2);
+  });
+});
+
+describe('ProviderChain - direct: short-circuit', () => {
+  it('direct:openai/ routes only to OpenAI with no fallback', async () => {
+    const p = makeProviders({
+      openrouterKeys: 1,
+      openrouterResults: [{ kind: 'OK', response: okResponse() }], // would succeed, but must not be called
+      openaiResults: [{ kind: 'OK', response: okResponse() }],
+    });
     const chain = new ProviderChain(p, silentLogger);
     const res = await chain.handle(
       { ...baseBody, model: 'direct:openai/gpt-4o-mini' },
@@ -159,7 +249,7 @@ describe('ProviderChain - explicit model short-circuit (direct: namespace)', () 
     );
     expect(res.response.status).toBe(200);
     expect(p.openrouter.attempt).not.toHaveBeenCalled();
-    expect(openai.attempt).toHaveBeenCalledWith(
+    expect(p.openai.attempt).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
       expect.objectContaining({ model: 'gpt-4o-mini' }),
@@ -167,39 +257,30 @@ describe('ProviderChain - explicit model short-circuit (direct: namespace)', () 
   });
 
   it('direct:glm- routes only to ZAI', async () => {
-    const zai = {
+    const zaiOk = {
       id: 'zai',
       available: true,
       attempt: vi.fn(async (): Promise<ProviderCallResult> => ({
         kind: 'OK',
-        response: okResponse('{}'),
+        response: okResponse(),
       })),
     };
-    const p = makeProviders({ zai: zai as never });
+    const p = makeProviders();
+    (p as { zai: unknown }).zai = zaiOk;
     const chain = new ProviderChain(p, silentLogger);
     await chain.handle({ ...baseBody, model: 'direct:glm-4.6' }, new AbortController().signal);
     expect(p.openrouter.attempt).not.toHaveBeenCalled();
-    expect(zai.attempt).toHaveBeenCalledWith(
+    expect(zaiOk.attempt).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
       expect.objectContaining({ model: 'glm-4.6' }),
     );
   });
 
-  it('a bare openai/... model id is treated as an OpenRouter model (NOT a provider pin)', async () => {
-    // Regression guard: OpenRouter uses vendor/model ids like "openai/gpt-4o".
-    // These must go through the default chain (OpenRouter first), not be
-    // short-circuited to the OpenAI provider.
+  it('a bare openai/... model id is NOT short-circuited (goes through the chain, OpenRouter first)', async () => {
     const p = makeProviders({
-      openrouter: {
-        id: 'openrouter',
-        available: true,
-        keyCount: 1,
-        attempt: vi.fn(async (): Promise<ProviderCallResult> => ({
-          kind: 'OK',
-          response: okResponse('{}'),
-        })),
-      } as never,
+      openrouterKeys: 1,
+      openrouterResults: [{ kind: 'OK', response: okResponse() }],
     });
     const chain = new ProviderChain(p, silentLogger);
     await chain.handle({ ...baseBody, model: 'openai/gpt-4o-mini' }, new AbortController().signal);
@@ -209,26 +290,11 @@ describe('ProviderChain - explicit model short-circuit (direct: namespace)', () 
 });
 
 describe('ProviderChain - explicit model chain', () => {
-  it('uses the explicit model across providers, OpenRouter pool first', async () => {
+  it('uses the explicit model across all candidates, OpenRouter pool first', async () => {
     const p = makeProviders({
-      openrouter: {
-        id: 'openrouter',
-        available: true,
-        keyCount: 1,
-        attempt: vi.fn(async (_b, _s): Promise<ProviderCallResult> => ({
-          kind: 'KEY_FAILURE',
-          status: 429,
-          message: 'rl',
-        })),
-      } as never,
-      openai: {
-        id: 'openai',
-        available: true,
-        attempt: vi.fn(async (): Promise<ProviderCallResult> => ({
-          kind: 'OK',
-          response: okResponse('{}'),
-        })),
-      } as never,
+      openrouterKeys: 1,
+      openrouterResults: [{ kind: 'KEY_FAILURE', status: 429, message: 'rl' }],
+      openaiResults: [{ kind: 'OK', response: okResponse() }],
     });
     const chain = new ProviderChain(p, silentLogger);
     const res = await chain.handle(
@@ -236,12 +302,66 @@ describe('ProviderChain - explicit model chain', () => {
       new AbortController().signal,
     );
     expect(res.response.status).toBe(200);
-    expect(p.openrouter.attempt).toHaveBeenCalledTimes(1);
-    // OpenRouter was called with the explicit model (plus :free via FORCE_FREE).
     expect(p.openrouter.attempt).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
       expect.objectContaining({ model: 'some-explicit-model:free' }),
     );
+  });
+});
+
+describe('ProviderChain - OpenCode pooling', () => {
+  it('all OpenCode triples are tried before NoProviderAvailableError', async () => {
+    const p = makeProviders({
+      openrouterKeys: 0, // disable OR to isolate OpenCode
+      opencodeKeys: 2,
+      opencodeModels: ['big-pickle', 'nemotron'],
+    });
+    // openai/zai also fail (default stubs). OpenCode has 4 triples (2 models x 2 keys).
+    const chain = new ProviderChain(p, silentLogger);
+    await expect(
+      chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal),
+    ).rejects.toBeInstanceOf(NoProviderAvailableError);
+    expect(p.opencode.attempt).toHaveBeenCalledTimes(4);
+  });
+
+  it('demoting one OpenCode triple does not demote others (per-triple demotion)', async () => {
+    // Isolate OpenCode: OpenRouter/OpenAI/ZAI all unavailable, so only the two
+    // OpenCode triples are in the queue. triple1 (big-pickle) fails, triple2
+    // (nemotron) succeeds. Only triple1 should be demoted.
+    const ocModels = ['big-pickle', 'nemotron'];
+    const p = makeProviders({
+      openrouterKeys: 0,
+      opencodeKeys: 1,
+      opencodeModels: ocModels,
+    });
+    // Make OpenAI and ZAI unavailable so the queue is just the two triples.
+    (p.openai as unknown as { available: boolean }).available = false;
+    (p.zai as unknown as { available: boolean }).available = false;
+    // Reprogram opencode.attempt: triple0 (big-pickle) fails, triple1 (nemotron) OK.
+    (p.opencode as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(
+      async (
+        _b: ChatRequestBody,
+        _s: AbortSignal,
+        opts: { tripleIndex?: number },
+      ): Promise<ProviderCallResult> => {
+        const t = opts.tripleIndex ?? 0;
+        if (t === 0) return { kind: 'KEY_FAILURE', status: 429, message: 'bigpickle rl' };
+        return { kind: 'OK', response: okResponse() };
+      },
+    );
+
+    const chain = new ProviderChain(p, silentLogger);
+    const res = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
+    expect(res.servedBy.provider).toBe('opencode[triple2]');
+
+    // After the call, only triple1 (big-pickle, the failing one) was demoted.
+    // Build order: [opencode[triple1], opencode[triple2]]. triple1 demoted ->
+    // [opencode[triple2], opencode[triple1]].
+    const labels = chain.queueSnapshot().map((c) => c.label);
+    expect(labels).toEqual(['opencode[triple2]', 'opencode[triple1]']);
   });
 });

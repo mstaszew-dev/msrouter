@@ -1,227 +1,210 @@
 /**
- * Provider chain: routes requests through OpenRouter pool -> OpenAI -> ZAI -> OpenCode.
- * Aliases "mst/free" and "free" walk every provider with default models.
- * Prefix "direct:<provider>/<model>" pins a single provider.
+ * Provider chain with adaptive flat-sequence rotation.
+ *
+ * On construction, builds ONE flat ordered list of Candidate triples
+ * `<model, provider, keyIndex>` (delegated to chain-candidates.ts) and wraps it
+ * in a CandidateQueue. Every `handle()` call iterates the queue from the front:
+ *   - OK       -> return the response.
+ *   - KEY_FAILURE (401/402/403/429) -> demote this candidate to the back, try next.
+ *   - TRANSIENT (5xx/408/425)      -> backoff-retry in place up to MAX_TRANSIENT_RETRIES.
+ *   - BAD_REQUEST (other 4xx)      -> skip to next candidate (do not demote).
+ *
+ * Demotion is permanent for the life of the process (no TTL, in-memory only).
+ * Restart rebuilds the queue from env in the original declared order.
+ *
+ * Aliases "mst/free" and "free" walk the SAME candidate list using each
+ * candidate's provider-default model. Prefix "direct:<provider>/<model>" pins a
+ * single provider and disables fallback.
  */
+
 import type { Logger } from 'pino';
+
 import { NoProviderAvailableError } from '../common/errors.js';
 import { backoffMs, sleep } from '../common/retry.js';
 import { env } from '../config/env.js';
+
+import {
+  buildCandidateList,
+  shortCircuit,
+  type Candidate,
+  type ChainProvider,
+} from './chain-candidates.js';
 import type { Providers } from './instances.js';
 import { withFree } from './openrouter.js';
+import { CandidateQueue } from './rotation.js';
 import type { ChatRequestBody, ProviderCallResult } from './types.js';
-/** Extra OpenCode Zen free models tried sequentially in exhaustive walk. */
-const EXTRA_OPENCODE_MODELS = [
-  ['opencode-nemotron', 'OPENCODE_NEMOTRON_MODEL'] as const,
-  ['opencode-deepseek-flash', 'OPENCODE_DEEPSEEK_FLASH_MODEL'] as const,
-  ['opencode-mimo', 'OPENCODE_MIMO_MODEL'] as const,
-  ['opencode-north-mini-code', 'OPENCODE_NORTH_MINI_CODE_MODEL'] as const,
-  ['opencode-laguna', 'OPENCODE_LAGUNA_MODEL'] as const,
-  ['opencode-ling', 'OPENCODE_LING_MODEL'] as const,
-  ['opencode-qwen', 'OPENCODE_QWEN_MODEL'] as const,
-  ['opencode-minimax', 'OPENCODE_MINIMAX_MODEL'] as const,
-];
-function envModel(key: string): string {
-  return env()[key as keyof ReturnType<typeof env>] as string;
-}
+
+// Re-export so existing imports of `Candidate` from './chain.js' keep working.
+export type { Candidate } from './chain-candidates.js';
+
 export interface ChainResult {
-  /** Upstream Response to stream/return. */
   response: Response;
-  /** Which provider + model served the request (for logging/metrics). */
   servedBy: { provider: string; model: string; keyTag?: string };
 }
+
 export class ProviderChain {
+  private readonly queue: CandidateQueue<Candidate>;
+
   constructor(
     private readonly providers: Providers,
     private readonly log: Logger,
-  ) {}
-  /**
-   * Resolve request across chain. Returns first successful Response,
-   * or throws NoProviderAvailableError if all failed.
-   */
+  ) {
+    this.queue = new CandidateQueue(buildCandidateList(providers), { log, label: 'chain' });
+  }
+
   async handle(body: ChatRequestBody, signal: AbortSignal): Promise<ChainResult> {
     const requested = body.model;
-    const alias = env().WALK_ALIAS;
-    if (alias.includes(requested)) {
+    if (env().WALK_ALIAS.includes(requested)) {
       return this.walkAll(body, signal);
     }
-    // Explicit model-id short-circuit by prefix.
     const sc = shortCircuit(requested);
     if (sc) return this.runSingle(sc.provider, sc.model, body, signal);
-    // Default chain: OpenRouter pool first, then fallbacks with same model.
     return this.runChain(body, signal, { explicitModel: requested });
   }
-  /**
-   * Exhaustive walk: every OpenRouter key, then OpenAI, ZAI, OpenCode
-   * bigpickle, then all extra OpenCode Zen free-model variants.
-   */
+
+  /** Walk every candidate using each provider's default model. */
   private async walkAll(body: ChatRequestBody, signal: AbortSignal): Promise<ChainResult> {
-    const or = this.providers.openrouter;
-    const orModel = withFree(env().OPENROUTER_MODEL, env().FORCE_FREE);
-    const failures: string[] = [];
-    if (or.available) {
-      for (let i = 0; i < or.keyCount; i++) {
-        if (signal.aborted) throw new NoProviderAvailableError('aborted');
-        const res = await or.attempt(body, signal, { keyIndex: i, model: orModel });
-        const handled = this.consume(res, `openrouter[key${i + 1}]`, orModel, failures);
-        if (handled) return handled;
-      }
-    } else {
-      failures.push('openrouter:not-configured');
-    }
-    // Standard fallback providers
-    for (const [id, model] of [
-      ['openai', env().OPENAI_MODEL],
-      ['zai', env().ZAI_MODEL],
-      ['opencode', env().OPENCODE_MODEL],
-    ] as const) {
-      if (signal.aborted) throw new NoProviderAvailableError('aborted');
-      const handled = await this.trySingle(id, model, body, signal, failures);
-      if (handled) return handled;
-    }
-    // Additional OpenCode Zen free models (same API key, different model id)
-    const opencodeProvider = this.providers.opencode;
-    if (opencodeProvider.available) {
-      for (const [label, envKey] of EXTRA_OPENCODE_MODELS) {
-        if (signal.aborted) throw new NoProviderAvailableError('aborted');
-        const handled = await this.trySingle('opencode', envModel(envKey), body, signal, failures);
-        if (handled) return { ...handled, servedBy: { ...handled.servedBy, provider: label } };
-      }
-    } else {
-      failures.push('opencode:not-configured');
-    }
-    this.log.error({ failures, model: body.model }, 'all providers failed (walk)');
-    throw new NoProviderAvailableError(`all providers failed: ${failures.join('; ')}`);
+    return this.iterate(body, signal, {});
   }
-  /** OpenRouter pool first, then OpenAI/ZAI/OpenCode, using explicitModel. */
+
+  /** Walk every candidate using the client's explicit model. */
   private async runChain(
     body: ChatRequestBody,
     signal: AbortSignal,
     opts: { explicitModel: string },
   ): Promise<ChainResult> {
-    const or = this.providers.openrouter;
-    const orModel = withFree(opts.explicitModel, env().FORCE_FREE);
-    const failures: string[] = [];
-    if (or.available) {
-      for (let i = 0; i < or.keyCount; i++) {
-        if (signal.aborted) throw new NoProviderAvailableError('aborted');
-        const res = await or.attempt(body, signal, { keyIndex: i, model: orModel });
-        const handled = this.consume(res, `openrouter[key${i + 1}]`, orModel, failures);
-        if (handled) return handled;
-      }
-    } else {
-      failures.push('openrouter:not-configured');
-    }
-    // Fallbacks with the same explicit model.
-    for (const id of ['openai', 'zai', 'opencode'] as const) {
-      if (signal.aborted) throw new NoProviderAvailableError('aborted');
-      const handled = await this.trySingle(id, opts.explicitModel, body, signal, failures);
-      if (handled) return handled;
-    }
-    this.log.error({ failures, model: body.model }, 'all providers failed (chain)');
-    throw new NoProviderAvailableError(`all providers failed: ${failures.join('; ')}`);
+    return this.iterate(body, signal, {
+      explicitModel: withFree(opts.explicitModel, env().FORCE_FREE),
+    });
   }
-  /** Run ONE single-key provider (short-circuit). */
+
+  /** Single provider pin (direct:). No fallback. */
   private async runSingle(
-    id: keyof Providers,
+    provider: ChainProvider,
     model: string,
     body: ChatRequestBody,
     signal: AbortSignal,
   ): Promise<ChainResult> {
+    const p = this.providers[provider];
+    if (!p.available) {
+      throw new NoProviderAvailableError(`${provider}: not configured`);
+    }
     const failures: string[] = [];
-    const handled = await this.trySingle(id, model, body, signal, failures);
-    if (handled) return handled;
-    this.log.error({ failures, provider: id, model }, 'short-circuit provider failed');
-    throw new NoProviderAvailableError(`${id} failed: ${failures.join('; ')}`);
+    // For openrouter direct, iterate keys; for opencode direct, iterate triples
+    // matching the model; for single-key providers, one attempt with retries.
+    const maxIdx =
+      provider === 'openrouter'
+        ? this.providers.openrouter.keyCount
+        : provider === 'opencode'
+          ? Math.max(1, this.opencodeTripleCountForModel(model))
+          : 1;
+    for (let i = 0; i < maxIdx; i++) {
+      if (signal.aborted) throw new NoProviderAvailableError('aborted');
+      const res = await this.tryCandidate(
+        { provider, label: p.id, model, attemptIndex: i },
+        model,
+        body,
+        signal,
+        failures,
+        { demoteOnKeyFailure: false },
+      );
+      if (res) return res;
+    }
+    throw new NoProviderAvailableError(`${provider} failed: ${failures.join('; ')}`);
   }
-  /**
-   * Attempt a single-key provider with transient retries. Uses `p.id` as the
-   * label in consume/failures so logs show the provider's own name (e.g.
-   * "opencode-bigpickle") rather than the lookup key.
-   */
-  private async trySingle(
-    id: keyof Providers,
+
+  /** Core flat-queue iteration, shared by walkAll and runChain. */
+  private async iterate(
+    body: ChatRequestBody,
+    signal: AbortSignal,
+    opts: { explicitModel?: string },
+  ): Promise<ChainResult> {
+    const failures: string[] = [];
+    const order = this.queue.snapshot();
+    for (const candidate of order) {
+      if (signal.aborted) throw new NoProviderAvailableError('aborted');
+      // Pass model separately so tryCandidate demotes the ORIGINAL candidate
+      // reference (spreading here would break identity and silently no-op demote).
+      const model = opts.explicitModel ?? candidate.model;
+      const res = await this.tryCandidate(candidate, model, body, signal, failures, {
+        demoteOnKeyFailure: true,
+      });
+      if (res) return res;
+    }
+    this.log.error({ failures, model: body.model }, 'all candidates failed');
+    throw new NoProviderAvailableError(`all candidates failed: ${failures.join('; ')}`);
+  }
+
+  /** Attempt one candidate with TRANSIENT retry-in-place. On KEY_FAILURE
+   *  (when demoteOnKeyFailure), demote the candidate to the back of the queue.
+   *  `candidate` MUST be the original queue reference for demotion to work. */
+  private async tryCandidate(
+    candidate: Candidate,
     model: string,
     body: ChatRequestBody,
     signal: AbortSignal,
     failures: string[],
+    behavior: { demoteOnKeyFailure: boolean },
   ): Promise<ChainResult | undefined> {
-    const p = this.providers[id];
+    const p = this.providers[candidate.provider];
     if (!p.available) {
-      failures.push(`${p.id}:not-configured`);
+      failures.push(`${candidate.label}:not-configured`);
       return undefined;
     }
     let attempt = 0;
     while (attempt <= env().MAX_TRANSIENT_RETRIES) {
-      const res = await p.attempt(body, signal, { model });
-      const handled = this.consume(res, p.id, model, failures);
-      if (handled) return handled;
+      if (signal.aborted) return undefined;
+      const res: ProviderCallResult = await this.callProvider(candidate, model, body, signal);
+      if (res.kind === 'OK') {
+        return { response: res.response, servedBy: { provider: candidate.label, model } };
+      }
+      failures.push(`${candidate.label}:${res.kind}(${res.status})`);
+      this.log.debug(
+        { provider: candidate.label, kind: res.kind, status: res.status, msg: res.message },
+        'candidate attempt failed',
+      );
       if (res.kind === 'TRANSIENT' && attempt < env().MAX_TRANSIENT_RETRIES) {
         attempt++;
         await sleep(backoffMs(attempt, env().TRANSIENT_BACKOFF_MS));
         continue;
       }
+      if (res.kind === 'KEY_FAILURE' && behavior.demoteOnKeyFailure) {
+        this.queue.demote(candidate);
+      }
       break;
     }
     return undefined;
   }
-  /**
-   * Interpret an OpenRouter attempt result. OpenRouter retries are advanced by
-   * the caller re-invoking attempt() with the next keyIndex, so here we do NOT
-   * retry transient on OpenRouter inside one key (the whole pool is the retry).
-   * Returns the ChainResult on OK, else records the failure and returns undefined.
-   */
-  private consume(
-    res: ProviderCallResult,
-    label: string,
+
+  /** Dispatch one attempt to the right provider with the right opts shape. */
+  private async callProvider(
+    candidate: Candidate,
     model: string,
-    failures: string[],
-  ): ChainResult | undefined {
-    if (res.kind === 'OK') {
-      return {
-        response: res.response,
-        servedBy: { provider: label, model, keyTag: label.includes('[') ? label : undefined },
-      };
+    body: ChatRequestBody,
+    signal: AbortSignal,
+  ): Promise<ProviderCallResult> {
+    const p = this.providers[candidate.provider];
+    if (candidate.provider === 'openrouter') {
+      return p.attempt(body, signal, { model, keyIndex: candidate.attemptIndex });
     }
-    failures.push(`${label}:${res.kind}(${res.status})`);
-    this.log.debug(
-      { provider: label, kind: res.kind, status: res.status, msg: res.message },
-      'provider attempt failed',
-    );
-    return undefined;
+    if (candidate.provider === 'opencode') {
+      return p.attempt(body, signal, { model, tripleIndex: candidate.attemptIndex });
+    }
+    return p.attempt(body, signal, { model });
   }
-}
-/** Detect direct:<provider>/<model> prefix to pin a single provider. */
-function shortCircuit(
-  model: string,
-): { provider: keyof Providers; model: string } | null {
-  const m = model.toLowerCase();
-  if (!m.startsWith('direct:')) return null;
-  const rest = model.slice('direct:'.length);
-  const restLower = rest.toLowerCase();
-  if (restLower.startsWith('openai/')) {
-    return { provider: 'openai', model: rest.slice('openai/'.length) };
+
+  /** Count OpenCode triples whose model matches (for direct:opencode/<model>). */
+  private opencodeTripleCountForModel(model: string): number {
+    return this.providers.opencode.queueSnapshot().filter((t) => t.model === model).length;
   }
-  if (restLower.startsWith('opencode/')) {
-    const modelId = rest.slice('opencode/'.length).toLowerCase();
-    // Map specific OpenCode Zen model IDs to their dedicated provider instances
-    const providerMap: Record<string, keyof Providers> = {
-      'nemotron-3-ultra-free': 'opencodeNemotron',
-      'deepseek-v4-flash-free': 'opencodeDeepSeekFlash',
-      'mimo-v2.5-free': 'opencodeMiMo',
-      'north-mini-code-free': 'opencodeNorthMiniCode',
-      'laguna-s-2.1-free': 'opencodeLaguna',
-      'ling-3.0-flash-free': 'opencodeLing',
-      'qwen3.6-plus-free': 'opencodeQwen',
-      'minimax-m3-free': 'opencodeMiniMax',
-    };
-    const provider = providerMap[modelId];
-    if (provider) return { provider, model: modelId };
-    // Fallback: use base opencode provider (big-pickle) with the requested model
-    return { provider: 'opencode', model: modelId };
+
+  /** White-box: current candidate queue order (for tests/debug). */
+  queueSnapshot(): readonly Candidate[] {
+    return this.queue.snapshot();
   }
-  if (restLower.startsWith('zai/') || restLower.startsWith('glm-')) {
-    return { provider: 'zai', model: rest };
+
+  /** White-box (test-only): demote a specific candidate. */
+  demoteCandidate(c: Candidate): void {
+    this.queue.demote(c);
   }
-  return null;
 }
