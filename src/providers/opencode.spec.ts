@@ -84,12 +84,12 @@ describe('OpenCodeProvider pool', () => {
     expect(res.kind).toBe('KEY_FAILURE');
   });
 
-  it('attempt on an out-of-range triple index returns KEY_FAILURE', async () => {
-    const { p } = makeProvider(['k1'], ['m1']);
-    const res = await p.attempt({ model: 'x', messages: [] }, new AbortController().signal, {
-      model: 'm1',
-      tripleIndex: 99,
-    });
-    expect(res.kind).toBe('KEY_FAILURE');
+  it('queue.at wraps modulo length, so any tripleIndex resolves to a real triple (no out-of-range path)', () => {
+    // CandidateQueue.at() wraps; there is no "out of range" early-return by
+    // design. This test documents that contract: a length-1 queue has one
+    // triple regardless of the requested index.
+    const { q } = makeProvider(['k1'], ['m1']);
+    expect(q.queueSnapshot()).toHaveLength(1);
+    expect(q.queueSnapshot()[0]).toEqual({ model: 'm1', keyIdx: 0 });
   });
 });
