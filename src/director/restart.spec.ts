@@ -34,7 +34,8 @@ describe('killWorkerByPidfile', () => {
 
   it('returns killed=0 when the pid is not a live process', async () => {
     const path = pidfilePath();
-    writeFileSync(path, '999999\n');
+    // 2^31-1 is beyond any valid pid_t; no such process can exist.
+    writeFileSync(path, `${2 ** 31 - 1}\n`);
     const out = await killWorkerByPidfile(path);
     expect(out.killed).toBe(0);
   });

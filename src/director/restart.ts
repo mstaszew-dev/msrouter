@@ -32,10 +32,19 @@ export async function killWorkerByPidfile(
   }
   const pid = Number.parseInt(raw.trim(), 10);
   if (!Number.isInteger(pid) || pid <= 0) return { killed: 0 };
+  // Verify the pid is a live process BEFORE signalling. macOS sometimes
+  // accepts signals to out-of-range pids without raising ESRCH, so we cannot
+  // rely on the SIGTERM throw alone. If the pid is already gone (or we lack
+  // permission), do not claim a kill.
+  try {
+    process.kill(pid, 0);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ESRCH') return { killed: 0 };
+    return { killed: 0 }; // EPERM etc.: cannot manage this pid.
+  }
   try {
     process.kill(pid, 'SIGTERM');
   } catch (e) {
-    // ESRCH = already gone; anything else is unexpected but not fatal here.
     if ((e as NodeJS.ErrnoException).code !== 'ESRCH') return { killed: 0 };
   }
   // Wait up to 5s for the process to exit.
