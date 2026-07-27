@@ -20,6 +20,8 @@
     "start:dev": "tsx src/main.ts",
     "worker": "node dist/worker.js",
     "worker:dev": "tsx src/worker.ts",
+    "director-worker": "node dist/director-worker.js",
+    "director-worker:dev": "tsx src/director-worker.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",
