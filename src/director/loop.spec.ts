@@ -1,7 +1,8 @@
-import type pino from 'pino';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+import type pino from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 
 import { DirectorLoop } from './loop.js';
@@ -107,7 +108,7 @@ describe('DirectorLoop.runOnce', () => {
     expect(result.classifications).toBeGreaterThan(0);
     expect(result.proposed).toBe(0); // chain returned no patches
     // Checkpoint persisted with advanced offset.
-    const cp = JSON.parse(readFileSync(checkpointPath, 'utf8'));
+    const cp = JSON.parse(readFileSync(checkpointPath, 'utf8')) as { eventsReadOffset: number };
     expect(cp.eventsReadOffset).toBeGreaterThan(0);
   });
 
@@ -136,5 +137,47 @@ describe('DirectorLoop.runOnce', () => {
     const result = await loop.runOnce(new AbortController().signal);
     expect(result.observed).toBe(0);
     expect(result.classifications).toBe(0);
+  });
+
+  it('skips proposal when the signal is already aborted', async () => {
+    const campaign = makeCampaign();
+    const stateDir = mkdtempSync(join(tmpdir(), 'director-state-'));
+    const env = makeEnv({
+      DIRECTOR_CAMPAIGN_DIR: campaign,
+      DIRECTOR_LEDGER: join(stateDir, 'l.jsonl'),
+    });
+    const chain = { handle: vi.fn() };
+    const loop = new DirectorLoop({
+      env: env as never,
+      chain: chain as never,
+      surface: nullSurface(),
+      log: silent,
+      checkpointPath: join(stateDir, 'cp.json'),
+    });
+    const ac = new AbortController();
+    ac.abort();
+    const result = await loop.runOnce(ac.signal);
+    // observe + classify run before the abort check; proposed stays 0 because
+    // the actionable>0 + !signal.aborted guard skips propose().
+    expect(result.proposed).toBe(0);
+    expect(result.reason).toBe('ok');
+  });
+
+  it('returns reason=error when observe throws', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'director-state-'));
+    const env = makeEnv({
+      DIRECTOR_CAMPAIGN_DIR: '/this/path/does/not/exist',
+      DIRECTOR_LEDGER: join(stateDir, 'l.jsonl'),
+    });
+    const chain = { handle: vi.fn() };
+    const loop = new DirectorLoop({
+      env: env as never,
+      chain: chain as never,
+      surface: nullSurface(),
+      log: silent,
+      checkpointPath: join(stateDir, 'cp.json'),
+    });
+    const result = await loop.runOnce(new AbortController().signal);
+    expect(result.reason).toBe('error');
   });
 });

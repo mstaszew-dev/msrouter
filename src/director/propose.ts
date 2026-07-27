@@ -7,17 +7,18 @@
  * Patches are PROPOSALS only. They are not applied here; the surface owns that.
  */
 
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
 
 import type { Logger } from 'pino';
 
-import type { CampaignSnapshot, DecisionClassification, Patch } from './types.js';
-import { readOverrides } from './apply.js';
 import type { ProviderChain } from '../providers/chain.js';
 import type { ChatRequestBody } from '../providers/types.js';
+
+import { readOverrides } from './apply.js';
+import type { CampaignSnapshot, DecisionClassification, Patch } from './types.js';
 
 const PROMPT_PATH = join(dirname(fileURLToPath(import.meta.url)), 'prompt.md');
 const KEY_RE = /^[A-Z_][A-Z0-9_]*$/;

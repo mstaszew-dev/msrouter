@@ -19,6 +19,8 @@ export interface RestartOpts {
   workspace: string;
   cdpUrl: string;
   log: Logger;
+  /** CDP health-poll timeout in ms (default 30_000). Override in tests. */
+  cdpTimeoutMs?: number;
 }
 
 export async function killWorkerByPidfile(
@@ -96,7 +98,7 @@ export async function restartWorker(opts: RestartOpts): Promise<{ pid: number; l
   }
   const launched = await launchWorker(opts.runner, opts.workspace);
   opts.log.info({ pid: launched.pid }, 'launched new worker');
-  const healthy = await pollCdp(opts.cdpUrl);
+  const healthy = await pollCdp(opts.cdpUrl, opts.cdpTimeoutMs ?? 30_000);
   if (!healthy) {
     opts.log.warn(
       { cdpUrl: opts.cdpUrl },

@@ -27,7 +27,8 @@ export interface RagClientOpts {
   dbPath: string;
   campaignDir: string;
   log: Logger;
-  serverPath?: string;
+  /** Test seam: inject a fake child process instead of spawning Python. */
+  fakeChild?: ChildProcessWithoutNullStreams;
 }
 
 interface PendingRequest {
@@ -45,12 +46,22 @@ export class RagClient {
 
   async start(): Promise<void> {
     if (this.child) return;
-    const serverPath = this.opts.serverPath ?? SERVER_PATH;
-    this.child = spawn(
-      this.opts.pythonPath,
-      ['--line-protocol', '--db', this.opts.dbPath, '--campaign', this.opts.campaignDir],
-      { stdio: ['pipe', 'pipe', 'pipe'], cwd: MODULE_DIR },
-    );
+    if (this.opts.fakeChild) {
+      this.child = this.opts.fakeChild;
+    } else {
+      this.child = spawn(
+        this.opts.pythonPath,
+        [
+          SERVER_PATH,
+          '--line-protocol',
+          '--db',
+          this.opts.dbPath,
+          '--campaign',
+          this.opts.campaignDir,
+        ],
+        { stdio: ['pipe', 'pipe', 'pipe'], cwd: MODULE_DIR },
+      );
+    }
     this.child.stdout.setEncoding('utf8');
     this.child.stdout.on('data', (chunk: string) => this.onStdout(chunk));
     this.child.stderr.on('data', (chunk: Buffer) =>

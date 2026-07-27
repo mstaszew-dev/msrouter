@@ -1,6 +1,7 @@
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import { observe, parseEventsLine } from './observe.js';
@@ -118,5 +119,35 @@ describe('observe', () => {
       { campaignDir: dir },
     );
     expect(snapshot.recentEvents).toEqual([]);
+  });
+
+  it('drops a trailing partial line (no newline) and does not advance past it', async () => {
+    const dir = makeCampaignDir();
+    const complete = JSON.stringify({
+      at: 't',
+      action: 'submitted',
+      record: { id: 'a' },
+    });
+    const partial = '{"at":"t","action":"submitted","record":{'; // no closing, no newline
+    writeFileSync(join(dir, 'events.jsonl'), `${complete}\n${partial}`);
+    const { snapshot, checkpoint } = await observe(
+      { eventsReadOffset: 0, lastTickAt: '' },
+      { campaignDir: dir },
+    );
+    // Only the complete event is parsed.
+    expect(snapshot.recentEvents).toHaveLength(1);
+    // Offset advanced past the complete line + its newline, NOT past the partial.
+    expect(checkpoint.eventsReadOffset).toBe(Buffer.byteLength(`${complete}\n`));
+  });
+
+  it('respects maxEvents cap', async () => {
+    const dir = makeCampaignDir();
+    const one = JSON.stringify({ at: 't', action: 'submitted', record: { id: 'x' } });
+    writeFileSync(join(dir, 'events.jsonl'), `${one}\n${one}\n${one}\n`);
+    const { snapshot } = await observe(
+      { eventsReadOffset: 0, lastTickAt: '' },
+      { campaignDir: dir, maxEvents: 2 },
+    );
+    expect(snapshot.recentEvents).toHaveLength(2);
   });
 });

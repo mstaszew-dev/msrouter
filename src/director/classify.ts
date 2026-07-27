@@ -14,6 +14,15 @@ const EXCLUDED_TITLE =
 const PORTAL_ERROR = /login|captcha|timeout|5\d\d|429/i;
 const CORE_STACK = /java|kotlin|spring|php|laravel|node|react/i;
 
+/** Coerce an unknown record value to a string for regex matching. Objects and
+ *  arrays become '' so they never spuriously match the policy regexes. */
+function str(v: unknown): string {
+  if (typeof v === 'string') return v;
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  return '';
+}
+
 export function classify(snapshot: CampaignSnapshot): DecisionClassification[] {
   const out: DecisionClassification[] = [];
   const submittedByCompany = new Map<string, number>();
@@ -21,9 +30,9 @@ export function classify(snapshot: CampaignSnapshot): DecisionClassification[] {
   for (const e of snapshot.recentEvents) {
     if (e.action === 'submitted') {
       const rec = e.record;
-      const companyKey = String(rec['companyKey'] ?? '');
-      const roleTitle = String(rec['roleTitle'] ?? '');
-      const id = String(rec['id'] ?? '');
+      const companyKey = str(rec['companyKey']);
+      const roleTitle = str(rec['roleTitle']);
+      const id = str(rec['id']);
       const prev = submittedByCompany.get(companyKey) ?? 0;
       submittedByCompany.set(companyKey, prev + 1);
 
@@ -53,9 +62,9 @@ export function classify(snapshot: CampaignSnapshot): DecisionClassification[] {
       }
     } else if (e.action === 'skippedFilter') {
       const rec = e.record;
-      const detail = String(rec['detail'] ?? '');
-      const roleTitle = String(rec['roleTitle'] ?? '');
-      const id = String(rec['id'] ?? '');
+      const detail = str(rec['detail']);
+      const roleTitle = str(rec['roleTitle']);
+      const id = str(rec['id']);
       if (PORTAL_ERROR.test(detail)) {
         out.push({
           eventId: id,

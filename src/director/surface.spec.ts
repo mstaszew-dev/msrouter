@@ -1,7 +1,8 @@
-import type pino from 'pino';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+
+import type pino from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 
 import { readLedger } from './ledger.js';

@@ -13,12 +13,14 @@ import { dirname } from 'node:path';
 
 import type { Logger } from 'pino';
 
-import type { Checkpoint, DirectorRunResult, DirectorSurface } from './types.js';
-import { observe } from './observe.js';
-import { classify } from './classify.js';
-import { propose } from './propose.js';
-import type { ProviderChain } from '../providers/chain.js';
 import type { Env } from '../config/env.js';
+import type { ProviderChain } from '../providers/chain.js';
+
+import { classify } from './classify.js';
+import { observe } from './observe.js';
+import { propose } from './propose.js';
+import type { Checkpoint, DirectorRunResult, DirectorSurface } from './types.js';
+
 
 export interface DirectorLoopOpts {
   env: Env;

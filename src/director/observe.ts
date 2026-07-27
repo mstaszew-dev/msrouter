@@ -43,7 +43,7 @@ export function parseEventsLine(line: string): CampaignEvent | null {
   if (!obj['record'] || typeof obj['record'] !== 'object') return null;
   return {
     at: obj['at'],
-    action: obj['action'] as CampaignEvent['action'],
+    action: obj['action'],
     record: obj['record'] as Record<string, unknown>,
   };
 }

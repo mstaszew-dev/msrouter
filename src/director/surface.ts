@@ -10,8 +10,8 @@
 
 import type { Logger } from 'pino';
 
-import type { DirectorSurface, Patch, PatchDecision } from './types.js';
 import { appendLedger } from './ledger.js';
+import type { DirectorSurface, Patch, PatchDecision } from './types.js';
 
 export interface SurfaceOpts {
   ledgerPath: string;

@@ -21,20 +21,16 @@ export interface TrackerSummary {
 
 export interface CampaignEvent {
   at: string;
-  action:
-    | 'submitted'
-    | 'skippedDuplicate'
-    | 'skippedFilter'
-    | 'skippedSalary'
-    | 'blockedManual'
-    | 'followUp'
-    | string;
+  /** Free-form action tag; the campaign uses a small known set but new ones
+   *  appear over time, so this is open-ended. See AGENT_TICK.md for the set. */
+  action: string;
   record: Record<string, unknown>;
 }
 
 export interface DecisionClassification {
   eventId?: string; // for skipped/submitted events with an id
-  kind: 'good-apply' | 'risky-apply' | 'missed-apply' | 'bad-skip' | 'duplicate-risk' | 'portal-error';
+  kind:
+    'good-apply' | 'risky-apply' | 'missed-apply' | 'bad-skip' | 'duplicate-risk' | 'portal-error';
   severity: 'info' | 'warn' | 'critical';
   reason: string; // human-readable, for the LLM and ledger
   evidence?: string; // the field/value that triggered it
