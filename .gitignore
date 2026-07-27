@@ -12,3 +12,9 @@ coverage/
 .vscode/*
 !.vscode/extensions.json
 .run/
+
+# Python (Director RAG)
+__pycache__/
+*.pyc
+src/director/rag/.venv/
+src/director/rag/index.db
