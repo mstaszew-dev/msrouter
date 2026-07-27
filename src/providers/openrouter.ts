@@ -11,6 +11,10 @@
  * (round-robin). This keeps the queue logic strictly FIFO-on-failure with no
  * time-based churn.
  *
+ * The queue is now backed by the shared CandidateQueue primitive so OpenRouter,
+ * OpenCode, and the chain-level inter-provider walk all share one demote-to-back
+ * contract and one set of tests.
+ *
  * Model resolution is NOT done here: the chain passes the already-resolved
  * model id (an explicit id with optional `:free`, or this provider's default
  * when the client sent an alias). This keeps the provider a thin upstream
@@ -20,18 +24,14 @@
 import type { Logger } from 'pino';
 
 import { postChatCompletion } from './fetch.js';
+import { CandidateQueue } from './rotation.js';
 import type { AttemptOptions, ChatRequestBody, Provider, ProviderCallResult } from './types.js';
-
-/** One slot in the key health queue. */
-interface KeySlot {
-  /** Index into the original `keys` array. */
-  idx: number;
-}
 
 export class OpenRouterProvider implements Provider {
   readonly id = 'openrouter';
 
-  private keyOrder: KeySlot[];
+  /** Raw-index queue; demote-to-back on KEY_FAILURE. In-memory, no TTL. */
+  private readonly keyOrder: CandidateQueue<number>;
 
   constructor(
     private readonly keys: readonly string[],
@@ -42,7 +42,10 @@ export class OpenRouterProvider implements Provider {
     private readonly title = 'msrouter',
   ) {
     // Start in numeric order.
-    this.keyOrder = keys.map((_, idx) => ({ idx }));
+    this.keyOrder = new CandidateQueue(
+      keys.map((_, idx) => idx),
+      { log, label: 'openrouter' },
+    );
   }
 
   get available(): boolean {
@@ -54,11 +57,27 @@ export class OpenRouterProvider implements Provider {
     return this.keys.length;
   }
 
+  /** White-box view for tests: current queue order as raw key indices. */
+  get queueSnapshot(): readonly number[] {
+    return this.keyOrder.snapshot();
+  }
+
+  /**
+   * White-box (test/admin): demote a specific raw key index to the back of the
+   * queue. This is the same operation `attempt()` performs internally when a
+   * key returns KEY_FAILURE. Exposed so tests can drive the queue without
+   * stubbing the fetch layer, and so an admin endpoint could force-demote a
+   * known-bad key.
+   */
+  demoteKey(rawIdx: number): void {
+    this.keyOrder.demote(rawIdx);
+  }
+
   /**
    * Attempt with the key at position `keyIndex` in the HEALTH queue (not the
    * raw numeric index). The chain passes 0,1,2,... and we map each to the
    * healthiest currently-eligible key. On KEY_FAILURE, the underlying key is
-   * demoted to the back with a cooldown so the next request skips it.
+   * demoted to the back so the next request skips it.
    */
   async attempt(
     body: ChatRequestBody,
@@ -73,12 +92,14 @@ export class OpenRouterProvider implements Provider {
       };
     }
     const logicalIndex = opts.keyIndex ?? 0;
-    const slot = this.keyOrder[logicalIndex % this.keyOrder.length];
-    if (!slot) {
+    const rawIdx = this.keyOrder.at(logicalIndex);
+    if (rawIdx === undefined) {
       return { kind: 'KEY_FAILURE', status: 0, message: 'openrouter: key index out of range' };
     }
-    const rawIdx = slot.idx;
-    const key = this.keys[rawIdx]!;
+    const key = this.keys[rawIdx];
+    if (!key) {
+      return { kind: 'KEY_FAILURE', status: 0, message: 'openrouter: key missing' };
+    }
     const tag = keyTag(key, rawIdx);
 
     const outbound: ChatRequestBody = { ...body, model: opts.model };
@@ -94,29 +115,13 @@ export class OpenRouterProvider implements Provider {
 
     // Demote on KEY_FAILURE so the next request tries a healthier key first.
     if (res.kind === 'KEY_FAILURE') {
-      this.demote(rawIdx, res.status);
+      this.keyOrder.demote(rawIdx);
+      this.log.warn(
+        { provider: this.id, keyIndex: rawIdx + 1, status: res.status },
+        'openrouter key demoted to back of queue',
+      );
     }
     return res;
-  }
-
-  /**
-   * Move the slot with the given raw index to the back of the queue. Called
-   * when a key returns KEY_FAILURE (401/402/403/429). Idempotent: re-demoting
-   * an already-back key keeps it at the back. There is no cooldown timer - the
-   * key naturally returns to the front as other keys are tried (round-robin),
-   * which matches the transient nature of rate-limit failures better than any
-   * fixed timeout would.
-   */
-  private demote(rawIdx: number, status: number): void {
-    const pos = this.keyOrder.findIndex((s) => s.idx === rawIdx);
-    if (pos === -1) return;
-    const [slot] = this.keyOrder.splice(pos, 1);
-    if (!slot) return;
-    this.keyOrder.push(slot);
-    this.log.warn(
-      { provider: this.id, keyIndex: rawIdx + 1, status },
-      'openrouter key demoted to back of queue',
-    );
   }
 }
 
