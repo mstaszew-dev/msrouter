@@ -131,6 +131,18 @@ describe('constraint: source files stay under 250 lines (module size budget)', (
     'agent/goal.ts',
     'main.ts',
     'worker.ts',
+    'director-worker.ts',
+    'director/types.ts',
+    'director/observe.ts',
+    'director/classify.ts',
+    'director/propose.ts',
+    'director/apply.ts',
+    'director/restart.ts',
+    'director/ledger.ts',
+    'director/surface.ts',
+    'director/rag.ts',
+    'director/loop.ts',
+    'director/index.ts',
   ];
   for (const f of files) {
     it(`${f} <= 250 lines`, () => {
