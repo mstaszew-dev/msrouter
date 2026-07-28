@@ -8,9 +8,11 @@
  * proposes nothing.
  */
 
+import { execFile } from 'node:child_process';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { promisify } from 'node:util';
 
 import type { Logger } from 'pino';
 
@@ -23,6 +25,8 @@ import { observe } from './observe.js';
 import { propose } from './propose.js';
 import { snapshot as snapshotWorker, startWorkerInIterm } from './restart.js';
 import type { Checkpoint, DirectorRunResult, DirectorSurface } from './types.js';
+
+const execFileP = promisify(execFile);
 
 function expandTilde(p: string): string {
   if (p.startsWith('~/') || p === '~') return join(homedir(), p.slice(1));
@@ -55,6 +59,24 @@ export class DirectorLoop {
   private async publishEvent(key: string, value: string): Promise<void> {
     if (!this.kafkaOpts) return;
     await kafkaProduce('director-events', key, value, this.kafkaOpts);
+  }
+
+  /** Rebuild the campaign RAG index after new submissions. */
+  private async rebuildRag(): Promise<void> {
+    const workspace = this.opts.env.DIRECTOR_OPENCLAW_WORKSPACE;
+    const ragDir = join(workspace, 'rag');
+    const pythonPath = join(ragDir, '.venv', 'bin', 'python');
+    const builder = join(ragDir, 'index_builder.py');
+    try {
+      this.opts.log.info('Rebuilding campaign RAG index...');
+      const { stdout } = await execFileP(pythonPath, [builder], {
+        cwd: ragDir,
+        timeout: 120_000,
+      });
+      this.opts.log.info({ lines: stdout.split('\n').length }, 'RAG rebuild complete');
+    } catch (e) {
+      this.opts.log.warn({ err: e instanceof Error ? e.message : String(e) }, 'RAG rebuild failed');
+    }
   }
 
   /** Check if the campaign is running and start it via iTerm if not. */
@@ -144,6 +166,11 @@ export class DirectorLoop {
             classifications: classificationsCount,
           }),
         );
+      }
+
+      // Auto-rebuild RAG when new submissions are detected
+      if (subChanged) {
+        await this.rebuildRag();
       }
 
       // 4. Propose patches if actionable
