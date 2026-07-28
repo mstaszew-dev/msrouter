@@ -107,17 +107,6 @@ produce_one() {
   ok "produced to ${topic}"
 }
 
-case "${1:-status}" in
-  start)   start; create_topics; report ;;
-  stop)    stop ;;
-  restart) stop; sleep 2; start; create_topics; report ;;
-  status)  status ;;
-  topics)  create_topics ;;
-  tail)    shift; tail_topic "$@" ;;
-  produce) shift; produce_one "$@" ;;
-  *) die "unknown: $1 (use: start | stop | restart | status | topics | tail <topic> | produce <topic> <key> <value>)" ;;
-esac
-
 report() {
   cat <<EOF
 
@@ -133,3 +122,14 @@ Kafka broker is up on ${KAFKA_BOOTSTRAP}
 
 EOF
 }
+
+case "${1:-status}" in
+  start)   start; create_topics; report ;;
+  stop)    stop ;;
+  restart) stop; sleep 2; start; create_topics; report ;;
+  status)  status ;;
+  topics)  create_topics ;;
+  tail)    shift; tail_topic "$@" ;;
+  produce) shift; produce_one "$@" ;;
+  *) die "unknown: $1 (use: start | stop | restart | status | topics | tail <topic> | produce <topic> <key> <value>)" ;;
+esac
