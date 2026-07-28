@@ -141,7 +141,7 @@ describe('constraint: source files stay under 250 lines (module size budget)', (
     'director/ledger.ts',
     'director/surface.ts',
     'director/rag.ts',
-    'director/loop.ts',
+    'director/agent-loop.ts',
     'director/index.ts',
   ];
   for (const f of files) {

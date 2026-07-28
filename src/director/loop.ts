@@ -9,7 +9,8 @@
  */
 
 import { execFile } from 'node:child_process';
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -20,11 +21,61 @@ import type { Env } from '../config/env.js';
 import type { ProviderChain } from '../providers/chain.js';
 
 import { classify } from './classify.js';
+import { runDirectorAgent } from './agent-loop.js';
 import { kafkaProduce, type KafkaOpts } from './kafka.js';
 import { observe } from './observe.js';
-import { propose } from './propose.js';
+import { readOverrides } from './apply.js';
 import { snapshot as snapshotWorker, startWorkerInIterm } from './restart.js';
-import type { Checkpoint, DirectorRunResult, DirectorSurface } from './types.js';
+import type { Checkpoint, DirectorRunResult, DirectorSurface, Patch } from './types.js';
+
+const MODULE_DIR = dirname(new URL(import.meta.url).pathname);
+
+function readDirectorPrompt(): string {
+  try {
+    return readFileSync(join(MODULE_DIR, 'prompt.md'), 'utf8');
+  } catch {
+    return `You are the Campaign Director. Supervise the campaign. Use tools when needed. Output {"patches":[]} when nothing to propose.`;
+  }
+}
+
+function parseAgentPatches(transcript: string): Patch[] {
+  // Look for the last JSON block with patches
+  const lines = transcript.split('\n');
+  let jsonBlock = '';
+  let inBlock = false;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!;
+    if (line.includes('"patches"')) {
+      jsonBlock = line;
+      break;
+    }
+    // Also check for markdown-fenced JSON at end of transcript
+    if (line.trim().startsWith('```') && !inBlock) {
+      inBlock = true;
+      continue;
+    }
+    if (inBlock) {
+      if (line.trim().startsWith('```')) break;
+      jsonBlock = line + '\n' + jsonBlock;
+    }
+  }
+  if (!jsonBlock.trim()) return [];
+  try {
+    const parsed = JSON.parse(jsonBlock.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, ''));
+    const patches = parsed['patches'];
+    if (!Array.isArray(patches)) return [];
+    return patches.map((p: Record<string, unknown>) => ({
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      overrides: (p['overrides'] ?? {}) as Record<string, string>,
+      rationale: String(p['rationale'] ?? ''),
+      risk: (p['risk'] as 'low' | 'medium' | 'high') ?? 'low',
+      classifications: [],
+    }));
+  } catch {
+    return [];
+  }
+}
 
 const execFileP = promisify(execFile);
 
@@ -173,21 +224,27 @@ export class DirectorLoop {
         await this.rebuildRag();
       }
 
-      // 4. Propose patches if actionable
+      // 4. Enter agent loop with Director tools to propose patches (if actionable)
       const actionable = classifications.filter((c) => c.severity !== 'info');
       if (actionable.length > 0 && !signal.aborted) {
-        const patches = await propose(snapshot, classifications, {
-          chain: this.opts.chain,
-          overridesPath: e.DIRECTOR_OVERRIDES,
-          model: e.DIRECTOR_MODEL || e.WALK_ALIAS[0] || 'mst/free',
-          log: this.opts.log,
+        const overridesText = await readOverrides(e.DIRECTOR_OVERRIDES).then(r => JSON.stringify(r)).catch(() => '(none)');
+        const classificationsText = actionable.map(c => `[${c.severity}] ${c.kind}: ${c.reason}`).join('\n');
+        const directorPrompt = readDirectorPrompt();
+        const systemPrompt = `${directorPrompt}\n\nCurrent overrides: ${overridesText}\n\nRecent classifications:\n${classificationsText}`;
+        const goal = `Campaign: ${snapshot.tracker.submitted}/${snapshot.tracker.target} submitted. Queue: ${snapshot.tracker.queueLength}. Output {"patches":[...]} or nothing.`;
+
+        const result = await runDirectorAgent(
+          this.opts.chain,
+          systemPrompt,
+          goal,
+          e.DIRECTOR_MODEL || e.WALK_ALIAS[0] || 'mst/free',
+          this.opts.log,
           signal,
-        });
-        proposedCount = patches.length;
-        for (const p of patches) {
+        );
+        proposedCount = result.patches.length;
+        for (const p of result.patches) {
           if (signal.aborted) break;
           await this.opts.surface.postProposal(p);
-          // Publish proposal to Kafka
           await this.publishEvent(p.id, JSON.stringify({ kind: 'proposed', patch: p }));
         }
       }
