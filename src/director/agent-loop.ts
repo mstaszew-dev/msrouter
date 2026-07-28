@@ -14,7 +14,7 @@ import { sleep } from '../common/retry.js';
 import type { ProviderChain } from '../providers/chain.js';
 import type { ChatRequestBody } from '../providers/types.js';
 
-import { callTool, toolDefinitions } from './agent-tools.js';
+import { callTool, toolDefinitions, type AgentMode } from './agent-tools.js';
 import type { Patch } from './types.js';
 
 interface AgentMessage {
@@ -49,6 +49,7 @@ export async function runDirectorAgent(
   model: string,
   log: Logger,
   signal: AbortSignal,
+  mode: AgentMode = 'read',
 ): Promise<DirectorAgentResult> {
   const maxSteps = 10;
 
@@ -68,7 +69,7 @@ export async function runDirectorAgent(
     const body: ChatRequestBody = {
       model,
       messages,
-      tools: toolDefinitions() as ChatRequestBody['tools'],
+      tools: toolDefinitions(mode) as ChatRequestBody['tools'],
       stream: false,
     };
 
@@ -136,26 +137,39 @@ export async function runDirectorAgent(
   return { steps, patches: [], transcript };
 }
 
-/** Parse patches JSON from agent output. Looks for last {"patches":[...]} block. */
+/** Parse patches JSON from agent output. Finds the outermost {...} containing "patches". */
 export function parseAgentPatches(text: string): Patch[] {
-  // Try to find a JSON block with patches
-  const jsonMatch = text.match(/\{[\s\S]*?"patches"[\s\S]*?\}/);
-  if (!jsonMatch) return [];
+  // Find the first { that starts a block containing "patches"
+  const startIdx = text.indexOf('{');
+  if (startIdx === -1) return [];
+
+  // Extract the outermost {...} block with brace counting
+  let depth = 0;
+  let jsonStr = '';
+  let started = false;
+  for (let i = startIdx; i < text.length; i++) {
+    const ch = text[i]!;
+    if (ch === '{') { depth++; started = true; }
+    else if (ch === '}') { depth--; }
+    if (started) jsonStr += ch;
+    if (started && depth === 0) break;
+  }
+  if (!jsonStr.includes('"patches"')) return [];
+
   try {
-    const parsed = JSON.parse(jsonMatch[0]);
+    const parsed = JSON.parse(jsonStr);
     const patches = parsed['patches'];
     if (!Array.isArray(patches)) return [];
     return patches.map((p: Record<string, unknown>) => {
       const overrides = p['overrides'] as Record<string, string> | undefined;
-      if (!overrides) return null;
-      // Validate env-var-shaped keys
+      if (!overrides || typeof overrides !== 'object') return null;
       for (const k of Object.keys(overrides)) {
-        if (!KEY_RE.test(k)) return null;
+        if (!KEY_RE.test(k) || typeof overrides[k] !== 'string') return null;
       }
       return {
         id: crypto.randomUUID(),
         createdAt: new Date().toISOString(),
-        overrides,
+        overrides: overrides as Record<string, string>,
         rationale: String(p['rationale'] ?? ''),
         risk: (p['risk'] as 'low' | 'medium' | 'high') ?? 'low',
         classifications: [],

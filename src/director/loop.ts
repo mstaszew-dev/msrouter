@@ -23,8 +23,9 @@ import type { ProviderChain } from '../providers/chain.js';
 import { classify } from './classify.js';
 import { runDirectorAgent } from './agent-loop.js';
 import { kafkaProduce, type KafkaOpts } from './kafka.js';
+import { readPending, readApprovedPatches, readLedger } from './ledger.js';
 import { observe } from './observe.js';
-import { readOverrides } from './apply.js';
+import { readOverrides, applyPatch } from './apply.js';
 import { snapshot as snapshotWorker, startWorkerInIterm } from './restart.js';
 import type { Checkpoint, DirectorRunResult, DirectorSurface, Patch } from './types.js';
 
@@ -224,42 +225,69 @@ export class DirectorLoop {
         await this.rebuildRag();
       }
 
-      // 4. Enter agent loop with Director tools to propose patches (if actionable)
-      const actionable = classifications.filter((c) => c.severity !== 'info');
-      if (actionable.length > 0 && !signal.aborted) {
-        const overridesText = await readOverrides(e.DIRECTOR_OVERRIDES).then(r => JSON.stringify(r)).catch(() => '(none)');
-        const classificationsText = actionable.map(c => `[${c.severity}] ${c.kind}: ${c.reason}`).join('\n');
-        const directorPrompt = readDirectorPrompt();
-        const systemPrompt = `${directorPrompt}\n\nCurrent overrides: ${overridesText}\n\nRecent classifications:\n${classificationsText}`;
-        const goal = `Campaign: ${snapshot.tracker.submitted}/${snapshot.tracker.target} submitted. Queue: ${snapshot.tracker.queueLength}. Output {"patches":[...]} or nothing.`;
+	      // 4. READ-ONLY agent loop to propose patches (investigation only, no write tools)
+	      const actionable = classifications.filter((c) => c.severity !== 'info');
+	      if (actionable.length > 0 && !signal.aborted) {
+	        const overridesText = await readOverrides(e.DIRECTOR_OVERRIDES).then(r => JSON.stringify(r)).catch(() => '(none)');
+	        const classificationsText = actionable.map(c => `[${c.severity}] ${c.kind}: ${c.reason}`).join('\n');
+	        const directorPrompt = readDirectorPrompt();
+	        const systemPrompt = `${directorPrompt}\n\nYou are in READ-ONLY mode. Investigate freely but do NOT write anything.\n\nCurrent overrides:\n${overridesText}\n\nRecent classifications:\n${classificationsText}`;
+	        const goal = `Campaign: ${snapshot.tracker.submitted}/${snapshot.tracker.target} submitted. Queue: ${snapshot.tracker.queueLength}. Investigate and output {"patches":[...]} or nothing.`;
 
-        const result = await runDirectorAgent(
-          this.opts.chain,
-          systemPrompt,
-          goal,
-          e.DIRECTOR_MODEL || e.WALK_ALIAS[0] || 'mst/free',
-          this.opts.log,
-          signal,
-        );
-        proposedCount = result.patches.length;
-        for (const p of result.patches) {
-          if (signal.aborted) break;
-          await this.opts.surface.postProposal(p);
-          await this.publishEvent(p.id, JSON.stringify({ kind: 'proposed', patch: p }));
-        }
-      }
+	        const result = await runDirectorAgent(
+	          this.opts.chain,
+	          systemPrompt,
+	          goal,
+	          e.DIRECTOR_MODEL || e.WALK_ALIAS[0] || 'mst/free',
+	          this.opts.log,
+	          signal,
+	          'read',
+	        );
+	        proposedCount = result.patches.length;
+	        for (const p of result.patches) {
+	          if (signal.aborted) break;
+	          await this.opts.surface.postProposal(p);
+	          await this.publishEvent(p.id, JSON.stringify({ kind: 'proposed', patch: p }));
+	        }
+	      }
 
-      // 5. Poll Slack for approve/reject commands (dedup via ts)
-      checkpoint = await this.pollAndApplyDecisions(checkpoint);
+	      // 5. Poll Slack for approve/reject commands
+	      checkpoint = await this.pollAndApplyDecisions(checkpoint);
 
-      await this.saveCheckpoint(checkpoint);
-      return {
-        observed,
-        classifications: classificationsCount,
-        proposed: proposedCount,
-        applied: 0,
-        reason: 'ok',
-      };
+	      // 6. Execute approved patches (from any tick) via write-enabled agent loop
+	      const approved = await readApprovedPatches(e.DIRECTOR_LEDGER || join(e.DIRECTOR_OPENCLAW_WORKSPACE, 'director', 'ledger.jsonl'));
+	      if (approved.length > 0 && !signal.aborted) {
+	        const overridesText = await readOverrides(e.DIRECTOR_OVERRIDES).then(r => JSON.stringify(r)).catch(() => '(none)');
+	        const patchesText = approved.map(p => `- ${p.id}: ${p.rationale}  overrides: ${JSON.stringify(p.overrides)}`).join('\n');
+	        const execPrompt = `You are in EXECUTION mode. Apply the following approved patches by writing overrides.\n\nCurrent overrides:\n${overridesText}\n\nApproved patches to apply:\n${patchesText}\n\nFor each patch, call write_prompt_override with the rationale and then output {"applied":["patch-id-1",...]}.`;
+	        const execGoal = `Apply ${approved.length} approved patches by writing overrides.`;
+
+	        await runDirectorAgent(
+	          this.opts.chain,
+	          execPrompt,
+	          execGoal,
+	          e.DIRECTOR_MODEL || e.WALK_ALIAS[0] || 'mst/free',
+	          this.opts.log,
+	          signal,
+	          'write',
+	        );
+
+	        // After execution loop, directly apply patches to overrides file
+	        for (const p of approved) {
+	          await applyPatch(p, e.DIRECTOR_OVERRIDES);
+	          await this.opts.surface.postApplied(p);
+	          await this.publishEvent(p.id, JSON.stringify({ kind: 'applied', patch: p }));
+	        }
+	      }
+
+	      await this.saveCheckpoint(checkpoint);
+	      return {
+	        observed,
+	        classifications: classificationsCount,
+	        proposed: proposedCount,
+	        applied: 0,
+	        reason: 'ok',
+	      };
     } catch (e2) {
       this.opts.log.error(
         { err: e2 instanceof Error ? e2.message : String(e2) },

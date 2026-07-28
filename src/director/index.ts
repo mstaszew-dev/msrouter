@@ -24,7 +24,7 @@ export {
   restartWorker,
 } from './restart.js';
 export type { SuperviseOpts, SuperviseState } from './restart.js';
-export { appendLedger, readLedger, readPending } from './ledger.js';
+export { appendLedger, readLedger, readPending, readApprovedPatches } from './ledger.js';
 export type {
   CampaignSnapshot,
   TrackerSummary,

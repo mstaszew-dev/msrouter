@@ -23,6 +23,7 @@ export async function appendLedger(path: string, entry: LedgerEntry): Promise<vo
   }
 }
 
+/** Read all LedgerEntry from the ledger file. */
 export async function readLedger(path: string): Promise<LedgerEntry[]> {
   let raw: string;
   try {
@@ -55,4 +56,30 @@ export async function readPending(path: string): Promise<Patch[]> {
     }
   }
   return [...proposed.entries()].filter(([id]) => !decided.has(id)).map(([, p]) => p);
+}
+
+/**
+ * Read patches that were approved but not yet applied.
+ * Finds: proposed + approved decision - no applied entry.
+ */
+export async function readApprovedPatches(path: string): Promise<Patch[]> {
+  const entries = await readLedger(path);
+  const applied = new Set<string>();
+  const approved = new Map<string, Patch>();
+  for (const e of entries) {
+    if (e.kind === 'applied' && e.patchId) {
+      applied.add(e.patchId);
+    } else if (e.kind === 'decided' && e.patchId && e.decision?.decision === 'approved') {
+      // Keep the patchId for later lookup
+      approved.set(e.patchId, undefined as unknown as Patch);
+    } else if (e.kind === 'proposed' && e.patch && e.patchId) {
+      // Store the full patch for lookup
+      approved.set(e.patchId, e.patch);
+    }
+  }
+  // Filter to approved patches NOT yet applied, where we have the full patch object
+  return [...approved.entries()]
+    .filter(([id]) => !applied.has(id))
+    .map(([, p]) => p)
+    .filter((p): p is Patch => p !== undefined);
 }
