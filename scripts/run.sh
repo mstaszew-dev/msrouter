@@ -86,15 +86,6 @@ wait_ready() {
   die "gateway did not become ready in 20s"
 }
 
-case "${1:-dev}" in
-  dev|"")  start_gateway_dev; wait_ready; report ;;
-  prod)    start_gateway_prod; wait_ready; report ;;
-  worker)  start_worker; ok "worker started" ;;
-  chrome)  start_chrome ;;
-  down)    down ;;
-  logs)    tail -F ".run/${2:-gateway}.log" 2>/dev/null || die "no log for ${2:-gateway}" ;;
-  *) die "unknown command: $1 (use: dev | prod | worker | chrome | logs <name> | down)" ;;
-esac
 
 report() {
   local port="${PORT:-8787}"
@@ -121,3 +112,13 @@ msrouter gateway is up on http://localhost:${port}
   Stop:    scripts/run.sh down
 EOF
 }
+
+case "${1:-dev}" in
+  dev|"")  start_gateway_dev; wait_ready; report ;;
+  prod)    start_gateway_prod; wait_ready; report ;;
+  worker)  start_worker; ok "worker started" ;;
+  chrome)  start_chrome ;;
+  down)    down ;;
+  logs)    tail -F ".run/${2:-gateway}.log" 2>/dev/null || die "no log for ${2:-gateway}" ;;
+  *) die "unknown command: $1 (use: dev | prod | worker | chrome | logs <name> | down)" ;;
+esac
