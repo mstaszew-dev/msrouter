@@ -204,8 +204,12 @@ export class DirectorLoop {
       const { snapshot, checkpoint: next } = await observe(checkpoint, {
         campaignDir: e.DIRECTOR_CAMPAIGN_DIR,
       });
-      // Carry over Slack ts from previous checkpoint
+      // Carry over Slack ts + tracking fields from previous checkpoint
+      // (observe() only sets eventsReadOffset and lastTickAt)
       next.lastSlackTs = checkpoint.lastSlackTs;
+      next.lastSubmitted = checkpoint.lastSubmitted;
+      next.lastQueueLength = checkpoint.lastQueueLength;
+      next.lastProposalHash = checkpoint.lastProposalHash;
       checkpoint = next;
       observed = snapshot.recentEvents.length;
       this.opts.log.debug({ events: observed, submitted: snapshot.tracker.submitted, target: snapshot.tracker.target }, 'Observe complete');
