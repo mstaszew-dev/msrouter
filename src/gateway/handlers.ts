@@ -16,7 +16,7 @@ import type { Logger } from 'pino';
 import { DomainError, errorMessage, toErrorBody, ValidationError } from '../common/errors.js';
 import type { HttpRequest, Router } from '../common/http.js';
 import { sendJson } from '../common/http.js';
-import { env } from '../config/env.js';
+import { env, config } from '../config/env.js';
 import { type ProviderChain } from '../providers/chain.js';
 import { scrubSecrets } from '../providers/fetch.js';
 import type { ChatRequestBody } from '../providers/types.js';
@@ -188,7 +188,7 @@ function handleModels(res: ServerResponse): void {
   ];
   if (cfg.OPENAI_API_KEY) data.push({ id: cfg.OPENAI_MODEL, object: 'model', owned_by: 'openai' });
   if (cfg.ZAI_API_KEY) data.push({ id: cfg.ZAI_MODEL, object: 'model', owned_by: 'zai' });
-  if (cfg.OPENCODE_API_KEY) {
+  if (config().opencodeKeys.length > 0) {
     data.push({ id: cfg.OPENCODE_MODEL, object: 'model', owned_by: 'opencode-bigpickle' });
     data.push({ id: cfg.OPENCODE_NEMOTRON_MODEL, object: 'model', owned_by: 'opencode-nemotron' });
     data.push({ id: cfg.OPENCODE_DEEPSEEK_FLASH_MODEL, object: 'model', owned_by: 'opencode-deepseek-flash' });
