@@ -20,14 +20,14 @@ import type { Logger } from 'pino';
 import type { Env } from '../config/env.js';
 import type { ProviderChain } from '../providers/chain.js';
 
-import { classify } from './classify.js';
 import { runDirectorAgent } from './agent-loop.js';
-import { kafkaProduce, type KafkaOpts } from './kafka.js';
-import { readPending, readApprovedPatches, readLedger } from './ledger.js';
-import { observe } from './observe.js';
 import { readOverrides, applyPatch } from './apply.js';
+import { classify } from './classify.js';
+import { kafkaProduce, type KafkaOpts } from './kafka.js';
+import { readApprovedPatches } from './ledger.js';
+import { observe } from './observe.js';
 import { snapshot as snapshotWorker, startWorkerInIterm } from './restart.js';
-import type { Checkpoint, DirectorRunResult, DirectorSurface, Patch } from './types.js';
+import type { Checkpoint, DirectorRunResult, DirectorSurface } from './types.js';
 
 const MODULE_DIR = dirname(new URL(import.meta.url).pathname);
 
@@ -36,45 +36,6 @@ function readDirectorPrompt(): string {
     return readFileSync(join(MODULE_DIR, 'prompt.md'), 'utf8');
   } catch {
     return `You are the Campaign Director. Supervise the campaign. Use tools when needed. Output {"patches":[]} when nothing to propose.`;
-  }
-}
-
-function parseAgentPatches(transcript: string): Patch[] {
-  // Look for the last JSON block with patches
-  const lines = transcript.split('\n');
-  let jsonBlock = '';
-  let inBlock = false;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i]!;
-    if (line.includes('"patches"')) {
-      jsonBlock = line;
-      break;
-    }
-    // Also check for markdown-fenced JSON at end of transcript
-    if (line.trim().startsWith('```') && !inBlock) {
-      inBlock = true;
-      continue;
-    }
-    if (inBlock) {
-      if (line.trim().startsWith('```')) break;
-      jsonBlock = line + '\n' + jsonBlock;
-    }
-  }
-  if (!jsonBlock.trim()) return [];
-  try {
-    const parsed = JSON.parse(jsonBlock.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/i, ''));
-    const patches = parsed['patches'];
-    if (!Array.isArray(patches)) return [];
-    return patches.map((p: Record<string, unknown>) => ({
-      id: crypto.randomUUID(),
-      createdAt: new Date().toISOString(),
-      overrides: (p['overrides'] ?? {}) as Record<string, string>,
-      rationale: String(p['rationale'] ?? ''),
-      risk: (p['risk'] as 'low' | 'medium' | 'high') ?? 'low',
-      classifications: [],
-    }));
-  } catch {
-    return [];
   }
 }
 

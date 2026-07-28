@@ -69,7 +69,7 @@ export async function runDirectorAgent(
     const body: ChatRequestBody = {
       model,
       messages,
-      tools: toolDefinitions(mode) as ChatRequestBody['tools'],
+      tools: toolDefinitions(mode),
       stream: false,
     };
 
@@ -139,11 +139,9 @@ export async function runDirectorAgent(
 
 /** Parse patches JSON from agent output. Finds the outermost {...} containing "patches". */
 export function parseAgentPatches(text: string): Patch[] {
-  // Find the first { that starts a block containing "patches"
   const startIdx = text.indexOf('{');
   if (startIdx === -1) return [];
 
-  // Extract the outermost {...} block with brace counting
   let depth = 0;
   let jsonStr = '';
   let started = false;
@@ -157,24 +155,36 @@ export function parseAgentPatches(text: string): Patch[] {
   if (!jsonStr.includes('"patches"')) return [];
 
   try {
-    const parsed = JSON.parse(jsonStr);
+    const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
     const patches = parsed['patches'];
     if (!Array.isArray(patches)) return [];
-    return patches.map((p: Record<string, unknown>) => {
-      const overrides = p['overrides'] as Record<string, string> | undefined;
-      if (!overrides || typeof overrides !== 'object') return null;
-      for (const k of Object.keys(overrides)) {
-        if (!KEY_RE.test(k) || typeof overrides[k] !== 'string') return null;
+    const results: Patch[] = [];
+    for (const item of patches) {
+      if (!item || typeof item !== 'object') continue;
+      const p = item as Record<string, unknown>;
+      const overrides = p['overrides'];
+      if (!overrides || typeof overrides !== 'object') continue;
+      const clean: Record<string, string> = {};
+      const entries = Object.entries(overrides as Record<string, unknown>);
+      let valid = true;
+      for (const [k, v] of entries) {
+        if (!KEY_RE.test(k) || typeof v !== 'string') {
+          valid = false;
+          break;
+        }
+        clean[k] = v;
       }
-      return {
+      if (!valid || Object.keys(clean).length === 0) continue;
+      results.push({
         id: crypto.randomUUID(),
         createdAt: new Date().toISOString(),
-        overrides: overrides as Record<string, string>,
-        rationale: String(p['rationale'] ?? ''),
-        risk: (p['risk'] as 'low' | 'medium' | 'high') ?? 'low',
+        overrides: clean,
+        rationale: typeof p['rationale'] === 'string' ? p['rationale'] : '',
+        risk: p['risk'] === 'medium' || p['risk'] === 'high' ? p['risk'] : 'low',
         classifications: [],
-      };
-    }).filter(Boolean) as Patch[];
+      });
+    }
+    return results;
   } catch {
     return [];
   }
