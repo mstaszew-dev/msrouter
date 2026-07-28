@@ -224,23 +224,29 @@ export class DirectorLoop {
       const subChanged = snapshot.tracker.submitted !== checkpoint.lastSubmitted;
       const queueChanged = snapshot.tracker.queueLength !== checkpoint.lastQueueLength;
       const hasClassifications = classificationsCount > 0;
-      if (subChanged || queueChanged || hasClassifications) {
-        checkpoint.lastSubmitted = snapshot.tracker.submitted;
-        checkpoint.lastQueueLength = snapshot.tracker.queueLength;
-        await this.publishEvent(
-          `obs-${Date.now()}`,
-          JSON.stringify({
-            kind: 'observation',
-            snapshot: {
-              submitted: snapshot.tracker.submitted,
-              target: snapshot.tracker.target,
-              queueLength: snapshot.tracker.queueLength,
-            },
-            classifications: classificationsCount,
-          }),
-        );
-        this.opts.log.debug({ subChanged, queueChanged, hasClassifications }, 'Observation event published');
-      }
+	      if (subChanged || queueChanged || hasClassifications) {
+	        checkpoint.lastSubmitted = snapshot.tracker.submitted;
+	        checkpoint.lastQueueLength = snapshot.tracker.queueLength;
+	        await this.publishEvent(
+	          `obs-${Date.now()}`,
+	          JSON.stringify({
+	            kind: 'observation',
+	            snapshot: {
+	              submitted: snapshot.tracker.submitted,
+	              target: snapshot.tracker.target,
+	              queueLength: snapshot.tracker.queueLength,
+	            },
+	            classifications: classificationsCount,
+	          }),
+	        );
+	        // Also post to Slack (surface handles ledger + Slack message)
+	        await this.opts.surface.postObservation({
+	          submitted: snapshot.tracker.submitted,
+	          target: snapshot.tracker.target,
+	          queueLength: snapshot.tracker.queueLength,
+	        });
+	        this.opts.log.debug({ subChanged, queueChanged, hasClassifications }, 'Observation event published');
+	      }
 
       // Auto-rebuild RAG when new submissions are detected
       if (subChanged) {

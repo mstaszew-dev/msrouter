@@ -55,7 +55,7 @@ export interface PatchDecision {
 
 export interface LedgerEntry {
   at: string;
-  kind: 'proposed' | 'decided' | 'applied' | 'restart' | 'error';
+  kind: 'proposed' | 'decided' | 'applied' | 'restart' | 'observation' | 'error';
   patchId?: string;
   decision?: PatchDecision;
   patch?: Patch; // present on 'proposed' entries
@@ -66,6 +66,7 @@ export interface DirectorSurface {
   postProposal(patch: Patch): Promise<void>;
   postDecision(decision: PatchDecision): Promise<void>;
   postApplied(patch: Patch): Promise<void>;
+  postObservation(snapshot: { submitted: number; target: number; queueLength: number }): Promise<void>;
   postRestart(detail: { pid: number; logPath: string }): Promise<void>;
   pollSlackMessages(lastTs?: string): Promise<{ decisions: PatchDecision[]; latestTs?: string }>;
 }

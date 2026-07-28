@@ -71,6 +71,15 @@ export class NullSurface implements DirectorSurface {
     this.opts.log.info({ pid: detail.pid }, 'worker restart recorded');
   }
 
+  async postObservation(snapshot: { submitted: number; target: number; queueLength: number }): Promise<void> {
+    await appendLedger(this.opts.ledgerPath, {
+      at: new Date().toISOString(),
+      kind: 'observation',
+      detail: `submitted=${snapshot.submitted} target=${snapshot.target} queue=${snapshot.queueLength}`,
+    });
+    this.opts.log.debug({ submitted: snapshot.submitted }, 'observation recorded');
+  }
+
   async pollSlackMessages(_lastTs?: string): Promise<{ decisions: PatchDecision[]; latestTs?: string }> {
     // NullSurface has no Slack connection; return empty.
     return { decisions: [], latestTs: _lastTs };
@@ -118,6 +127,12 @@ export class SlackSurface extends NullSurface {
   override async postRestart(detail: { pid: number; logPath: string }): Promise<void> {
     await super.postRestart(detail);
     const message = this.buildRestartMessage(detail);
+    await this.sendToSlack(message);
+  }
+
+  override async postObservation(snapshot: { submitted: number; target: number; queueLength: number }): Promise<void> {
+    await super.postObservation(snapshot);
+    const message = this.buildObservationMessage(snapshot);
     await this.sendToSlack(message);
   }
 
@@ -272,5 +287,9 @@ export class SlackSurface extends NullSurface {
 
   private buildRestartMessage(detail: { pid: number; logPath: string }): string {
     return `*Director Restart*: Campaign restarted (PID: ${detail.pid}). Log: ${detail.logPath}`;
+  }
+
+  private buildObservationMessage(snapshot: { submitted: number; target: number; queueLength: number }): string {
+    return `*Campaign Status*: ${snapshot.submitted}/${snapshot.target} submitted (${snapshot.target - snapshot.submitted} to go). Queue: ${snapshot.queueLength}`;
   }
 }
