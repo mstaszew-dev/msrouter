@@ -143,7 +143,23 @@ export class SlackSurface extends NullSurface {
     }
 
     try {
-      if (this.webhookUrl) {
+      // Prefer botToken + explicit channel (routes to #jobcampaign).
+      // Fall back to webhook only if no bot token is configured — webhook URLs
+      // are tied to the channel they were created for and may not match.
+      if (this.botToken && this.channel) {
+        const res = await fetch('https://slack.com/api/chat.postMessage', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${this.botToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ channel: this.channel, text: message }),
+        });
+        const data = await res.json() as { ok?: boolean; error?: string };
+        if (!data.ok) {
+          this.log.error({ error: data.error }, 'Slack chat.postMessage failed');
+        }
+      } else if (this.webhookUrl) {
         const res = await fetch(this.webhookUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -152,10 +168,7 @@ export class SlackSurface extends NullSurface {
         if (!res.ok) {
           this.log.error({ status: res.status }, 'Slack webhook post failed');
         }
-      } else if (this.botToken && this.channel) {
-        const res = await fetch('https://slack.com/api/chat.postMessage', {
-          method: 'POST',
-          headers: {
+      }
             'Authorization': `Bearer ${this.botToken}`,
             'Content-Type': 'application/json',
           },
