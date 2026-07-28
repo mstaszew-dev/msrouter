@@ -1,17 +1,15 @@
 /**
  * director-slack-sender.ts: Standalone process that consumes Director events
- * from the Kafka topic director-events and posts them to Slack. This decouples
- * outbound Slack delivery from the Director's tick.
+ * from the Kafka topic director-events and posts them to Slack.
  *
- * Flow: kafkaConsume(director-events) -> parse event JSON -> format message -> sendToSlack
+ * Flow: kafkaConsume(director-events, group=director-sender) -> parse -> format -> sendToSlack
  *
- * Runs a poll loop (every KAFKA_POLL_INTERVAL_SECONDS) that drains the topic
- * and delivers any pending events to Slack.
+ * Consumer group offsets are managed by Kafka (auto-commit on exit).
+ * Runs every KAFKA_POLL_INTERVAL_SECONDS.
  */
 
 import 'dotenv/config';
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -36,14 +34,12 @@ async function main(): Promise<void> {
   }
 
   const intervalSec = env.KAFKA_POLL_INTERVAL_SECONDS;
-  const statePath = join(env.DIRECTOR_OPENCLAW_WORKSPACE, 'director', 'sender-state.json');
 
   log.info(
     { intervalSec, channel: env.SLACK_CHANNEL, topic: TOPIC },
     'Kafka->Slack sender started',
   );
 
-  let lastOffset = await loadLastOffset(statePath);
   let runController: AbortController | undefined;
 
   const sendOnce = async () => {
@@ -59,33 +55,21 @@ async function main(): Promise<void> {
         log,
         maxMessages: 50,
         timeoutMs: 5000,
+        groupId: 'director-sender',
       });
 
-      if (messages.length === 0) {
-        return;
-      }
+      if (messages.length === 0) return;
 
       let count = 0;
       for (const msg of messages) {
-        const event = JSON.parse(msg.value) as {
-          kind?: string;
-          patch?: { id?: string; rationale?: string; risk?: string; overrides?: Record<string, string> };
-          decision?: { patchId?: string; decision?: string; reason?: string };
-          snapshot?: { submitted?: number; target?: number };
-          detail?: string;
-        };
-
+        const event = JSON.parse(msg.value) as Record<string, unknown>;
         const text = formatEvent(event);
         if (!text) continue;
-
         await sendToSlack(text, env.SLACK_BOT_TOKEN!, env.SLACK_CHANNEL!);
         count++;
       }
 
-      // Update offset (simplified: we track message count, not true Kafka offsets)
-      lastOffset += messages.length;
-      await saveLastOffset(statePath, lastOffset);
-      log.info({ count, totalSeen: lastOffset }, 'send cycle complete');
+      log.info({ count }, 'send cycle complete');
     } catch (e) {
       log.error({ err: e instanceof Error ? e.message : String(e) }, 'send cycle failed');
     } finally {
@@ -129,7 +113,7 @@ function formatEvent(event: Record<string, unknown>): string | undefined {
     case 'decided': {
       const decision = event['decision'] as { patchId?: string; decision?: string; reason?: string } | undefined;
       if (!decision) return undefined;
-      return `*Director Decision*: ${decision.decision} on patch ${decision.patchId}${decision.reason ? ` — ${decision.reason}` : ''}`;
+      return `*Director Decision*: ${decision.decision} on patch ${decision.patchId}${decision.reason ? ` - ${decision.reason}` : ''}`;
     }
     case 'applied': {
       const patch = event['patch'] as { id?: string } | undefined;
@@ -150,7 +134,7 @@ function formatEvent(event: Record<string, unknown>): string | undefined {
 
 async function sendToSlack(text: string, botToken: string, channel: string): Promise<void> {
   try {
-    const res = await fetch('https://slack.com/api/chat.postMessage', {
+    await fetch('https://slack.com/api/chat.postMessage', {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${botToken}`,
@@ -158,27 +142,9 @@ async function sendToSlack(text: string, botToken: string, channel: string): Pro
       },
       body: JSON.stringify({ channel, text }),
     });
-    const data = (await res.json()) as { ok?: boolean; error?: string };
-    if (!data.ok) {
-      // Logged but not fatal
-    }
   } catch {
-    // Logged by caller
+    /* logged by caller */
   }
-}
-
-async function loadLastOffset(path: string): Promise<number> {
-  try {
-    const raw = await readFile(path, 'utf8');
-    return (JSON.parse(raw) as { lastOffset?: number }).lastOffset ?? 0;
-  } catch {
-    return 0;
-  }
-}
-
-async function saveLastOffset(path: string, offset: number): Promise<void> {
-  await mkdir(join(path, '..'), { recursive: true }).catch(() => {});
-  await writeFile(path, JSON.stringify({ lastOffset: offset }), 'utf8');
 }
 
 void main();

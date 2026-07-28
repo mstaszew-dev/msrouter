@@ -74,17 +74,17 @@ export async function kafkaProduce(
  */
 export async function kafkaConsume(
   topic: string,
-  opts: KafkaOpts & { maxMessages?: number; timeoutMs?: number },
+  opts: KafkaOpts & { maxMessages?: number; timeoutMs?: number; groupId?: string },
 ): Promise<KafkaMessage[]> {
   const consumerScript = join(opts.kafkaHome, 'bin', 'kafka-console-consumer.sh');
   const args = [
     '--topic', topic,
     '--bootstrap-server', opts.bootstrap,
-    '--from-beginning',
     '--property', 'print.key=true',
     '--property', 'key.separator=\t',
     '--max-messages', String(opts.maxMessages ?? 100),
     '--timeout-ms', String(opts.timeoutMs ?? 5000),
+    '--group', opts.groupId ?? 'director-consumer',
   ];
 
   try {
