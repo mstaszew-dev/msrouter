@@ -24,7 +24,7 @@ tell application "iTerm2"
     # --- Tab 2: Router gateway ---
     set t2 to (create tab with default profile)
     tell current session of t2
-      write text "cd /Users/mst/ZCodeProject/msrouter; clear; echo ROUTER GATEWAY; scripts/run.sh dev"
+      write text "cd /Users/mst/ZCodeProject/msrouter; clear; echo ROUTER GATEWAY; npx tsx src/main.ts"
     end tell
 
     # --- Tab 3: Director + Poller + Sender ---
