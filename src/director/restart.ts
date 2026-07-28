@@ -122,14 +122,15 @@ export function startWorkerInIterm(opts: SuperviseOpts): void {
   const script = `
 tell application "iTerm2"
   if (count of windows) = 0 then
-    create window with default profile
-    set newTab to current session of current window
+    set newWin to (create window with default profile)
+    set newSess to current session of newWin
   else
     tell current window
       set newTab to (create tab with default profile)
+      set newSess to current session of newTab
     end tell
   end if
-  tell newTab
+  tell newSess
     write text "${cmd}"
   end tell
 end tell`;
