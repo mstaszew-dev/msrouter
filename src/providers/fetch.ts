@@ -10,6 +10,7 @@
 
 import type { ProviderCallResult } from './types.js';
 import { classifyAttempt, type ChatRequestBody } from './types.js';
+import { checkStreamContent, isEmptyCompletion } from './stream-check.js';
 
 export interface UpstreamOptions {
   baseUrl: string;
@@ -93,7 +94,19 @@ export async function postChatCompletion(
           };
         }
       }
-      return { kind: 'OK', response: res };
+      // Streaming: peek at the first SSE event before forwarding the stream.
+      // Models like big-pickle return an SSE stream with no content tokens
+      // and finish_reason=length. Detect this upfront so the provider can
+      // demote the triple instead of passing an empty stream to the caller.
+      const streamResult = await checkStreamContent(res);
+      if (!streamResult.ok) {
+        return {
+          kind: 'KEY_FAILURE',
+          status: 200,
+          message: streamResult.reason ?? 'stream returned no content',
+        };
+      }
+      return { kind: 'OK', response: streamResult.response };
     }
     // Drain the error body (small) so the message can guide the chain. The
     // body is SCRUBBED of secret-shaped strings (sk-..., Bearer ...) because
@@ -155,32 +168,4 @@ export function scrubSecrets(input: string): string {
 
 function truncate(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max) + '...';
-}
-
-/**
- * Check whether a parsed chat-completion JSON body represents an empty response:
- * HTTP 200, no error, but choices[].message.content is empty/null and
- * finish_reason is not 'stop'. Models like big-pickle return this pattern when
- * they are reasoning-only models that don't generate user-facing text.
- */
-function isEmptyCompletion(json: unknown): boolean {
-  if (!json || typeof json !== 'object') return false;
-  const obj = json as Record<string, unknown>;
-  if ('error' in obj && obj.error) return false;
-  const choices = obj.choices;
-  if (!Array.isArray(choices) || choices.length === 0) return false;
-  for (const c of choices) {
-    if (!c || typeof c !== 'object') continue;
-    const choice = c as Record<string, unknown>;
-    const message = choice.message as Record<string, unknown> | undefined;
-    if (!message || typeof message !== 'object') continue;
-    const content = message.content;
-    const finishReason = choice.finish_reason;
-    // Not empty if content is present and non-empty
-    if (typeof content === 'string' && content.length > 0) return false;
-    // Not empty if finish_reason is 'stop' (model chose to say nothing)
-    if (finishReason === 'stop') return false;
-  }
-  // All choices have empty content and finish_reason !== 'stop'
-  return true;
 }

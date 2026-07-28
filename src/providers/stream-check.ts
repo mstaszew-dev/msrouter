@@ -1,0 +1,146 @@
+/**
+ * stream-check.ts: empty-content detection for streaming and non-streaming
+ * chat-completion responses. Extracted from fetch.ts to stay under the
+ * 250-line module size budget.
+ */
+
+/**
+ * Check whether a parsed chat-completion JSON body represents an empty response:
+ * HTTP 200, no error, but choices[].message.content is empty/null and
+ * finish_reason is not 'stop'. Models like big-pickle return this pattern when
+ * they are reasoning-only models that don't generate user-facing text.
+ */
+export function isEmptyCompletion(json: unknown): boolean {
+  if (!json || typeof json !== 'object') return false;
+  const obj = json as Record<string, unknown>;
+  if ('error' in obj && obj.error) return false;
+  const choices = obj.choices;
+  if (!Array.isArray(choices) || choices.length === 0) return false;
+  for (const c of choices) {
+    if (!c || typeof c !== 'object') continue;
+    const choice = c as Record<string, unknown>;
+    const message = choice.message as Record<string, unknown> | undefined;
+    if (!message || typeof message !== 'object') continue;
+    const content = message.content;
+    const finishReason = choice.finish_reason;
+    // Not empty if content is present and non-empty
+    if (typeof content === 'string' && content.length > 0) return false;
+    // Not empty if finish_reason is 'stop' (model chose to say nothing)
+    if (finishReason === 'stop') return false;
+  }
+  // All choices have empty content and finish_reason !== 'stop'
+  return true;
+}
+
+/**
+ * Peek at a streaming SSE response for actual content before forwarding.
+ * Reads enough of the stream to get the first complete SSE event. If the
+ * event contains a content delta, reconstruct a new Response with the read
+ * data prepended. If the stream is empty or the first events show no content
+ * (e.g. big-pickle with finish_reason=length and empty delta), return
+ * { ok: false } so the caller treats this as a KEY_FAILURE.
+ */
+export async function checkStreamContent(
+  res: Response,
+): Promise<{ ok: true; response: Response } | { ok: false; reason: string }> {
+  const reader = res.body?.getReader();
+  if (!reader) {
+    return { ok: false, reason: 'no response body' };
+  }
+
+  const decoder = new TextDecoder();
+  const chunks: Uint8Array[] = [];
+  let buffer = '';
+  let hasContent = false;
+
+  // Read chunks until we've seen the first complete SSE event or stream ends.
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done && chunks.length === 0) {
+      return { ok: false, reason: 'stream ended with no data' };
+    }
+    if (value) {
+      chunks.push(value);
+      buffer += decoder.decode(value, { stream: true });
+    }
+    if (done) break;
+
+    // Check if we have at least one complete SSE event (\n\n).
+    if (buffer.includes('\n\n')) {
+      const events = buffer.split('\n\n');
+      for (const ev of events) {
+        if (ev.trim() === '' || ev === '[DONE]') continue;
+        for (const line of ev.split('\n')) {
+          if (!line.startsWith('data: ')) continue;
+          const jsonStr = line.slice(6).trim();
+          if (jsonStr === '[DONE]') continue;
+          try {
+            const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
+            const choices = parsed.choices;
+            if (!Array.isArray(choices)) continue;
+            for (const c of choices) {
+              if (!c || typeof c !== 'object') continue;
+              const choice = c as Record<string, unknown>;
+              const delta = choice.delta as Record<string, unknown> | undefined;
+              const content = delta?.content;
+              if (typeof content === 'string' && content.length > 0) {
+                hasContent = true;
+                break;
+              }
+            }
+            if (hasContent) break;
+          } catch {
+            // unparseable event line; skip
+          }
+        }
+        if (hasContent) break;
+      }
+      if (hasContent) break;
+    }
+  }
+
+  // Reconstruct a single buffer from all chunks read so far.
+  const totalLen = chunks.reduce((s, c) => s + c.length, 0);
+  const allData = new Uint8Array(totalLen);
+  let offset = 0;
+  for (const c of chunks) {
+    allData.set(c, offset);
+    offset += c.length;
+  }
+
+  if (!hasContent) {
+    // Drain any remaining stream data before discarding.
+    // eslint-disable-next-line no-empty
+    while (!(await reader.read()).done) {}
+    return { ok: false, reason: 'SSE stream had no content tokens' };
+  }
+
+  // Build a new stream with the already-read data, then pipe the rest.
+  const restStream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(allData);
+      (async () => {
+        try {
+          while (true) {
+            const r = await reader.read();
+            if (r.done) break;
+            controller.enqueue(r.value);
+          }
+        } catch {
+          // stream terminated by abort/timeout
+        } finally {
+          controller.close();
+        }
+      })();
+    },
+  });
+
+  return {
+    ok: true,
+    response: new Response(restStream, {
+      status: res.status,
+      statusText: res.statusText,
+      headers: res.headers,
+    }),
+  };
+}
