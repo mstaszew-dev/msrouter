@@ -169,16 +169,6 @@ export class SlackSurface extends NullSurface {
           this.log.error({ status: res.status }, 'Slack webhook post failed');
         }
       }
-            'Authorization': `Bearer ${this.botToken}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ channel: this.channel, text: message }),
-        });
-        const data = await res.json() as { ok?: boolean; error?: string };
-        if (!data.ok) {
-          this.log.error({ error: data.error }, 'Slack chat.postMessage failed');
-        }
-      }
     } catch (e) {
       this.log.error({ err: e instanceof Error ? e.message : String(e) }, 'Slack post failed');
     }
