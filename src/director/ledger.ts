@@ -65,21 +65,19 @@ export async function readPending(path: string): Promise<Patch[]> {
 export async function readApprovedPatches(path: string): Promise<Patch[]> {
   const entries = await readLedger(path);
   const applied = new Set<string>();
-  const approved = new Map<string, Patch>();
+  const approvedIds = new Set<string>();
+  const proposedPatches = new Map<string, Patch>();
   for (const e of entries) {
     if (e.kind === 'applied' && e.patchId) {
       applied.add(e.patchId);
     } else if (e.kind === 'decided' && e.patchId && e.decision?.decision === 'approved') {
-      // Keep the patchId for later lookup
-      approved.set(e.patchId, undefined as unknown as Patch);
+      approvedIds.add(e.patchId);
     } else if (e.kind === 'proposed' && e.patch && e.patchId) {
-      // Store the full patch for lookup
-      approved.set(e.patchId, e.patch);
+      proposedPatches.set(e.patchId, e.patch);
     }
   }
-  // Filter to approved patches NOT yet applied, where we have the full patch object
-  return [...approved.entries()]
-    .filter(([id]) => !applied.has(id))
-    .map(([, p]) => p)
+  return [...approvedIds]
+    .filter((id) => !applied.has(id) && proposedPatches.has(id))
+    .map((id) => proposedPatches.get(id)!)
     .filter((p): p is Patch => p !== undefined);
 }

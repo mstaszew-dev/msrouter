@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { appendLedger, readLedger, readPending } from './ledger.js';
+import { appendLedger, readLedger, readPending, readApprovedPatches } from './ledger.js';
 import type { Patch } from './types.js';
 
 function ledgerPath(): string {
@@ -89,5 +89,98 @@ describe('readPending', () => {
     });
     const pending = await readPending(path);
     expect(pending.map((p) => p.id)).toEqual(['p2']);
+  });
+});
+
+describe('readApprovedPatches', () => {
+  it('returns approved patches that are not yet applied', async () => {
+    const path = ledgerPath();
+    await appendLedger(path, { at: 't1', kind: 'proposed', patchId: 'p1', patch: samplePatch });
+    await appendLedger(path, {
+      at: 't2',
+      kind: 'decided',
+      patchId: 'p1',
+      decision: { patchId: 'p1', decision: 'approved', decidedAt: 't2', decidedBy: 'slack' },
+    });
+    const approved = await readApprovedPatches(path);
+    expect(approved).toHaveLength(1);
+    expect(approved[0]!.id).toBe('p1');
+  });
+
+  it('excludes patches that are rejected', async () => {
+    const path = ledgerPath();
+    await appendLedger(path, { at: 't1', kind: 'proposed', patchId: 'p1', patch: samplePatch });
+    await appendLedger(path, {
+      at: 't2',
+      kind: 'decided',
+      patchId: 'p1',
+      decision: { patchId: 'p1', decision: 'rejected', decidedAt: 't2', decidedBy: 'slack' },
+    });
+    const approved = await readApprovedPatches(path);
+    expect(approved).toEqual([]);
+  });
+
+  it('excludes patches that are already applied', async () => {
+    const path = ledgerPath();
+    await appendLedger(path, { at: 't1', kind: 'proposed', patchId: 'p1', patch: samplePatch });
+    await appendLedger(path, {
+      at: 't2',
+      kind: 'decided',
+      patchId: 'p1',
+      decision: { patchId: 'p1', decision: 'approved', decidedAt: 't2', decidedBy: 'slack' },
+    });
+    await appendLedger(path, { at: 't3', kind: 'applied', patchId: 'p1' });
+    const approved = await readApprovedPatches(path);
+    expect(approved).toEqual([]);
+  });
+
+  it('handles multiple patches with mixed states', async () => {
+    const path = ledgerPath();
+    // p1: proposed + approved + applied -> excluded
+    await appendLedger(path, { at: 't1', kind: 'proposed', patchId: 'p1', patch: samplePatch });
+    await appendLedger(path, {
+      at: 't2',
+      kind: 'decided',
+      patchId: 'p1',
+      decision: { patchId: 'p1', decision: 'approved', decidedAt: 't2', decidedBy: 'slack' },
+    });
+    await appendLedger(path, { at: 't3', kind: 'applied', patchId: 'p1' });
+
+    // p2: proposed + approved -> should be returned
+    await appendLedger(path, {
+      at: 't4',
+      kind: 'proposed',
+      patchId: 'p2',
+      patch: { ...samplePatch, id: 'p2' },
+    });
+    await appendLedger(path, {
+      at: 't5',
+      kind: 'decided',
+      patchId: 'p2',
+      decision: { patchId: 'p2', decision: 'approved', decidedAt: 't5', decidedBy: 'slack' },
+    });
+
+    // p3: proposed + rejected -> excluded
+    await appendLedger(path, {
+      at: 't6',
+      kind: 'proposed',
+      patchId: 'p3',
+      patch: { ...samplePatch, id: 'p3' },
+    });
+    await appendLedger(path, {
+      at: 't7',
+      kind: 'decided',
+      patchId: 'p3',
+      decision: { patchId: 'p3', decision: 'rejected', decidedAt: 't7', decidedBy: 'slack' },
+    });
+
+    const approved = await readApprovedPatches(path);
+    expect(approved.map((p) => p.id)).toEqual(['p2']);
+  });
+
+  it('returns [] on empty ledger', async () => {
+    const path = ledgerPath();
+    const approved = await readApprovedPatches(path);
+    expect(approved).toEqual([]);
   });
 });
