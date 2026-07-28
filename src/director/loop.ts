@@ -125,19 +125,26 @@ export class DirectorLoop {
       const classifications = classify(snapshot);
       classificationsCount = classifications.length;
 
-      // Publish observation event to Kafka
-      await this.publishEvent(
-        `obs-${Date.now()}`,
-        JSON.stringify({
-          kind: 'observation',
-          snapshot: {
-            submitted: snapshot.tracker.submitted,
-            target: snapshot.tracker.target,
-            queueLength: snapshot.tracker.queueLength,
-          },
-          classifications: classificationsCount,
-        }),
-      );
+      // Publish observation event to Kafka (only when data changed)
+      const subChanged = snapshot.tracker.submitted !== checkpoint.lastSubmitted;
+      const queueChanged = snapshot.tracker.queueLength !== checkpoint.lastQueueLength;
+      const hasClassifications = classificationsCount > 0;
+      if (subChanged || queueChanged || hasClassifications) {
+        checkpoint.lastSubmitted = snapshot.tracker.submitted;
+        checkpoint.lastQueueLength = snapshot.tracker.queueLength;
+        await this.publishEvent(
+          `obs-${Date.now()}`,
+          JSON.stringify({
+            kind: 'observation',
+            snapshot: {
+              submitted: snapshot.tracker.submitted,
+              target: snapshot.tracker.target,
+              queueLength: snapshot.tracker.queueLength,
+            },
+            classifications: classificationsCount,
+          }),
+        );
+      }
 
       // 4. Propose patches if actionable
       const actionable = classifications.filter((c) => c.severity !== 'info');

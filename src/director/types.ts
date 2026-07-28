@@ -83,4 +83,8 @@ export interface Checkpoint {
   lastTickAt: string; // ISO 8601
   /** Latest Slack message ts processed (dedup for pollSlackMessages). */
   lastSlackTs?: string;
+  /** Last known submitted count (suppresses duplicate observation events). */
+  lastSubmitted?: number;
+  /** Last known queue length (suppresses duplicate observation events). */
+  lastQueueLength?: number;
 }
