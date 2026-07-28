@@ -244,21 +244,13 @@ export class DirectorLoop {
         await this.rebuildRag();
       }
 
-      // 4. READ-ONLY agent loop to propose patches (skip if duplicate state)
+      // 4. READ-ONLY agent loop to propose patches (skip if same state)
       const actionable = classifications.filter((c) => c.severity !== 'info');
       if (actionable.length > 0 && !signal.aborted) {
         this.opts.log.info({ actionable: actionable.length }, 'Phase 4: Proposing patches');
         const currentHash = hashClassifications(actionable);
         if (currentHash === checkpoint.lastProposalHash) {
-          const ledgerPath = e.DIRECTOR_LEDGER || join(e.DIRECTOR_OPENCLAW_WORKSPACE, 'director', 'ledger.jsonl');
-          const pending = await readPending(ledgerPath).catch(() => []);
-          if (pending.length > 0) {
-            this.opts.log.info({ hash: currentHash, pending: pending.length }, 'Skipping proposal: same state, proposals pending');
-          } else {
-            checkpoint.lastProposalHash = currentHash;
-            proposedCount = await this.proposePatches(actionable, snapshot, e, signal);
-            this.opts.log.info({ proposedCount }, 'Proposal phase complete');
-          }
+          this.opts.log.info({ hash: currentHash }, 'Skipping proposal: same state as last tick');
         } else {
           checkpoint.lastProposalHash = currentHash;
           proposedCount = await this.proposePatches(actionable, snapshot, e, signal);
