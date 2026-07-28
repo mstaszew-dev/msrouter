@@ -60,10 +60,12 @@ export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
   if (oc.available) {
     const snapshot = oc.queueSnapshot();
     for (let t = 0; t < snapshot.length; t++) {
+      const triple = snapshot[t]!;
+      // Include model in label for uniqueness (multiple models per key)
       list.push({
         provider: 'opencode',
-        label: `opencode[triple${t + 1}]`,
-        model: snapshot[t]!.model,
+        label: `opencode[key${triple.keyIdx + 1}/${triple.model}]`,
+        model: triple.model,
         attemptIndex: t,
       });
     }

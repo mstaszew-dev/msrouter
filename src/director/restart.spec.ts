@@ -1,7 +1,11 @@
-import type pino from 'pino';
-import { describe, expect, it, vi } from 'vitest';
+import { existsSync, readFileSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-import { detectWorker, pollCdp, snapshot } from './restart.js';
+import type pino from 'pino';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+
+import { detectWorker, ensureOverrideFiles, pollCdp, snapshot } from './restart.js';
 
 const silent = {
   warn: vi.fn(),
@@ -11,7 +15,7 @@ const silent = {
 } as unknown as pino.Logger;
 
 const opts = {
-  runnerScript: '/Users/mst/ZCodeProject/openclaw-job-search/run-one-job',
+  entryCommand: '/Users/mst/ZCodeProject/openclaw-job-search/run-one-job',
   workspace: '/Users/mst/ZCodeProject/openclaw-job-search',
   cdpUrl: 'http://127.0.0.1:9222',
   log: silent,
@@ -19,8 +23,7 @@ const opts = {
 
 describe('detectWorker', () => {
   it('returns a number[] of pids (length depends on whether campaign is running)', () => {
-    // We only assert the shape; whether the campaign is up is environment-dependent.
-    const pids = detectWorker(opts.runnerScript);
+    const pids = detectWorker(opts.entryCommand);
     expect(Array.isArray(pids)).toBe(true);
     for (const p of pids) {
       expect(typeof p).toBe('number');
@@ -46,8 +49,45 @@ describe('snapshot', () => {
 
 describe('pollCdp', () => {
   it('returns false on a non-listening URL within timeout', async () => {
-    // Port 1 is never listening on macOS; pollCdp must return false fast.
     const out = await pollCdp('http://127.0.0.1:1', 500);
     expect(out).toBe(false);
+  });
+});
+
+describe('ensureOverrideFiles', () => {
+  let realHome: string;
+
+  beforeEach(() => {
+    realHome = process.env['HOME']!;
+    const tmpHome = mkdtempSync(join(tmpdir(), 'director-restart-home-'));
+    process.env['HOME'] = tmpHome;
+  });
+
+  afterEach(() => {
+    process.env['HOME'] = realHome;
+  });
+
+  it('creates director-overrides.env if missing', () => {
+    ensureOverrideFiles();
+    const envPath = join(process.env['HOME']!, '.openclaw', 'director-overrides.env');
+    expect(existsSync(envPath)).toBe(true);
+  });
+
+  it('creates director-prompt-overrides.md if missing', () => {
+    ensureOverrideFiles();
+    const mdPath = join(process.env['HOME']!, '.openclaw', 'director-prompt-overrides.md');
+    expect(existsSync(mdPath)).toBe(true);
+  });
+
+  it('does not overwrite existing files', () => {
+    // Pre-create with content
+    ensureOverrideFiles();
+    const envPath = join(process.env['HOME']!, '.openclaw', 'director-overrides.env');
+    writeFileSync(envPath, 'EXISTING_KEY=1\n');
+
+    // Call again; should not truncate
+    ensureOverrideFiles();
+    const content = readFileSync(envPath, 'utf8');
+    expect(content).toContain('EXISTING_KEY=1');
   });
 });

@@ -67,6 +67,7 @@ export interface DirectorSurface {
   postDecision(decision: PatchDecision): Promise<void>;
   postApplied(patch: Patch): Promise<void>;
   postRestart(detail: { pid: number; logPath: string }): Promise<void>;
+  pollSlackMessages(lastTs?: string): Promise<{ decisions: PatchDecision[]; latestTs?: string }>;
 }
 
 export interface DirectorRunResult {
@@ -80,4 +81,6 @@ export interface DirectorRunResult {
 export interface Checkpoint {
   eventsReadOffset: number; // byte offset in events.jsonl
   lastTickAt: string; // ISO 8601
+  /** Latest Slack message ts processed (dedup for pollSlackMessages). */
+  lastSlackTs?: string;
 }

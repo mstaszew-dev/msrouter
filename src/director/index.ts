@@ -18,7 +18,7 @@ export {
   detectWorker,
   snapshot as snapshotWorker,
   stopWorker,
-  startWorker,
+  startWorkerInIterm,
   waitForStartup,
   pollCdp,
   restartWorker,

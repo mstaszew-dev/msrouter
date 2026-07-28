@@ -122,8 +122,8 @@ describe('ProviderChain - routing-entry queue construction', () => {
       'openrouter[key2]',
       'openai',
       'zai',
-      'opencode[triple1]',
-      'opencode[triple2]',
+      'opencode[key1/big-pickle]',
+      'opencode[key1/nemotron]',
     ]);
   });
 });
@@ -287,6 +287,34 @@ describe('ProviderChain - direct: short-circuit', () => {
     expect(p.openrouter.attempt).toHaveBeenCalled();
     expect(p.openai.attempt).not.toHaveBeenCalled();
   });
+
+  it('direct:opencode/ routes only to OpenCode with no fallback', async () => {
+    const p = makeProviders({
+      openrouterKeys: 1,
+      openrouterResults: [{ kind: 'OK', response: okResponse() }], // would succeed, but must not be called
+      opencodeKeys: 1,
+      opencodeModels: ['big-pickle'],
+    });
+    // Reprogram opencode to succeed
+    (p.opencode as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(
+      async (): Promise<ProviderCallResult> => ({
+        kind: 'OK',
+        response: okResponse(),
+      }),
+    );
+    const chain = new ProviderChain(p, silentLogger);
+    const res = await chain.handle(
+      { ...baseBody, model: 'direct:opencode/big-pickle' },
+      new AbortController().signal,
+    );
+    expect(res.response.status).toBe(200);
+    expect(p.openrouter.attempt).not.toHaveBeenCalled();
+    expect(p.opencode.attempt).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ model: 'big-pickle' }),
+    );
+  });
 });
 
 describe('ProviderChain - explicit model chain', () => {
@@ -307,6 +335,20 @@ describe('ProviderChain - explicit model chain', () => {
       expect.anything(),
       expect.objectContaining({ model: 'some-explicit-model:free' }),
     );
+  });
+
+  it('openrouter servedBy includes key index in model field', async () => {
+    const p = makeProviders({
+      openrouterKeys: 2,
+      openrouterResults: [{ kind: 'OK', response: okResponse() }],
+    });
+    const chain = new ProviderChain(p, silentLogger);
+    const res = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
+    expect(res.servedBy.provider).toBe('openrouter[key1]');
+    expect(res.servedBy.model).toMatch(/^openrouter\/free\[key\d+\]$/);
   });
 });
 
@@ -356,12 +398,15 @@ describe('ProviderChain - OpenCode pooling', () => {
       { ...baseBody, model: 'mst/free' },
       new AbortController().signal,
     );
-    expect(res.servedBy.provider).toBe('opencode[triple2]');
+    expect(res.servedBy.provider).toBe('opencode[key1/nemotron]');
 
     // After the call, only triple1 (big-pickle, the failing one) was demoted.
-    // Build order: [opencode[triple1], opencode[triple2]]. triple1 demoted ->
-    // [opencode[triple2], opencode[triple1]].
-    const labels = chain.queueSnapshot().map((c) => c.label);
-    expect(labels).toEqual(['opencode[triple2]', 'opencode[triple1]']);
+    // Build order: [opencode[key1/big-pickle], opencode[key1/nemotron]]. triple1 demoted ->
+    // [opencode[key1/nemotron], opencode[key1/big-pickle]].
+    const entries = chain.queueSnapshot().map((c) => ({ label: c.label, model: c.model }));
+    expect(entries).toEqual([
+      { label: 'opencode[key1/nemotron]', model: 'nemotron' },
+      { label: 'opencode[key1/big-pickle]', model: 'big-pickle' },
+    ]);
   });
 });

@@ -38,7 +38,25 @@ async function main(): Promise<void> {
   const ledgerPath =
     env.DIRECTOR_LEDGER || join(env.DIRECTOR_OPENCLAW_WORKSPACE, 'director', 'ledger.jsonl');
   const checkpointPath = join(env.DIRECTOR_OPENCLAW_WORKSPACE, 'director', 'checkpoint.json');
-  const surface = new NullSurface({ ledgerPath, log });
+
+  // Use SlackSurface if Slack credentials are configured, otherwise NullSurface
+  const slackBotToken = env.SLACK_BOT_TOKEN;
+  const slackChannel = env.SLACK_CHANNEL;
+  const slackWebhook = env.SLACK_WEBHOOK;
+  let surface;
+  if (slackBotToken || slackWebhook) {
+    surface = new (await import('./director/surface.js')).SlackSurface({
+      ledgerPath,
+      log,
+      slackBotToken,
+      slackChannel,
+      slackWebhook,
+    });
+    log.info('Using Slack surface for Director');
+  } else {
+    surface = new NullSurface({ ledgerPath, log });
+    log.info('Using NullSurface (Slack not configured)');
+  }
   const loop = new DirectorLoop({ env, chain, surface, log, checkpointPath });
 
   // AbortController shared across the in-flight run; aborted on shutdown.

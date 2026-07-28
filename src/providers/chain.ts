@@ -156,7 +156,11 @@ export class ProviderChain {
       if (signal.aborted) return undefined;
       const res: ProviderCallResult = await this.callProvider(entry, model, body, signal);
       if (res.kind === 'OK') {
-        return { response: res.response, servedBy: { provider: entry.label, model } };
+        // For openrouter, include the key index in the model field for log uniformity
+        // (opencode shows the triple's model; openrouter shows default model + key index)
+        const servedByModel =
+          entry.provider === 'openrouter' ? `${model}[key${entry.attemptIndex + 1}]` : model;
+        return { response: res.response, servedBy: { provider: entry.label, model: servedByModel } };
       }
       failures.push(`${entry.label}:${res.kind}(${res.status})`);
       this.log.debug(

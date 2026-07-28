@@ -48,6 +48,11 @@ const schema = z.object({
   OPENCODE_QWEN_MODEL: z.string().default('qwen3.6-plus-free'),
   OPENCODE_MINIMAX_MODEL: z.string().default('minimax-m3-free'),
 
+  // Slack (Director surface)
+  SLACK_BOT_TOKEN: z.string().optional(),
+  SLACK_CHANNEL: z.string().optional(),
+  SLACK_WEBHOOK: z.string().optional(),
+
   // OpenRouter default model used when the client sends an alias (e.g. mst/free)
   // and the chain substitutes a per-provider default. `openrouter/free` is
   // OpenRouter's own auto-router over free models: it picks whichever upstream

@@ -361,12 +361,30 @@ async def main() -> None:
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Director RAG server (MCP or line-protocol).")
+    parser = argparse.ArgumentParser(description="Director RAG server (MCP, line-protocol, or one-shot CLI).")
     parser.add_argument(
         "--line-protocol",
         action="store_true",
         help="Run the line-based JSON protocol instead of MCP stdio. "
         "Used by the Director's TypeScript RagClient.",
+    )
+    parser.add_argument(
+        "--query",
+        type=str,
+        help="One-shot query mode: process this query and exit. "
+        "Requires --tool to specify the tool to call.",
+    )
+    parser.add_argument(
+        "--tool",
+        type=str,
+        choices=["rag_search_apps", "rag_search_docs"],
+        help="Tool to call in one-shot mode.",
+    )
+    parser.add_argument(
+        "--k",
+        type=int,
+        default=5,
+        help="Number of results to return (default: 5).",
     )
     parser.add_argument(
         "--db",
@@ -381,7 +399,17 @@ if __name__ == "__main__":
         help="Campaign directory (informational; the db is already built).",
     )
     args = parser.parse_args()
-    if args.line_protocol:
+    if args.query:
+        # One-shot CLI mode: process query, print JSON result to stdout, exit.
+        _ensure_loaded()
+        if not args.tool:
+            print(json.dumps({"error": "--tool is required when using --query"}))
+            sys.exit(1)
+        collection = "apps" if args.tool == "rag_search_apps" else "docs"
+        hits = _search(args.query, collection, args.k)
+        result = [{"score": float(h["score"]), "text": _hit_to_text(h, collection)} for h in hits]
+        print(json.dumps({"result": result}))
+    elif args.line_protocol:
         _line_protocol_main(args.db, args.campaign)
     else:
         import asyncio

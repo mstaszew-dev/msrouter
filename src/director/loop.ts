@@ -19,6 +19,7 @@ import type { ProviderChain } from '../providers/chain.js';
 import { classify } from './classify.js';
 import { observe } from './observe.js';
 import { propose } from './propose.js';
+import { snapshot as snapshotWorker, startWorkerInIterm } from './restart.js';
 import type { Checkpoint, DirectorRunResult, DirectorSurface } from './types.js';
 
 
@@ -33,21 +34,70 @@ export interface DirectorLoopOpts {
 export class DirectorLoop {
   constructor(private readonly opts: DirectorLoopOpts) {}
 
+  /** Check if the campaign is running and start it via iTerm if not. */
+  async ensureCampaignRunning(): Promise<void> {
+    const state = snapshotWorker({
+      entryCommand: this.opts.env.DIRECTOR_RUNNER || 'job-search-agent',
+      workspace: this.opts.env.DIRECTOR_OPENCLAW_WORKSPACE,
+      cdpUrl: this.opts.env.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
+      log: this.opts.log,
+      cdpTimeoutMs: this.opts.env.DIRECTOR_CDP_URL ? 30_000 : 5000,
+    });
+    if (!state.running) {
+      this.opts.log.info('Campaign not running; starting via iTerm');
+      startWorkerInIterm({
+        entryCommand: this.opts.env.DIRECTOR_RUNNER || 'job-search-agent',
+        workspace: this.opts.env.DIRECTOR_OPENCLAW_WORKSPACE,
+        cdpUrl: this.opts.env.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
+        log: this.opts.log,
+      });
+    }
+  }
+
+  /**
+   * Poll Slack for approve/reject commands and apply approved patches.
+   * Tracks latest ts in checkpoint for dedup. Called on each Director tick.
+   */
+  async pollAndApplyDecisions(checkpoint: Checkpoint): Promise<Checkpoint> {
+    const { decisions, latestTs } = await this.opts.surface.pollSlackMessages(checkpoint.lastSlackTs);
+    if (latestTs) checkpoint.lastSlackTs = latestTs;
+    if (decisions.length === 0) return checkpoint;
+
+    for (const decision of decisions) {
+      this.opts.log.info(
+        { patchId: decision.patchId, decision: decision.decision },
+        'Slack decision received',
+      );
+      await this.opts.surface.postDecision(decision);
+    }
+    return checkpoint;
+  }
+
   async runOnce(signal: AbortSignal): Promise<DirectorRunResult> {
     const e = this.opts.env;
-    const checkpoint = await this.loadCheckpoint();
+    let checkpoint = await this.loadCheckpoint();
     let observed = 0;
     let classificationsCount = 0;
     let proposedCount = 0;
 
     try {
+      // 1. Ensure campaign is running (supervisor)
+      await this.ensureCampaignRunning();
+
+      // 2. Observe campaign state
       const { snapshot, checkpoint: next } = await observe(checkpoint, {
         campaignDir: e.DIRECTOR_CAMPAIGN_DIR,
       });
+      // Carry over Slack ts from previous checkpoint
+      next.lastSlackTs = checkpoint.lastSlackTs;
+      checkpoint = next;
       observed = snapshot.recentEvents.length;
+
+      // 3. Classify decisions
       const classifications = classify(snapshot);
       classificationsCount = classifications.length;
 
+      // 4. Propose patches if actionable
       const actionable = classifications.filter((c) => c.severity !== 'info');
       if (actionable.length > 0 && !signal.aborted) {
         const patches = await propose(snapshot, classifications, {
@@ -64,7 +114,10 @@ export class DirectorLoop {
         }
       }
 
-      await this.saveCheckpoint(next);
+      // 5. Poll Slack for approve/reject commands (dedup via ts)
+      checkpoint = await this.pollAndApplyDecisions(checkpoint);
+
+      await this.saveCheckpoint(checkpoint);
       return {
         observed,
         classifications: classificationsCount,
