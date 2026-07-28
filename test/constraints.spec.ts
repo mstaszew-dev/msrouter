@@ -126,12 +126,8 @@ describe('constraint: source files stay under 250 lines (module size budget)', (
     'common/errors.ts',
     'common/http.ts',
     'common/retry.ts',
-    'agent/loop.ts',
-    'agent/tools.ts',
-    'agent/goal.ts',
     'main.ts',
-    'worker.ts',
-    'director-worker.ts',
+    'orchestrator.ts',
     'director/types.ts',
     'director/observe.ts',
     'director/classify.ts',
@@ -139,9 +135,11 @@ describe('constraint: source files stay under 250 lines (module size budget)', (
     'director/apply.ts',
     'director/restart.ts',
     'director/ledger.ts',
-    'director/surface.ts',
     'director/rag.ts',
     'director/agent-loop.ts',
+    'director/agent-tools.ts',
+    'director/slack-poller.ts',
+    'director/tools.ts',
     'director/index.ts',
   ];
   for (const f of files) {
@@ -163,10 +161,8 @@ describe('constraint: no console.log in src (use the logger)', () => {
     'gateway/server.ts',
     'gateway/handlers.ts',
     'gateway/stream.ts',
-    'agent/loop.ts',
-    'agent/tools.ts',
     'main.ts',
-    'worker.ts',
+    'orchestrator.ts',
   ];
   for (const f of files) {
     it(`${f} has no console.* call`, () => {
@@ -185,9 +181,8 @@ describe('constraint: no raw process.env reads outside config/env.ts', () => {
     'providers/single-key.ts',
     'gateway/handlers.ts',
     'gateway/stream.ts',
-    'agent/loop.ts',
     'main.ts',
-    'worker.ts',
+    'orchestrator.ts',
   ];
   for (const f of files) {
     it(`${f} does not read process.env directly`, () => {

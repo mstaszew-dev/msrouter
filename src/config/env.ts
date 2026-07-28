@@ -92,8 +92,8 @@ const schema = z.object({
     .transform((s) => s === 'true' || s === '1'),
 
   // Director agent (separate worker: `npm run director-worker`)
-  // Minutes between Director observation cycles. -1 disables (default).
-  DIRECTOR_INTERVAL_MINUTES: z.coerce.number().int().default(-1),
+  // Minutes between Director observation cycles. -1 disables.
+  DIRECTOR_INTERVAL_MINUTES: z.coerce.number().int().default(1),
   // Model the Director uses for proposal drafting. Empty -> WALK_ALIAS[0] at runtime.
   DIRECTOR_MODEL: z.string().default(''),
   // Campaign state the Director observes.
@@ -116,7 +116,7 @@ const schema = z.object({
   // Kafka (Director event streaming). Disabled by default.
   KAFKA_ENABLED: z
     .string()
-    .default('false')
+    .default('true')
     .transform((s) => s === 'true' || s === '1'),
   KAFKA_HOME: z.string().default('~/kafka/kafka_2.13-3.7.0'),
   KAFKA_BOOTSTRAP: z.string().default('localhost:9092'),

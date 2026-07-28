@@ -1,25 +1,26 @@
 /**
- * Gateway HTTP entrypoint. Boots the provider chain + HTTP server, and wires
- * SIGTERM/SIGINT to close the server gracefully (drain in-flight, then exit).
+ * Unified entrypoint. Starts the gateway HTTP server + the Director orchestrator
+ * (Director tick + Slack poller + Kafka publisher) in a single process.
  */
 
-// Load .env before any module that reads process.env. The dotenv import must be
-// the very first side effect so config/env.ts sees the parsed values.
+// Load .env before any module that reads process.env.
 import 'dotenv/config';
 
 import { config, loadEnv } from './config/env.js';
 import { createLogger } from './config/logger.js';
 import { createGatewayServer } from './gateway/server.js';
+import { startOrchestrator } from './orchestrator.js';
 import { ProviderChain } from './providers/chain.js';
 import { buildProviders } from './providers/instances.js';
 
 function main(): void {
   const { env } = loadEnv();
-  const log = createLogger(env, 'gateway');
+  const log = createLogger(env, 'msrouter');
 
   const providers = buildProviders(log);
   const chain = new ProviderChain(providers, log);
 
+  // Start gateway
   const server = createGatewayServer({ chain, log, port: env.PORT });
   server.on('listening', () => {
     log.info(
@@ -30,7 +31,7 @@ function main(): void {
         zai: providers.zai.available,
         opencode: providers.opencode.available,
       },
-      'msrouter gateway listening',
+      'gateway listening',
     );
   });
   server.on('error', (err) => {
@@ -38,22 +39,28 @@ function main(): void {
     process.exit(1);
   });
 
+  // Start Director + Slack poller (unified orchestrator)
+  const orch = startOrchestrator({ chain, log });
+
+  // Unified shutdown
   const shutdown = (signal: NodeJS.Signals) => {
-    log.info(`${signal} received, shutting down gateway...`);
+    log.info(`${signal} received, shutting down...`);
+    orch.shutdown();
     server.close(() => process.exit(0));
-    // Force exit after 10s if connections hang.
     setTimeout(() => process.exit(0), 10_000).unref();
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
-  // Surface the resolved config (no secrets) once at boot for operability.
+  // Surface config
   const cfg = config();
   log.info(
     {
       walkAlias: cfg.env.WALK_ALIAS,
       openRouterModel: cfg.env.OPENROUTER_MODEL,
       forceFree: cfg.env.FORCE_FREE,
+      directorInterval: cfg.env.DIRECTOR_INTERVAL_MINUTES,
+      kafkaEnabled: cfg.env.KAFKA_ENABLED,
     },
     'config loaded',
   );

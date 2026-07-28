@@ -29,7 +29,7 @@ describe('loadEnv', () => {
 describe('loadEnv - Director config', () => {
   it('applies Director defaults when no DIRECTOR_* vars are set', () => {
     const cfg = loadEnv({});
-    expect(cfg.env.DIRECTOR_INTERVAL_MINUTES).toBe(-1);
+    expect(cfg.env.DIRECTOR_INTERVAL_MINUTES).toBe(1);
     expect(cfg.env.DIRECTOR_CAMPAIGN_DIR).toBe('/Users/mst/Downloads/job-search/job-apply');
     expect(cfg.env.DIRECTOR_PIDFILE).toBe('~/.openclaw/run-one-job.pid');
     expect(cfg.env.DIRECTOR_OVERRIDES).toBe('~/.openclaw/director-overrides.env');

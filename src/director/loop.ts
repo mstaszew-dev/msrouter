@@ -9,6 +9,7 @@
  */
 
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -24,10 +25,11 @@ import { runDirectorAgent } from './agent-loop.js';
 import { readOverrides, applyPatch } from './apply.js';
 import { classify } from './classify.js';
 import { kafkaProduce, type KafkaOpts } from './kafka.js';
-import { readApprovedPatches } from './ledger.js';
+import { readApprovedPatches, readPending } from './ledger.js';
 import { observe } from './observe.js';
 import { snapshot as snapshotWorker, startWorkerInIterm } from './restart.js';
 import type { Checkpoint, DirectorRunResult, DirectorSurface } from './types.js';
+import type { DecisionClassification } from './types.js';
 
 const MODULE_DIR = dirname(new URL(import.meta.url).pathname);
 
@@ -37,6 +39,15 @@ function readDirectorPrompt(): string {
   } catch {
     return `You are the Campaign Director. Supervise the campaign. Use tools when needed. Output {"patches":[]} when nothing to propose.`;
   }
+}
+
+/** Hash actionable classifications for duplicate-proposal suppression. */
+function hashClassifications(classifications: DecisionClassification[]): string {
+  const sig = classifications
+    .map((c) => `${c.kind}:${c.severity}:${c.evidence ?? c.reason}`)
+    .sort()
+    .join('|');
+  return createHash('md5').update(sig).digest('hex');
 }
 
 const execFileP = promisify(execFile);
@@ -90,6 +101,38 @@ export class DirectorLoop {
     } catch (e) {
       this.opts.log.warn({ err: e instanceof Error ? e.message : String(e) }, 'RAG rebuild failed');
     }
+  }
+
+  /** Run the read-only agent loop and post proposals to Slack. Returns count proposed. */
+  private async proposePatches(
+    actionable: DecisionClassification[],
+    snapshot: { tracker: { submitted: number; target: number; queueLength: number } },
+    e: Env,
+    signal: AbortSignal,
+  ): Promise<number> {
+    const overridesText = await readOverrides(e.DIRECTOR_OVERRIDES).then((r) => JSON.stringify(r)).catch(() => '(none)');
+    const classificationsText = actionable.map((c) => `[${c.severity}] ${c.kind}: ${c.reason}`).join('\n');
+    const directorPrompt = readDirectorPrompt();
+    const systemPrompt = `${directorPrompt}\n\nYou are in READ-ONLY mode. Investigate freely but do NOT write anything.\n\nCurrent overrides:\n${overridesText}\n\nRecent classifications:\n${classificationsText}`;
+    const goal = `Campaign: ${snapshot.tracker.submitted}/${snapshot.tracker.target} submitted. Queue: ${snapshot.tracker.queueLength}. Investigate and output {"patches":[...]} or nothing.`;
+
+    const result = await runDirectorAgent(
+      this.opts.chain,
+      systemPrompt,
+      goal,
+      e.DIRECTOR_MODEL || e.WALK_ALIAS[0] || 'mst/free',
+      this.opts.log,
+      signal,
+      'read',
+    );
+    let count = 0;
+    for (const p of result.patches) {
+      if (signal.aborted) break;
+      await this.opts.surface.postProposal(p);
+      await this.publishEvent(p.id, JSON.stringify({ kind: 'proposed', patch: p }));
+      count++;
+    }
+    return count;
   }
 
   /** Check if the campaign is running and start it via iTerm if not. */
@@ -186,31 +229,25 @@ export class DirectorLoop {
         await this.rebuildRag();
       }
 
-	      // 4. READ-ONLY agent loop to propose patches (investigation only, no write tools)
-	      const actionable = classifications.filter((c) => c.severity !== 'info');
-	      if (actionable.length > 0 && !signal.aborted) {
-	        const overridesText = await readOverrides(e.DIRECTOR_OVERRIDES).then(r => JSON.stringify(r)).catch(() => '(none)');
-	        const classificationsText = actionable.map(c => `[${c.severity}] ${c.kind}: ${c.reason}`).join('\n');
-	        const directorPrompt = readDirectorPrompt();
-	        const systemPrompt = `${directorPrompt}\n\nYou are in READ-ONLY mode. Investigate freely but do NOT write anything.\n\nCurrent overrides:\n${overridesText}\n\nRecent classifications:\n${classificationsText}`;
-	        const goal = `Campaign: ${snapshot.tracker.submitted}/${snapshot.tracker.target} submitted. Queue: ${snapshot.tracker.queueLength}. Investigate and output {"patches":[...]} or nothing.`;
-
-	        const result = await runDirectorAgent(
-	          this.opts.chain,
-	          systemPrompt,
-	          goal,
-	          e.DIRECTOR_MODEL || e.WALK_ALIAS[0] || 'mst/free',
-	          this.opts.log,
-	          signal,
-	          'read',
-	        );
-	        proposedCount = result.patches.length;
-	        for (const p of result.patches) {
-	          if (signal.aborted) break;
-	          await this.opts.surface.postProposal(p);
-	          await this.publishEvent(p.id, JSON.stringify({ kind: 'proposed', patch: p }));
-	        }
-	      }
+      // 4. READ-ONLY agent loop to propose patches (skip if duplicate state)
+      const actionable = classifications.filter((c) => c.severity !== 'info');
+      if (actionable.length > 0 && !signal.aborted) {
+        // Duplicate-proposal suppression: skip if same classifications + pending proposals
+        const currentHash = hashClassifications(actionable);
+        if (currentHash === checkpoint.lastProposalHash) {
+          const ledgerPath = e.DIRECTOR_LEDGER || join(e.DIRECTOR_OPENCLAW_WORKSPACE, 'director', 'ledger.jsonl');
+          const pending = await readPending(ledgerPath).catch(() => []);
+          if (pending.length > 0) {
+            this.opts.log.info({ hash: currentHash, pending: pending.length }, 'Skipping proposal: same state, proposals pending');
+          } else {
+            checkpoint.lastProposalHash = currentHash;
+            proposedCount = await this.proposePatches(actionable, snapshot, e, signal);
+          }
+        } else {
+          checkpoint.lastProposalHash = currentHash;
+          proposedCount = await this.proposePatches(actionable, snapshot, e, signal);
+        }
+      }
 
 	      // 5. Poll Slack for approve/reject commands
 	      checkpoint = await this.pollAndApplyDecisions(checkpoint);

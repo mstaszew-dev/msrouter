@@ -11,6 +11,7 @@
 import type { Logger } from 'pino';
 
 import { appendLedger } from './ledger.js';
+import type { SlackPoller } from './slack-poller.js';
 import type { DirectorSurface, Patch, PatchDecision } from './types.js';
 
 export interface SurfaceOpts {
@@ -22,6 +23,8 @@ export interface SurfaceOpts {
   slackChannel?: string;
   /** Slack Webhook URL for outbound messages (alternative to Bot Token for posting). */
   slackWebhook?: string;
+  /** In-process Slack poller (if provided, pollSlackMessages drains its queue). */
+  slackPoller?: SlackPoller;
 }
 
 export class NullSurface implements DirectorSurface {
@@ -83,6 +86,7 @@ export class SlackSurface extends NullSurface {
   private readonly channel?: string;
   private readonly webhookUrl?: string;
   private readonly log: Logger;
+  private readonly poller?: SlackPoller;
 
   constructor(opts: SurfaceOpts) {
     super(opts);
@@ -90,6 +94,7 @@ export class SlackSurface extends NullSurface {
     this.botToken = opts.slackBotToken;
     this.channel = opts.slackChannel;
     this.webhookUrl = opts.slackWebhook;
+    this.poller = opts.slackPoller;
   }
 
   override async postProposal(patch: Patch): Promise<void> {
@@ -161,12 +166,40 @@ export class SlackSurface extends NullSurface {
     decisions: PatchDecision[];
     latestTs?: string;
   }> {
+    // If we have an in-process poller, drain its queue instead of calling Slack API directly
+    if (this.poller) {
+      const msgs = this.poller.drain();
+      const decisions: PatchDecision[] = [];
+      for (const msg of msgs) {
+        const text = msg.text.trim();
+        const approveMatch = text.match(/^approve\s+([a-zA-Z0-9_-]+)/i);
+        if (approveMatch) {
+          decisions.push({
+            patchId: approveMatch[1]!,
+            decision: 'approved',
+            decidedAt: new Date().toISOString(),
+            decidedBy: 'slack',
+          });
+          continue;
+        }
+        const rejectMatch = text.match(/^reject\s+([a-zA-Z0-9_-]+)/i);
+        if (rejectMatch) {
+          decisions.push({
+            patchId: rejectMatch[1]!,
+            decision: 'rejected',
+            decidedAt: new Date().toISOString(),
+            decidedBy: 'slack',
+          });
+        }
+      }
+      return { decisions, latestTs: this.poller.latestTs };
+    }
+
+    // Fallback: direct Slack API call (for standalone use without poller)
     if (!this.botToken || !this.channel) {
       return { decisions: [], latestTs: lastTs };
     }
     try {
-      // Slack's conversations.history returns newest first by default.
-      // We pass `oldest` (exclusive) to skip already-processed messages.
       const params = new URLSearchParams({ channel: this.channel, limit: '20' });
       if (lastTs) params.set('oldest', lastTs);
       const url = `https://slack.com/api/conversations.history?${params.toString()}`;

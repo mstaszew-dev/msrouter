@@ -87,4 +87,6 @@ export interface Checkpoint {
   lastSubmitted?: number;
   /** Last known queue length (suppresses duplicate observation events). */
   lastQueueLength?: number;
+  /** Hash of last proposal's actionable classifications (suppresses duplicate proposals). */
+  lastProposalHash?: string;
 }
