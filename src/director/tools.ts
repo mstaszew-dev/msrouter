@@ -18,7 +18,9 @@ export interface ToolResult {
   isError?: boolean;
 }
 
-const ALLOWLIST: string[] = env().TERMINAL_ALLOWLIST;
+function getAllowlist(): string[] {
+  return env().TERMINAL_ALLOWLIST;
+}
 
 /** The OpenAI-style tool definitions advertised to the model. */
 export function toolDefinitions() {
@@ -84,7 +86,7 @@ export async function callTool(name: string, args: unknown, _log: unknown): Prom
 }
 
 async function terminal({ command, args = [] }: { command: string; args?: string[] }): Promise<ToolResult> {
-  if (!ALLOWLIST.includes(command)) {
+  if (!getAllowlist().includes(command)) {
     return { content: `command '${command}' is not in the allowlist`, isError: true };
   }
   try {
