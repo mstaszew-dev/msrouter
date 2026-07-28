@@ -113,6 +113,15 @@ const schema = z.object({
   // Director-owned SQLite RAG db (separate from OpenClaw's rag/index.db).
   DIRECTOR_RAG_DB: z.string().default(''),
 
+  // Kafka (Director event streaming). Disabled by default.
+  KAFKA_ENABLED: z
+    .string()
+    .default('false')
+    .transform((s) => s === 'true' || s === '1'),
+  KAFKA_HOME: z.string().default('~/kafka/kafka_2.13-3.7.0'),
+  KAFKA_BOOTSTRAP: z.string().default('localhost:9092'),
+  KAFKA_POLL_INTERVAL_SECONDS: z.coerce.number().int().positive().default(30),
+
   CDP_URL: z.string().url().default('http://127.0.0.1:9222'),
   // Default allowlist EXCLUDES code-execution primitives (node, npm, find, git)
   // which an LLM-driven agent could turn into arbitrary code execution

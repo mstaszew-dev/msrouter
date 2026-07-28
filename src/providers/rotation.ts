@@ -45,7 +45,7 @@ export class RotationQueue<T> {
     if (pos === this.order.length - 1) return; // already at back
     this.order.splice(pos, 1);
     this.order.push(item);
-    this.opts.log?.warn({ label: this.opts.label ?? 'queue', pos }, 'queue item demoted to back');
+    this.opts.log?.debug({ label: this.opts.label ?? 'queue', pos }, 'queue item demoted to back');
   }
 
   /** Current order, for tests and debug snapshots. */

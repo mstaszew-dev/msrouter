@@ -174,6 +174,10 @@ export class ProviderChain {
       }
       if (res.kind === 'KEY_FAILURE' && behavior.demoteOnKeyFailure) {
         this.queue.demote(entry);
+        this.log.warn(
+          { provider: entry.label, label: 'chain', status: res.status },
+          'chain entry demoted to back of queue',
+        );
       }
       break;
     }

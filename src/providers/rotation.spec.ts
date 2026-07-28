@@ -78,12 +78,12 @@ describe('RotationQueue', () => {
     expect(q.snapshot()).toEqual(['a', 'b']);
   });
 
-  it('demote() logs a warning with the label and item', () => {
-    const log = { ...silent, warn: vi.fn() } as unknown as pino.Logger;
+  it('demote() logs at debug level with the label and position', () => {
+    const log = { ...silent, debug: vi.fn() } as unknown as pino.Logger;
     const q = new RotationQueue(['a', 'b'], { log, label: 'opencode' });
     q.demote('a');
-    expect(log.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ label: 'opencode' }),
+    expect(log.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ label: 'opencode', pos: 0 }),
       expect.stringContaining('demoted'),
     );
   });

@@ -118,8 +118,8 @@ describe('ProviderChain - routing-entry queue construction', () => {
     const chain = new ProviderChain(p, silentLogger);
     const labels = chain.queueSnapshot().map((c) => c.label);
     expect(labels).toEqual([
-      'openrouter[key1]',
-      'openrouter[key2]',
+      'openrouter[key1/openrouter/free]',
+      'openrouter[key2/openrouter/free]',
       'openai',
       'zai',
       'opencode[key1/big-pickle]',
@@ -186,8 +186,8 @@ describe('ProviderChain - alias walk (mst/free and free)', () => {
 
 describe('ProviderChain - adaptive demotion', () => {
   it('a KEY_FAILURE entry is demoted to the back (visible on the next snapshot)', async () => {
-    // openrouter[key1] fails on first call; openai succeeds. After the call,
-    // openrouter[key1] must be at the back of the queue.
+    // openrouter[key1/openrouter/free] fails on first call; openai succeeds. After the call,
+    // openrouter[key1/openrouter/free] must be at the back of the queue.
     const p = makeProviders({
       openrouterKeys: 1,
       openrouterResults: [{ kind: 'KEY_FAILURE', status: 429, message: 'rl' }],
@@ -195,7 +195,7 @@ describe('ProviderChain - adaptive demotion', () => {
     });
     const chain = new ProviderChain(p, silentLogger);
     const before = chain.queueSnapshot().map((c) => c.label);
-    expect(before[0]).toBe('openrouter[key1]');
+    expect(before[0]).toBe('openrouter[key1/openrouter/free]');
 
     const res = await chain.handle(
       { ...baseBody, model: 'mst/free' },
@@ -204,7 +204,7 @@ describe('ProviderChain - adaptive demotion', () => {
     expect(res.servedBy.provider).toBe('openai');
 
     const after = chain.queueSnapshot().map((c) => c.label);
-    expect(after[after.length - 1]).toBe('openrouter[key1]');
+    expect(after[after.length - 1]).toBe('openrouter[key1/openrouter/free]');
     expect(after[0]).toBe('openai');
   });
 
@@ -347,7 +347,7 @@ describe('ProviderChain - explicit model chain', () => {
       { ...baseBody, model: 'mst/free' },
       new AbortController().signal,
     );
-    expect(res.servedBy.provider).toBe('openrouter[key1]');
+    expect(res.servedBy.provider).toBe('openrouter[key1/openrouter/free]');
     expect(res.servedBy.model).toMatch(/^openrouter\/free\[key\d+\]$/);
   });
 });

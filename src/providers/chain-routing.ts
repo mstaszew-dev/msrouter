@@ -44,7 +44,7 @@ export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
     for (let i = 0; i < or.keyCount; i++) {
       list.push({
         provider: 'openrouter',
-        label: `openrouter[key${i + 1}]`,
+        label: `openrouter[key${i + 1}/${orModel}]`,
         model: orModel,
         attemptIndex: i,
       });

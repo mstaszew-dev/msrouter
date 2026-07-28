@@ -9,7 +9,8 @@
  */
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 
 import type { Logger } from 'pino';
 
@@ -17,10 +18,16 @@ import type { Env } from '../config/env.js';
 import type { ProviderChain } from '../providers/chain.js';
 
 import { classify } from './classify.js';
+import { kafkaProduce, type KafkaOpts } from './kafka.js';
 import { observe } from './observe.js';
 import { propose } from './propose.js';
 import { snapshot as snapshotWorker, startWorkerInIterm } from './restart.js';
 import type { Checkpoint, DirectorRunResult, DirectorSurface } from './types.js';
+
+function expandTilde(p: string): string {
+  if (p.startsWith('~/') || p === '~') return join(homedir(), p.slice(1));
+  return p;
+}
 
 
 export interface DirectorLoopOpts {
@@ -32,7 +39,23 @@ export interface DirectorLoopOpts {
 }
 
 export class DirectorLoop {
-  constructor(private readonly opts: DirectorLoopOpts) {}
+  private kafkaOpts: KafkaOpts | undefined;
+
+  constructor(private readonly opts: DirectorLoopOpts) {
+    if (opts.env.KAFKA_ENABLED) {
+      this.kafkaOpts = {
+        kafkaHome: expandTilde(opts.env.KAFKA_HOME),
+        bootstrap: opts.env.KAFKA_BOOTSTRAP,
+        log: opts.log,
+      };
+    }
+  }
+
+  /** Publish an event to Kafka if enabled. */
+  private async publishEvent(key: string, value: string): Promise<void> {
+    if (!this.kafkaOpts) return;
+    await kafkaProduce('director-events', key, value, this.kafkaOpts);
+  }
 
   /** Check if the campaign is running and start it via iTerm if not. */
   async ensureCampaignRunning(): Promise<void> {
@@ -69,6 +92,11 @@ export class DirectorLoop {
         'Slack decision received',
       );
       await this.opts.surface.postDecision(decision);
+      // Publish decision to Kafka
+      await this.publishEvent(
+        decision.patchId,
+        JSON.stringify({ kind: 'decided', decision }),
+      );
     }
     return checkpoint;
   }
@@ -97,6 +125,20 @@ export class DirectorLoop {
       const classifications = classify(snapshot);
       classificationsCount = classifications.length;
 
+      // Publish observation event to Kafka
+      await this.publishEvent(
+        `obs-${Date.now()}`,
+        JSON.stringify({
+          kind: 'observation',
+          snapshot: {
+            submitted: snapshot.tracker.submitted,
+            target: snapshot.tracker.target,
+            queueLength: snapshot.tracker.queueLength,
+          },
+          classifications: classificationsCount,
+        }),
+      );
+
       // 4. Propose patches if actionable
       const actionable = classifications.filter((c) => c.severity !== 'info');
       if (actionable.length > 0 && !signal.aborted) {
@@ -111,6 +153,8 @@ export class DirectorLoop {
         for (const p of patches) {
           if (signal.aborted) break;
           await this.opts.surface.postProposal(p);
+          // Publish proposal to Kafka
+          await this.publishEvent(p.id, JSON.stringify({ kind: 'proposed', patch: p }));
         }
       }
 
