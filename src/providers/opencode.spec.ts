@@ -39,7 +39,7 @@ describe('OpenCodeProvider pool', () => {
     expect(p.tripleCount).toBe(6);
   });
 
-  it('builds the candidate queue in model-major, key-minor order', () => {
+  it('builds the rotation queue in model-major, key-minor order', () => {
     const { q } = makeProvider(['k1', 'k2'], ['m1', 'm2']);
     // order: (m1,k0), (m2,k0), (m1,k1), (m2,k1)
     expect(q.queueSnapshot()).toEqual([
@@ -85,7 +85,7 @@ describe('OpenCodeProvider pool', () => {
   });
 
   it('queue.at wraps modulo length, so any tripleIndex resolves to a real triple (no out-of-range path)', () => {
-    // CandidateQueue.at() wraps; there is no "out of range" early-return by
+    // RotationQueue.at() wraps; there is no "out of range" early-return by
     // design. This test documents that contract: a length-1 queue has one
     // triple regardless of the requested index.
     const { q } = makeProvider(['k1'], ['m1']);

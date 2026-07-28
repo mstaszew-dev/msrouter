@@ -109,7 +109,7 @@ describe('constraint: source files stay under 250 lines (module size budget)', (
   // smell. Every src file should stay readable in one screen.
   const files = [
     'providers/chain.ts',
-    'providers/chain-candidates.ts',
+    'providers/chain-routing.ts',
     'providers/fetch.ts',
     'providers/openrouter.ts',
     'providers/opencode.ts',
@@ -200,21 +200,21 @@ describe('constraint: no raw process.env reads outside config/env.ts', () => {
 
 describe('constraint: provider chain uses adaptive flat-sequence rotation', () => {
   // The OLD architecture hardcoded a fixed OpenRouter->OpenAI->ZAI->OpenCode
-  // order. The NEW architecture builds one flat candidate list and demotes
+  // order. The NEW architecture builds one flat routing-entry list and demotes
   // failing <model,provider,key> triples to the back (no TTL, in-memory only).
   // These constraints encode the new contract so a regression to fixed order
   // is a visible test change.
-  it('chain.ts iterates a CandidateQueue (not a hardcoded provider array)', () => {
+  it('chain.ts iterates a RotationQueue (not a hardcoded provider array)', () => {
     const code = src('providers/chain.ts');
-    expect(code).toContain('CandidateQueue');
+    expect(code).toContain('RotationQueue');
     expect(code).toMatch(/this\.queue\.demote/);
     // The old fixed-order array literal must NOT come back.
     expect(code).not.toMatch(/\[\s*'openai'\s*,\s*'zai'\s*,\s*'opencode'\s*\]/);
   });
 
-  it('chain-candidates.ts builds the env-declared initial order', () => {
-    const code = src('providers/chain-candidates.ts');
-    expect(code).toContain('buildCandidateList');
+  it('chain-routing.ts builds the env-declared initial order', () => {
+    const code = src('providers/chain-routing.ts');
+    expect(code).toContain('buildRoutingEntries');
     // Initial order: OpenRouter keys, then OpenAI, then ZAI, then OpenCode triples.
     expect(code).toContain("'openrouter'");
     expect(code).toContain("'openai'");
@@ -224,7 +224,7 @@ describe('constraint: provider chain uses adaptive flat-sequence rotation', () =
 
   it('rotation.ts is the shared demote-to-back primitive', () => {
     const code = src('providers/rotation.ts');
-    expect(code).toMatch(/class CandidateQueue/);
+    expect(code).toMatch(/class RotationQueue/);
     expect(code).toMatch(/demote/);
   });
 });
@@ -233,9 +233,9 @@ describe('constraint: short-circuit uses direct: namespace (no OpenRouter collis
   // OpenRouter uses vendor/model ids (openai/gpt-4o, google/gemma-...). A bare
   // "openai/..." must NOT be treated as a provider pin, or OpenRouter models
   // break. Provider pinning requires the "direct:" prefix. shortCircuit lives
-  // in chain-candidates.ts (extracted from chain.ts).
-  it('chain-candidates.ts shortCircuit requires the direct: prefix', () => {
-    const code = src('providers/chain-candidates.ts');
+  // in chain-routing.ts (extracted from chain.ts).
+  it('chain-routing.ts shortCircuit requires the direct: prefix', () => {
+    const code = src('providers/chain-routing.ts');
     expect(code).toMatch(/startsWith\('direct:'\)/);
     // And it must NOT pin on bare openai/ (regression guard).
     expect(code).not.toMatch(/m\.startsWith\('openai\/'\)/);
@@ -245,7 +245,7 @@ describe('constraint: short-circuit uses direct: namespace (no OpenRouter collis
 describe('constraint: OpenCode is a pooled provider (OPENCODE_KEY1..N)', () => {
   // The OLD architecture had 9 separate SingleKeyProvider instances for OpenCode
   // all sharing one OPENCODE_API_KEY. The NEW architecture has one pooled
-  // OpenCodeProvider fed by collectOpenCodeKeys, with one candidate per
+  // OpenCodeProvider fed by collectOpenCodeKeys, with one routing entry per
   // (model, key) triple.
   it('instances.ts builds a single pooled OpenCodeProvider', () => {
     const code = src('providers/instances.ts');

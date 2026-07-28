@@ -1,10 +1,10 @@
 /**
  * Provider chain adaptive-rotation tests. Verifies that:
- *   - the flat candidate queue is built in env-declared order,
- *   - a candidate returning KEY_FAILURE is demoted to the back,
- *   - demoted candidates are tried last on the NEXT handle() call,
+ *   - the flat routing-entry queue is built in env-declared order,
+ *   - a routing entry returning KEY_FAILURE is demoted to the back,
+ *   - demoted entries are tried last on the NEXT handle() call,
  *   - successful calls leave the queue unchanged,
- *   - all candidates are tried before NoProviderAvailableError,
+ *   - all routing entries are tried before NoProviderAvailableError,
  *   - direct: still pins a single provider with no fallback.
  *
  * Providers are stubbed at the Provider interface seam (never our own chain code).
@@ -108,7 +108,7 @@ const baseBody: ChatRequestBody = {
   stream: false,
 };
 
-describe('ProviderChain - candidate queue construction', () => {
+describe('ProviderChain - routing-entry queue construction', () => {
   it('builds the flat queue in env-declared order (OpenRouter, OpenAI, ZAI, OpenCode)', () => {
     const p = makeProviders({
       openrouterKeys: 2,
@@ -175,7 +175,7 @@ describe('ProviderChain - alias walk (mst/free and free)', () => {
     expect(p.openrouter.attempt).toHaveBeenCalledTimes(2);
   });
 
-  it('throws NoProviderAvailableError when every candidate fails', async () => {
+  it('throws NoProviderAvailableError when every routing entry fails', async () => {
     const p = makeProviders({ openrouterKeys: 2 });
     const chain = new ProviderChain(p, silentLogger);
     await expect(
@@ -185,7 +185,7 @@ describe('ProviderChain - alias walk (mst/free and free)', () => {
 });
 
 describe('ProviderChain - adaptive demotion', () => {
-  it('a KEY_FAILURE candidate is demoted to the back (visible on the next snapshot)', async () => {
+  it('a KEY_FAILURE entry is demoted to the back (visible on the next snapshot)', async () => {
     // openrouter[key1] fails on first call; openai succeeds. After the call,
     // openrouter[key1] must be at the back of the queue.
     const p = makeProviders({
@@ -290,7 +290,7 @@ describe('ProviderChain - direct: short-circuit', () => {
 });
 
 describe('ProviderChain - explicit model chain', () => {
-  it('uses the explicit model across all candidates, OpenRouter pool first', async () => {
+  it('uses the explicit model across all entries, OpenRouter pool first', async () => {
     const p = makeProviders({
       openrouterKeys: 1,
       openrouterResults: [{ kind: 'KEY_FAILURE', status: 429, message: 'rl' }],

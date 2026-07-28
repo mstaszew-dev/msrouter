@@ -2,7 +2,7 @@
  * Provider factory: builds the concrete providers from validated env. Keeps
  * construction in one place so main.ts / worker.ts and tests all wire the same.
  *
- * OpenCode is a pooled provider (OPENCODE_KEY1..N) with one candidate per
+ * OpenCode is a pooled provider (OPENCODE_KEY1..N) with one routing entry per
  * (model, key) triple. All OpenCode model variants live on this one provider.
  */
 
@@ -22,7 +22,7 @@ export interface Providers {
 }
 
 /** OpenCode Zen model variants, big-pickle first. Order is preserved in the
- *  candidate queue (model-major, key-minor). */
+ *  rotation queue (model-major, key-minor). */
 const OPENCODE_MODELS = (e: {
   OPENCODE_MODEL: string;
   OPENCODE_NEMOTRON_MODEL: string;

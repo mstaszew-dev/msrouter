@@ -10,14 +10,14 @@
 // Load .env before any module that reads process.env.
 import 'dotenv/config';
 
-import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 import { loadEnv } from './config/env.js';
 import { createLogger } from './config/logger.js';
+import { DirectorLoop, NullSurface } from './director/index.js';
 import { ProviderChain } from './providers/chain.js';
 import { buildProviders } from './providers/instances.js';
-import { DirectorLoop, NullSurface } from './director/index.js';
 
 function expandTilde(p: string): string {
   if (p.startsWith('~/') || p === '~') return join(homedir(), p.slice(1));

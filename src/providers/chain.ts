@@ -1,20 +1,20 @@
 /**
  * Provider chain with adaptive flat-sequence rotation.
  *
- * On construction, builds ONE flat ordered list of Candidate triples
- * `<model, provider, keyIndex>` (delegated to chain-candidates.ts) and wraps it
- * in a CandidateQueue. Every `handle()` call iterates the queue from the front:
+ * On construction, builds ONE flat ordered list of RoutingEntry triples
+ * `<model, provider, keyIndex>` (delegated to chain-routing.ts) and wraps it in
+ * a RotationQueue. Every `handle()` call iterates the queue from the front:
  *   - OK       -> return the response.
- *   - KEY_FAILURE (401/402/403/429) -> demote this candidate to the back, try next.
+ *   - KEY_FAILURE (401/402/403/429) -> demote this entry to the back, try next.
  *   - TRANSIENT (5xx/408/425)      -> backoff-retry in place up to MAX_TRANSIENT_RETRIES.
- *   - BAD_REQUEST (other 4xx)      -> skip to next candidate (do not demote).
+ *   - BAD_REQUEST (other 4xx)      -> skip to next entry (do not demote).
  *
  * Demotion is permanent for the life of the process (no TTL, in-memory only).
  * Restart rebuilds the queue from env in the original declared order.
  *
- * Aliases "mst/free" and "free" walk the SAME candidate list using each
- * candidate's provider-default model. Prefix "direct:<provider>/<model>" pins a
- * single provider and disables fallback.
+ * Aliases "mst/free" and "free" walk the SAME entry list using each entry's
+ * provider-default model. Prefix "direct:<provider>/<model>" pins a single
+ * provider and disables fallback.
  */
 
 import type { Logger } from 'pino';
@@ -24,18 +24,18 @@ import { backoffMs, sleep } from '../common/retry.js';
 import { env } from '../config/env.js';
 
 import {
-  buildCandidateList,
+  buildRoutingEntries,
   shortCircuit,
-  type Candidate,
   type ChainProvider,
-} from './chain-candidates.js';
+  type RoutingEntry,
+} from './chain-routing.js';
 import type { Providers } from './instances.js';
 import { withFree } from './openrouter.js';
-import { CandidateQueue } from './rotation.js';
+import { RotationQueue } from './rotation.js';
 import type { ChatRequestBody, ProviderCallResult } from './types.js';
 
-// Re-export so existing imports of `Candidate` from './chain.js' keep working.
-export type { Candidate } from './chain-candidates.js';
+// Re-export so existing imports of `RoutingEntry` from './chain.js' work.
+export type { RoutingEntry } from './chain-routing.js';
 
 export interface ChainResult {
   response: Response;
@@ -43,13 +43,13 @@ export interface ChainResult {
 }
 
 export class ProviderChain {
-  private readonly queue: CandidateQueue<Candidate>;
+  private readonly queue: RotationQueue<RoutingEntry>;
 
   constructor(
     private readonly providers: Providers,
     private readonly log: Logger,
   ) {
-    this.queue = new CandidateQueue(buildCandidateList(providers), { log, label: 'chain' });
+    this.queue = new RotationQueue(buildRoutingEntries(providers), { log, label: 'chain' });
   }
 
   async handle(body: ChatRequestBody, signal: AbortSignal): Promise<ChainResult> {
@@ -62,12 +62,12 @@ export class ProviderChain {
     return this.runChain(body, signal, { explicitModel: requested });
   }
 
-  /** Walk every candidate using each provider's default model. */
+  /** Walk every entry using each provider's default model. */
   private async walkAll(body: ChatRequestBody, signal: AbortSignal): Promise<ChainResult> {
     return this.iterate(body, signal, {});
   }
 
-  /** Walk every candidate using the client's explicit model. */
+  /** Walk every entry using the client's explicit model. */
   private async runChain(
     body: ChatRequestBody,
     signal: AbortSignal,
@@ -100,7 +100,7 @@ export class ProviderChain {
           : 1;
     for (let i = 0; i < maxIdx; i++) {
       if (signal.aborted) throw new NoProviderAvailableError('aborted');
-      const res = await this.tryCandidate(
+      const res = await this.tryEntry(
         { provider, label: p.id, model, attemptIndex: i },
         model,
         body,
@@ -121,47 +121,47 @@ export class ProviderChain {
   ): Promise<ChainResult> {
     const failures: string[] = [];
     const order = this.queue.snapshot();
-    for (const candidate of order) {
+    for (const entry of order) {
       if (signal.aborted) throw new NoProviderAvailableError('aborted');
-      // Pass model separately so tryCandidate demotes the ORIGINAL candidate
-      // reference (spreading here would break identity and silently no-op demote).
-      const model = opts.explicitModel ?? candidate.model;
-      const res = await this.tryCandidate(candidate, model, body, signal, failures, {
+      // Pass model separately so tryEntry demotes the ORIGINAL entry reference
+      // (spreading here would break identity and silently no-op demote).
+      const model = opts.explicitModel ?? entry.model;
+      const res = await this.tryEntry(entry, model, body, signal, failures, {
         demoteOnKeyFailure: true,
       });
       if (res) return res;
     }
-    this.log.error({ failures, model: body.model }, 'all candidates failed');
-    throw new NoProviderAvailableError(`all candidates failed: ${failures.join('; ')}`);
+    this.log.error({ failures, model: body.model }, 'all routing entries failed');
+    throw new NoProviderAvailableError(`all routing entries failed: ${failures.join('; ')}`);
   }
 
-  /** Attempt one candidate with TRANSIENT retry-in-place. On KEY_FAILURE
-   *  (when demoteOnKeyFailure), demote the candidate to the back of the queue.
-   *  `candidate` MUST be the original queue reference for demotion to work. */
-  private async tryCandidate(
-    candidate: Candidate,
+  /** Attempt one entry with TRANSIENT retry-in-place. On KEY_FAILURE
+   *  (when demoteOnKeyFailure), demote the entry to the back of the queue.
+   *  `entry` MUST be the original queue reference for demotion to work. */
+  private async tryEntry(
+    entry: RoutingEntry,
     model: string,
     body: ChatRequestBody,
     signal: AbortSignal,
     failures: string[],
     behavior: { demoteOnKeyFailure: boolean },
   ): Promise<ChainResult | undefined> {
-    const p = this.providers[candidate.provider];
+    const p = this.providers[entry.provider];
     if (!p.available) {
-      failures.push(`${candidate.label}:not-configured`);
+      failures.push(`${entry.label}:not-configured`);
       return undefined;
     }
     let attempt = 0;
     while (attempt <= env().MAX_TRANSIENT_RETRIES) {
       if (signal.aborted) return undefined;
-      const res: ProviderCallResult = await this.callProvider(candidate, model, body, signal);
+      const res: ProviderCallResult = await this.callProvider(entry, model, body, signal);
       if (res.kind === 'OK') {
-        return { response: res.response, servedBy: { provider: candidate.label, model } };
+        return { response: res.response, servedBy: { provider: entry.label, model } };
       }
-      failures.push(`${candidate.label}:${res.kind}(${res.status})`);
+      failures.push(`${entry.label}:${res.kind}(${res.status})`);
       this.log.debug(
-        { provider: candidate.label, kind: res.kind, status: res.status, msg: res.message },
-        'candidate attempt failed',
+        { provider: entry.label, kind: res.kind, status: res.status, msg: res.message },
+        'routing entry attempt failed',
       );
       if (res.kind === 'TRANSIENT' && attempt < env().MAX_TRANSIENT_RETRIES) {
         attempt++;
@@ -169,7 +169,7 @@ export class ProviderChain {
         continue;
       }
       if (res.kind === 'KEY_FAILURE' && behavior.demoteOnKeyFailure) {
-        this.queue.demote(candidate);
+        this.queue.demote(entry);
       }
       break;
     }
@@ -178,17 +178,17 @@ export class ProviderChain {
 
   /** Dispatch one attempt to the right provider with the right opts shape. */
   private async callProvider(
-    candidate: Candidate,
+    entry: RoutingEntry,
     model: string,
     body: ChatRequestBody,
     signal: AbortSignal,
   ): Promise<ProviderCallResult> {
-    const p = this.providers[candidate.provider];
-    if (candidate.provider === 'openrouter') {
-      return p.attempt(body, signal, { model, keyIndex: candidate.attemptIndex });
+    const p = this.providers[entry.provider];
+    if (entry.provider === 'openrouter') {
+      return p.attempt(body, signal, { model, keyIndex: entry.attemptIndex });
     }
-    if (candidate.provider === 'opencode') {
-      return p.attempt(body, signal, { model, tripleIndex: candidate.attemptIndex });
+    if (entry.provider === 'opencode') {
+      return p.attempt(body, signal, { model, tripleIndex: entry.attemptIndex });
     }
     return p.attempt(body, signal, { model });
   }
@@ -198,13 +198,13 @@ export class ProviderChain {
     return this.providers.opencode.queueSnapshot().filter((t) => t.model === model).length;
   }
 
-  /** White-box: current candidate queue order (for tests/debug). */
-  queueSnapshot(): readonly Candidate[] {
+  /** White-box: current routing-entry queue order (for tests/debug). */
+  queueSnapshot(): readonly RoutingEntry[] {
     return this.queue.snapshot();
   }
 
-  /** White-box (test-only): demote a specific candidate. */
-  demoteCandidate(c: Candidate): void {
-    this.queue.demote(c);
+  /** White-box (test-only): demote a specific entry. */
+  demoteEntry(e: RoutingEntry): void {
+    this.queue.demote(e);
   }
 }

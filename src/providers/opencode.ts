@@ -1,6 +1,6 @@
 /**
  * OpenCode Zen pooled provider. Mirrors OpenRouterProvider's structure but the
- * candidate unit is the (model, key) TRIPLE, not just the key. Each model
+ * routing-entry unit is the (model, key) TRIPLE, not just the key. Each model
  * variant (big-pickle, nemotron-3-ultra-free, ...) is tried against each key.
  *
  * Failure handling: a triple that returns KEY_FAILURE (401/402/403/429) is
@@ -14,7 +14,7 @@
 import type { Logger } from 'pino';
 
 import { postChatCompletion } from './fetch.js';
-import { CandidateQueue } from './rotation.js';
+import { RotationQueue } from './rotation.js';
 import type { AttemptOptions, ChatRequestBody, Provider, ProviderCallResult } from './types.js';
 
 export interface OpenCodeTriple {
@@ -25,7 +25,7 @@ export interface OpenCodeTriple {
 export interface OpenCodeProviderConfig {
   keys: readonly string[];
   baseUrl: string;
-  /** Model variants, big-pickle first. Order is preserved in the candidate queue. */
+  /** Model variants, big-pickle first. Order is preserved in the rotation queue. */
   models: readonly string[];
   timeoutMs: number;
   log: Logger;
@@ -37,7 +37,7 @@ export class OpenCodeProvider implements Provider {
 
   private readonly keys: readonly string[];
   private readonly models: readonly string[];
-  private readonly queue: CandidateQueue<OpenCodeTriple>;
+  private readonly queue: RotationQueue<OpenCodeTriple>;
 
   constructor(private readonly cfg: OpenCodeProviderConfig) {
     this.keys = cfg.keys;
@@ -49,7 +49,7 @@ export class OpenCodeProvider implements Provider {
         triples.push({ model: this.models[m]!, keyIdx: k });
       }
     }
-    this.queue = new CandidateQueue(triples, { log: cfg.log, label: 'opencode' });
+    this.queue = new RotationQueue(triples, { log: cfg.log, label: 'opencode' });
   }
 
   get available(): boolean {

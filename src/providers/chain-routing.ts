@@ -1,12 +1,13 @@
 /**
- * Candidate list construction + direct: short-circuit parsing for the provider
+ * Routing-entry construction + direct: short-circuit parsing for the provider
  * chain. Extracted from chain.ts so chain.ts stays under the 250-line module
- * budget and so the candidate-building policy is testable in isolation.
+ * budget and so the routing-entry-building policy is testable in isolation.
  *
- * A Candidate is one entry in the flat adaptive-rotation queue: which provider,
- * which model, which key slot. The order here is the env-declared initial order
- * (OpenRouter keys, then OpenAI, then ZAI, then OpenCode triples). The chain
- * wraps the result in a CandidateQueue which reorders on KEY_FAILURE.
+ * A RoutingEntry is one entry in the flat adaptive-rotation queue: which
+ * provider, which model, which key slot. The order here is the env-declared
+ * initial order (OpenRouter keys, then OpenAI, then ZAI, then OpenCode
+ * triples). The chain wraps the result in a RotationQueue which reorders on
+ * KEY_FAILURE.
  */
 
 import { env } from '../config/env.js';
@@ -14,8 +15,8 @@ import { env } from '../config/env.js';
 import type { Providers } from './instances.js';
 import { withFree } from './openrouter.js';
 
-/** A single flat candidate: which provider, which model, which key slot. */
-export interface Candidate {
+/** A single flat routing entry: which provider, which model, which key slot. */
+export interface RoutingEntry {
   /** Lookup key into `Providers`. */
   provider: 'openrouter' | 'openai' | 'zai' | 'opencode';
   /** Display label for servedBy / logs. */
@@ -27,16 +28,16 @@ export interface Candidate {
 }
 
 /** Provider id union used by shortCircuit + runSingle. */
-export type ChainProvider = Candidate['provider'];
+export type ChainProvider = RoutingEntry['provider'];
 
 /**
- * Build the initial flat candidate list from env-declared order:
+ * Build the initial flat routing-entry list from env-declared order:
  *   OpenRouter keys -> OpenAI -> ZAI -> OpenCode triples (model-major, key-minor).
  * Unavailable providers are skipped.
  */
-export function buildCandidateList(providers: Providers): Candidate[] {
+export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
   const e = env();
-  const list: Candidate[] = [];
+  const list: RoutingEntry[] = [];
   const or = providers.openrouter;
   if (or.available) {
     const orModel = withFree(e.OPENROUTER_MODEL, e.FORCE_FREE);

@@ -4,8 +4,8 @@
  * life of the process. No TTL, no persistence, no cooldown timer. Restart
  * rebuilds the queue from env (original declared order).
  *
- * Extracted from OpenRouterProvider.keyOrder so OpenRouter, OpenCode, and the
- * chain-level inter-provider walk all share one contract and one set of tests.
+ * Used by OpenRouterProvider (key pool), OpenCodeProvider ((model, key) pool),
+ * and the chain (inter-provider walk). All three share one contract here.
  *
  * Pure data structure: no I/O. The only side effect is an optional warn log on
  * demote, for observability.
@@ -13,7 +13,7 @@
 
 import type { Logger } from 'pino';
 
-export class CandidateQueue<T> {
+export class RotationQueue<T> {
   private order: T[];
 
   constructor(

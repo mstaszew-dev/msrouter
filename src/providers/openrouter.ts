@@ -11,7 +11,7 @@
  * (round-robin). This keeps the queue logic strictly FIFO-on-failure with no
  * time-based churn.
  *
- * The queue is now backed by the shared CandidateQueue primitive so OpenRouter,
+ * The queue is now backed by the shared RotationQueue primitive so OpenRouter,
  * OpenCode, and the chain-level inter-provider walk all share one demote-to-back
  * contract and one set of tests.
  *
@@ -24,14 +24,14 @@
 import type { Logger } from 'pino';
 
 import { postChatCompletion } from './fetch.js';
-import { CandidateQueue } from './rotation.js';
+import { RotationQueue } from './rotation.js';
 import type { AttemptOptions, ChatRequestBody, Provider, ProviderCallResult } from './types.js';
 
 export class OpenRouterProvider implements Provider {
   readonly id = 'openrouter';
 
   /** Raw-index queue; demote-to-back on KEY_FAILURE. In-memory, no TTL. */
-  private readonly keyOrder: CandidateQueue<number>;
+  private readonly keyOrder: RotationQueue<number>;
 
   constructor(
     private readonly keys: readonly string[],
@@ -42,7 +42,7 @@ export class OpenRouterProvider implements Provider {
     private readonly title = 'msrouter',
   ) {
     // Start in numeric order.
-    this.keyOrder = new CandidateQueue(
+    this.keyOrder = new RotationQueue(
       keys.map((_, idx) => idx),
       { log, label: 'openrouter' },
     );

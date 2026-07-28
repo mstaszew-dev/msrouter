@@ -28,7 +28,7 @@ interface QueueView {
 
 function makeQueue(keys: string[]): { p: OpenRouterProvider; q: QueueView } {
   const p = new OpenRouterProvider(keys, 1000, silent);
-  return { p, q: p as unknown as QueueView };
+  return { p, q: p };
 }
 
 describe('OpenRouterProvider key-health queue', () => {
