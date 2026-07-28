@@ -116,6 +116,11 @@ export class DirectorLoop {
     const systemPrompt = `${directorPrompt}\n\nYou are in READ-ONLY mode. Investigate freely but do NOT write anything.\n\nCurrent overrides:\n${overridesText}\n\nRecent classifications:\n${classificationsText}`;
     const goal = `Campaign: ${snapshot.tracker.submitted}/${snapshot.tracker.target} submitted. Queue: ${snapshot.tracker.queueLength}. Investigate and output {"patches":[...]} or nothing.`;
 
+    this.opts.log.info(
+      { classifications: actionable.length, model: e.DIRECTOR_MODEL || e.WALK_ALIAS[0] || 'mst/free' },
+      'Proposal agent loop starting (read-only)',
+    );
+    const t0 = Date.now();
     const result = await runDirectorAgent(
       this.opts.chain,
       systemPrompt,
@@ -125,6 +130,7 @@ export class DirectorLoop {
       signal,
       'read',
     );
+    const elapsed = Date.now() - t0;
     let count = 0;
     for (const p of result.patches) {
       if (signal.aborted) break;
@@ -132,6 +138,7 @@ export class DirectorLoop {
       await this.publishEvent(p.id, JSON.stringify({ kind: 'proposed', patch: p }));
       count++;
     }
+    this.opts.log.info({ steps: result.steps, patches: count, elapsedMs: elapsed }, 'Proposal agent loop complete');
     return count;
   }
 
@@ -187,10 +194,13 @@ export class DirectorLoop {
     let proposedCount = 0;
 
     try {
+      const t0 = Date.now();
+      this.opts.log.info('Phase 1: Campaign supervision');
       // 1. Ensure campaign is running (supervisor)
       await this.ensureCampaignRunning();
 
       // 2. Observe campaign state
+      this.opts.log.info('Phase 2: Observing campaign state');
       const { snapshot, checkpoint: next } = await observe(checkpoint, {
         campaignDir: e.DIRECTOR_CAMPAIGN_DIR,
       });
@@ -198,10 +208,13 @@ export class DirectorLoop {
       next.lastSlackTs = checkpoint.lastSlackTs;
       checkpoint = next;
       observed = snapshot.recentEvents.length;
+      this.opts.log.debug({ events: observed, submitted: snapshot.tracker.submitted, target: snapshot.tracker.target }, 'Observe complete');
 
       // 3. Classify decisions
+      this.opts.log.info('Phase 3: Classifying decisions');
       const classifications = classify(snapshot);
       classificationsCount = classifications.length;
+      this.opts.log.debug({ classifications: classificationsCount, kinds: classifications.map(c => c.kind) }, 'Classification complete');
 
       // Publish observation event to Kafka (only when data changed)
       const subChanged = snapshot.tracker.submitted !== checkpoint.lastSubmitted;
@@ -222,17 +235,19 @@ export class DirectorLoop {
             classifications: classificationsCount,
           }),
         );
+        this.opts.log.debug({ subChanged, queueChanged, hasClassifications }, 'Observation event published');
       }
 
       // Auto-rebuild RAG when new submissions are detected
       if (subChanged) {
+        this.opts.log.info('Phase 3b: Rebuilding RAG (new submissions detected)');
         await this.rebuildRag();
       }
 
       // 4. READ-ONLY agent loop to propose patches (skip if duplicate state)
       const actionable = classifications.filter((c) => c.severity !== 'info');
       if (actionable.length > 0 && !signal.aborted) {
-        // Duplicate-proposal suppression: skip if same classifications + pending proposals
+        this.opts.log.info({ actionable: actionable.length }, 'Phase 4: Proposing patches');
         const currentHash = hashClassifications(actionable);
         if (currentHash === checkpoint.lastProposalHash) {
           const ledgerPath = e.DIRECTOR_LEDGER || join(e.DIRECTOR_OPENCLAW_WORKSPACE, 'director', 'ledger.jsonl');
@@ -242,43 +257,55 @@ export class DirectorLoop {
           } else {
             checkpoint.lastProposalHash = currentHash;
             proposedCount = await this.proposePatches(actionable, snapshot, e, signal);
+            this.opts.log.info({ proposedCount }, 'Proposal phase complete');
           }
         } else {
           checkpoint.lastProposalHash = currentHash;
           proposedCount = await this.proposePatches(actionable, snapshot, e, signal);
+          this.opts.log.info({ proposedCount }, 'Proposal phase complete');
         }
       }
 
-	      // 5. Poll Slack for approve/reject commands
-	      checkpoint = await this.pollAndApplyDecisions(checkpoint);
+      // 5. Poll Slack for approve/reject commands
+      this.opts.log.info('Phase 5: Polling Slack for approvals');
+      checkpoint = await this.pollAndApplyDecisions(checkpoint);
+      if (checkpoint.lastSlackTs) {
+        this.opts.log.debug({ lastSlackTs: checkpoint.lastSlackTs }, 'Slack poll complete');
+      }
 
-	      // 6. Execute approved patches (from any tick) via write-enabled agent loop
-	      const approved = await readApprovedPatches(e.DIRECTOR_LEDGER || join(e.DIRECTOR_OPENCLAW_WORKSPACE, 'director', 'ledger.jsonl'));
-	      if (approved.length > 0 && !signal.aborted) {
-	        const overridesText = await readOverrides(e.DIRECTOR_OVERRIDES).then(r => JSON.stringify(r)).catch(() => '(none)');
-	        const patchesText = approved.map(p => `- ${p.id}: ${p.rationale}  overrides: ${JSON.stringify(p.overrides)}`).join('\n');
-	        const execPrompt = `You are in EXECUTION mode. Apply the following approved patches by writing overrides.\n\nCurrent overrides:\n${overridesText}\n\nApproved patches to apply:\n${patchesText}\n\nFor each patch, call write_prompt_override with the rationale and then output {"applied":["patch-id-1",...]}.`;
-	        const execGoal = `Apply ${approved.length} approved patches by writing overrides.`;
+      // 6. Execute approved patches (from any tick) via write-enabled agent loop
+      this.opts.log.info('Phase 6: Checking for approved patches');
+      const approved = await readApprovedPatches(e.DIRECTOR_LEDGER || join(e.DIRECTOR_OPENCLAW_WORKSPACE, 'director', 'ledger.jsonl'));
+      if (approved.length > 0 && !signal.aborted) {
+        this.opts.log.info({ approved: approved.length }, 'Phase 6b: Executing approved patches');
+        const overridesText = await readOverrides(e.DIRECTOR_OVERRIDES).then(r => JSON.stringify(r)).catch(() => '(none)');
+        const patchesText = approved.map(p => `- ${p.id}: ${p.rationale}  overrides: ${JSON.stringify(p.overrides)}`).join('\n');
+        const execPrompt = `You are in EXECUTION mode. Apply the following approved patches by writing overrides.\n\nCurrent overrides:\n${overridesText}\n\nApproved patches to apply:\n${patchesText}\n\nFor each patch, call write_prompt_override with the rationale and then output {"applied":["patch-id-1",...]}.`;
+        const execGoal = `Apply ${approved.length} approved patches by writing overrides.`;
 
-	        await runDirectorAgent(
-	          this.opts.chain,
-	          execPrompt,
-	          execGoal,
-	          e.DIRECTOR_MODEL || e.WALK_ALIAS[0] || 'mst/free',
-	          this.opts.log,
-	          signal,
-	          'write',
-	        );
+        await runDirectorAgent(
+          this.opts.chain,
+          execPrompt,
+          execGoal,
+          e.DIRECTOR_MODEL || e.WALK_ALIAS[0] || 'mst/free',
+          this.opts.log,
+          signal,
+          'write',
+        );
 
-	        // After execution loop, directly apply patches to overrides file
-	        for (const p of approved) {
-	          await applyPatch(p, e.DIRECTOR_OVERRIDES);
-	          await this.opts.surface.postApplied(p);
-	          await this.publishEvent(p.id, JSON.stringify({ kind: 'applied', patch: p }));
-	        }
-	      }
+        // After execution loop, directly apply patches to overrides file
+        for (const p of approved) {
+          this.opts.log.info({ patchId: p.id, risk: p.risk }, 'Applying approved patch');
+          await applyPatch(p, e.DIRECTOR_OVERRIDES);
+          await this.opts.surface.postApplied(p);
+          await this.publishEvent(p.id, JSON.stringify({ kind: 'applied', patch: p }));
+          this.opts.log.debug({ patchId: p.id, overrides: p.overrides }, 'Patch applied to overrides file');
+        }
+      }
 
-	      await this.saveCheckpoint(checkpoint);
+      const t1 = Date.now();
+      this.opts.log.info({ elapsedMs: t1 - t0, observed, classifications: classificationsCount, proposed: proposedCount }, 'Director tick complete');
+      await this.saveCheckpoint(checkpoint);
 	      return {
 	        observed,
 	        classifications: classificationsCount,
