@@ -71,6 +71,17 @@ export async function postChatCompletion(
               message: `upstream returned 200 with error: ${truncate(errMsg, 300)}`,
             };
           }
+          // Detect empty-content responses (e.g. big-pickle reasoning-only model
+          // returns HTTP 200 with empty content and finish_reason=length). Treat
+          // as transient so the chain skips to the next model instead of returning
+          // a useless response to the caller.
+          if (isEmptyCompletion(json)) {
+            return {
+              kind: 'TRANSIENT',
+              status: res.status,
+              message: `upstream returned empty completion (model returned no content)`,
+            };
+          }
           return {
             kind: 'OK',
             response: new Response(scrubbed, { status: res.status, headers: res.headers }),
@@ -144,4 +155,32 @@ export function scrubSecrets(input: string): string {
 
 function truncate(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max) + '...';
+}
+
+/**
+ * Check whether a parsed chat-completion JSON body represents an empty response:
+ * HTTP 200, no error, but choices[].message.content is empty/null and
+ * finish_reason is not 'stop'. Models like big-pickle return this pattern when
+ * they are reasoning-only models that don't generate user-facing text.
+ */
+function isEmptyCompletion(json: unknown): boolean {
+  if (!json || typeof json !== 'object') return false;
+  const obj = json as Record<string, unknown>;
+  if ('error' in obj && obj.error) return false;
+  const choices = obj.choices;
+  if (!Array.isArray(choices) || choices.length === 0) return false;
+  for (const c of choices) {
+    if (!c || typeof c !== 'object') continue;
+    const choice = c as Record<string, unknown>;
+    const message = choice.message as Record<string, unknown> | undefined;
+    if (!message || typeof message !== 'object') continue;
+    const content = message.content;
+    const finishReason = choice.finish_reason;
+    // Not empty if content is present and non-empty
+    if (typeof content === 'string' && content.length > 0) return false;
+    // Not empty if finish_reason is 'stop' (model chose to say nothing)
+    if (finishReason === 'stop') return false;
+  }
+  // All choices have empty content and finish_reason !== 'stop'
+  return true;
 }
