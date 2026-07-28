@@ -34,11 +34,18 @@ export function isEmptyCompletion(json: unknown): boolean {
 
 /**
  * Peek at a streaming SSE response for actual content before forwarding.
- * Reads enough of the stream to get the first complete SSE event. If the
- * event contains a content delta, reconstruct a new Response with the read
- * data prepended. If the stream is empty or the first events show no content
- * (e.g. big-pickle with finish_reason=length and empty delta), return
- * { ok: false } so the caller treats this as a KEY_FAILURE.
+ * Reads enough of the stream to get the first complete SSE event.
+ *
+ * Valid responses (return { ok: true }):
+ * - Events with text content tokens (delta.content)
+ * - Events with tool call deltas (delta.tool_calls) — model used MCP tools
+ * - Events that start with content or tool_calls (even if later finish_reason=length)
+ *
+ * Empty responses (return { ok: false, reason }):
+ * - No events at all (stream ended immediately)
+ * - Only finish_reason=length with no content AND no tool_calls — e.g. big-pickle
+ * - Embedded error field (rate limit reached, etc.) — also KEY_FAILURE so the
+ *   provider demotes the triple instead of retrying in place
  */
 export async function checkStreamContent(
   res: Response,
@@ -52,6 +59,7 @@ export async function checkStreamContent(
   const chunks: Uint8Array[] = [];
   let buffer = '';
   let hasContent = false;
+  let hasError = false;
 
   // Read chunks until we've seen the first complete SSE event or stream ends.
   while (true) {
@@ -76,26 +84,43 @@ export async function checkStreamContent(
           if (jsonStr === '[DONE]') continue;
           try {
             const parsed = JSON.parse(jsonStr) as Record<string, unknown>;
+
+            // Check for embedded error (e.g. rate-limit returned as HTTP 200)
+            if (parsed.error) {
+              hasError = true;
+              break;
+            }
+
             const choices = parsed.choices;
             if (!Array.isArray(choices)) continue;
             for (const c of choices) {
               if (!c || typeof c !== 'object') continue;
               const choice = c as Record<string, unknown>;
               const delta = choice.delta as Record<string, unknown> | undefined;
-              const content = delta?.content;
+              if (!delta) continue;
+
+              // Text content — model is generating a response
+              const content = delta.content;
               if (typeof content === 'string' && content.length > 0) {
                 hasContent = true;
                 break;
               }
+
+              // Tool calls — model used MCP tools (no text output is ok)
+              const toolCalls = delta.tool_calls;
+              if (Array.isArray(toolCalls) && toolCalls.length > 0) {
+                hasContent = true; // tool calls are valid content
+                break;
+              }
             }
-            if (hasContent) break;
+            if (hasContent || hasError) break;
           } catch {
             // unparseable event line; skip
           }
         }
-        if (hasContent) break;
+        if (hasContent || hasError) break;
       }
-      if (hasContent) break;
+      if (hasContent || hasError) break;
     }
   }
 
@@ -108,11 +133,16 @@ export async function checkStreamContent(
     offset += c.length;
   }
 
-  if (!hasContent) {
-    // Drain any remaining stream data before discarding.
+  if (hasError) {
     // eslint-disable-next-line no-empty
     while (!(await reader.read()).done) {}
-    return { ok: false, reason: 'SSE stream had no content tokens' };
+    return { ok: false, reason: 'SSE stream contained an error response' };
+  }
+
+  if (!hasContent) {
+    // eslint-disable-next-line no-empty
+    while (!(await reader.read()).done) {}
+    return { ok: false, reason: 'SSE stream had no content or tool call tokens' };
   }
 
   // Build a new stream with the already-read data, then pipe the rest.
