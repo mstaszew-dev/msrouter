@@ -101,7 +101,7 @@ const schema = z.object({
   // OpenClaw workspace (where run-one-job lives).
   DIRECTOR_OPENCLAW_WORKSPACE: z.string().default('/Users/mst/ZCodeProject/openclaw-job-search'),
   // Launcher wrapper the Director invokes to restart the worker.
-  DIRECTOR_RUNNER: z.string().default('~/.openclaw/director-launch'),
+  DIRECTOR_RUNNER: z.string().default('job-search-agent'),
   // Pidfile the launcher writes; Director reads/kills via this.
   DIRECTOR_PIDFILE: z.string().default('~/.openclaw/run-one-job.pid'),
   // The single patch target the Director edits on approval.
