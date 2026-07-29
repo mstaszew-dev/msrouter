@@ -19,7 +19,7 @@
  * standalone; job-search-agent is the normal, only entry point.
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -171,6 +171,34 @@ export async function pollCdp(url: string, timeoutMs = 30_000): Promise<boolean>
     await sleep(500);
   }
   return false;
+}
+
+/** Launch Chrome with remote debugging if CDP is not reachable. */
+export function startChromeCdp(cdpUrl: string, userDataDir?: string): void {
+  const port = new URL(cdpUrl).port || '9222';
+  const dir = userDataDir ?? join(homedir(), '.playwright-chrome');
+  const chromePath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+  const args = [
+    chromePath,
+    `--remote-debugging-port=${port}`,
+    `--user-data-dir=${dir}`,
+    '--no-first-run',
+    '--no-default-browser-check',
+  ];
+  const child = spawn(args[0]!, args.slice(1), {
+    stdio: 'ignore',
+    detached: true,
+  });
+  child.unref();
+}
+
+/** Ensure Chrome CDP is reachable; launch if not. */
+export async function ensureCdpRunning(cdpUrl: string): Promise<void> {
+  const ok = await pollCdp(cdpUrl, 5_000);
+  if (!ok) {
+    startChromeCdp(cdpUrl);
+    await sleep(2_000);
+  }
 }
 
 /**

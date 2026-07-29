@@ -27,7 +27,7 @@ import { classify } from './classify.js';
 import { kafkaProduce, type KafkaOpts } from './kafka.js';
 import { readApprovedPatches, readPending } from './ledger.js';
 import { observe } from './observe.js';
-import { snapshot as snapshotWorker, startWorkerInIterm } from './restart.js';
+import { ensureCdpRunning, snapshot as snapshotWorker, startWorkerInIterm } from './restart.js';
 import type { Checkpoint, DirectorRunResult, DirectorSurface } from './types.js';
 import type { DecisionClassification } from './types.js';
 
@@ -196,6 +196,8 @@ export class DirectorLoop {
     try {
       const t0 = Date.now();
       this.opts.log.info('Phase 1: Campaign supervision');
+      // 0. Ensure Chrome CDP is running (Playwright MCP depends on it)
+      await ensureCdpRunning(e.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222');
       // 1. Ensure campaign is running (supervisor)
       await this.ensureCampaignRunning();
 
