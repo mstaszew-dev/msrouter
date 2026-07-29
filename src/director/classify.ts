@@ -23,7 +23,11 @@ function str(v: unknown): string {
   return '';
 }
 
-export function classify(snapshot: CampaignSnapshot): DecisionClassification[] {
+export function classify(
+  snapshot: CampaignSnapshot,
+  now: string,
+  lastEventAt?: string,
+): DecisionClassification[] {
   const out: DecisionClassification[] = [];
   const submittedByCompany = new Map<string, number>();
 
@@ -84,5 +88,22 @@ export function classify(snapshot: CampaignSnapshot): DecisionClassification[] {
       }
     }
   }
+
+  // Staleness detection: if no recent events and last activity was >60 min ago,
+  // the campaign agent may be stuck (403 errors, LLM timeouts, etc.)
+  if (snapshot.recentEvents.length === 0 && lastEventAt) {
+    const lastMs = new Date(lastEventAt).getTime();
+    const nowMs = new Date(now).getTime();
+    const idleMinutes = (nowMs - lastMs) / 60_000;
+    if (idleMinutes >= 60) {
+      out.push({
+        kind: 'stale-campaign',
+        severity: 'warn',
+        reason: `No new events for ${Math.round(idleMinutes)} min. Campaign agent may be stuck.`,
+        evidence: `${Math.round(idleMinutes)}m idle`,
+      });
+    }
+  }
+
   return out;
 }

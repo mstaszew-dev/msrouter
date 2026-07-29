@@ -218,7 +218,10 @@ export class DirectorLoop {
 
       // 3. Classify decisions
       this.opts.log.info('Phase 3: Classifying decisions');
-      const classifications = classify(snapshot);
+      const lastEventAt = snapshot.recentEvents.length > 0
+        ? snapshot.recentEvents[snapshot.recentEvents.length - 1]!.at
+        : checkpoint.lastTickAt;
+      const classifications = classify(snapshot, new Date().toISOString(), lastEventAt);
       classificationsCount = classifications.length;
       this.opts.log.debug({ classifications: classificationsCount, kinds: classifications.map(c => c.kind) }, 'Classification complete');
 

@@ -30,7 +30,7 @@ export interface CampaignEvent {
 export interface DecisionClassification {
   eventId?: string; // for skipped/submitted events with an id
   kind:
-    'good-apply' | 'risky-apply' | 'missed-apply' | 'bad-skip' | 'duplicate-risk' | 'portal-error';
+    'good-apply' | 'risky-apply' | 'missed-apply' | 'bad-skip' | 'duplicate-risk' | 'portal-error' | 'stale-campaign';
   severity: 'info' | 'warn' | 'critical';
   reason: string; // human-readable, for the LLM and ledger
   evidence?: string; // the field/value that triggered it
