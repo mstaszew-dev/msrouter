@@ -150,17 +150,21 @@ export async function checkStreamContent(
     start(controller) {
       controller.enqueue(allData);
       (async () => {
-        try {
-          while (true) {
-            const r = await reader.read();
-            if (r.done) break;
-            controller.enqueue(r.value);
+          try {
+            while (true) {
+              const r = await reader.read();
+              if (r.done) break;
+              controller.enqueue(r.value);
+            }
+          } catch {
+            // stream terminated by abort/timeout
+          } finally {
+            try {
+              controller.close();
+            } catch {
+              // controller already closed by consumer disconnect — ignore
+            }
           }
-        } catch {
-          // stream terminated by abort/timeout
-        } finally {
-          controller.close();
-        }
       })();
     },
   });
