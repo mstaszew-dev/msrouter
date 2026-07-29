@@ -259,17 +259,32 @@ export class DirectorLoop {
         await this.rebuildRag();
       }
 
+      // Clear stale-campaign warning when new activity arrives
+      if (observed > 0 && checkpoint.staleWarningActive) {
+        checkpoint.staleWarningActive = false;
+        this.opts.log.info('New events detected; clearing stale-campaign warning');
+      }
+
       // 4. READ-ONLY agent loop to propose patches (skip if same state)
       const actionable = classifications.filter((c) => c.severity !== 'info');
       if (actionable.length > 0 && !signal.aborted) {
-        this.opts.log.info({ actionable: actionable.length }, 'Phase 4: Proposing patches');
-        const currentHash = hashClassifications(actionable);
-        if (currentHash === checkpoint.lastProposalHash) {
-          this.opts.log.info({ hash: currentHash }, 'Skipping proposal: same state as last tick');
+        // Suppress repeated stale-campaign proposals: if the only actionable
+        // classifications are stale-campaign and we already sent one, skip.
+        const onlyStale = actionable.every((c) => c.kind === 'stale-campaign');
+        if (onlyStale && checkpoint.staleWarningActive) {
+          this.opts.log.info('Stale-campaign warning already active; skipping duplicate proposal');
         } else {
-          checkpoint.lastProposalHash = currentHash;
-          proposedCount = await this.proposePatches(actionable, snapshot, e, signal);
-          this.opts.log.info({ proposedCount }, 'Proposal phase complete');
+          this.opts.log.info({ actionable: actionable.length }, 'Phase 4: Proposing patches');
+          const currentHash = hashClassifications(actionable);
+          if (currentHash === checkpoint.lastProposalHash) {
+            this.opts.log.info({ hash: currentHash }, 'Skipping proposal: same state as last tick');
+          } else {
+            checkpoint.lastProposalHash = currentHash;
+            // Mark stale warning as active if we're about to propose one
+            if (onlyStale) checkpoint.staleWarningActive = true;
+            proposedCount = await this.proposePatches(actionable, snapshot, e, signal);
+            this.opts.log.info({ proposedCount }, 'Proposal phase complete');
+          }
         }
       }
 

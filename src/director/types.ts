@@ -90,4 +90,7 @@ export interface Checkpoint {
   lastQueueLength?: number;
   /** Hash of last proposal's actionable classifications (suppresses duplicate proposals). */
   lastProposalHash?: string;
+  /** True when a stale-campaign warning was sent and the campaign is still idle.
+   *  Cleared when new events arrive. Prevents re-sending the same warning every tick. */
+  staleWarningActive?: boolean;
 }
