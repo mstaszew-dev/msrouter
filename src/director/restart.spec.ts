@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type pino from 'pino';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
-import { detectWorker, ensureOverrideFiles, pollCdp, snapshot } from './restart.js';
+import { detectWorker, detectProcess, ensureOverrideFiles, pollCdp, protonVpnConnected, rotateVpnIp, snapshot } from './restart.js';
 
 const silent = {
   warn: vi.fn(),
@@ -90,4 +90,31 @@ describe('ensureOverrideFiles', () => {
     const content = readFileSync(envPath, 'utf8');
     expect(content).toContain('EXISTING_KEY=1');
   });
+});
+
+describe('detectProcess', () => {
+  it('returns pids for a running process pattern (launchd)', () => {
+    const pids = detectProcess('launchd');
+    expect(pids.length).toBeGreaterThan(0);
+    expect(pids[0]).toBeGreaterThan(0);
+  });
+
+  it('returns [] for a non-existent pattern', () => {
+    const pids = detectProcess('zzz-this-does-not-exist-9999');
+    expect(pids).toEqual([]);
+  });
+});
+
+describe('protonVpnConnected', () => {
+  it('returns a boolean without throwing', () => {
+    const result = protonVpnConnected();
+    expect(typeof result).toBe('boolean');
+  });
+});
+
+describe('rotateVpnIp', () => {
+  it('returns a boolean without throwing (may fail if VPN not configured)', async () => {
+    const result = await rotateVpnIp();
+    expect(typeof result).toBe('boolean');
+  }, 15000);
 });
