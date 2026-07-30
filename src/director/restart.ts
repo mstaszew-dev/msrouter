@@ -1,25 +1,15 @@
 /**
  * restart.ts: detect + stop/restart the campaign via iTerm2.
- *
- * The campaign has exactly one entry point: `job-search-agent` (a symlink on
- * PATH; the underlying script file is named run-one-job, which is misleading
- * because it runs the whole campaign, not one job). The Director treats that
- * script as the unit of supervision and always refers to it as job-search-agent.
- * It does NOT micro-manage inner ticks or the openclaw-agent child.
- *
- * Detection: pgrep for `job-search-agent` (catches the symlink invocation
- * whether the user runs it via PATH or via the resolved script path).
- * Stop: SIGTERM each matched PID; the tee'd log + openclaw-agent child go down
- *       with it via process-group semantics.
- * Start: open a new iTerm2 tab and run `job-search-agent` there. Keeps the
- *        campaign in a visible terminal (the user's "in iterm" instruction) and
- *        preserves the per-launch /tmp/campaign-<ts>.log trace.
- *
- * No wrapper script, no pidfile, no direct detached spawn. The campaign stays
- * standalone; job-search-agent is the normal, only entry point.
+ * Also provides infrastructure health-checking for Playwright MCP, OpenClaw gateway.
+ * The campaign entry point is `job-search-agent` (symlink → run-one-job).
+ * Detection via pgrep, stop via SIGTERM, start via iTerm AppleScript.
  */
 
 import { execFileSync, spawn } from 'node:child_process';
+import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -46,11 +36,7 @@ export interface SuperviseState {
   running: boolean;
 }
 
-/**
- * Ensure the Director override files exist. These are read by run-one-job:
- * - .env: env vars (INNER_MAX_FAILS, etc.)
- * - .md: prompt additions (appended to --message)
- */
+/** Ensure the Director override files exist (.env + .md). */
 export function ensureOverrideFiles(): void {
   const dir = join(homedir(), '.openclaw');
   mkdirSync(dir, { recursive: true, mode: 0o755 });
@@ -62,18 +48,7 @@ export function ensureOverrideFiles(): void {
 
 /** Detect running job-search-agent processes. Returns their PIDs (empty if none). */
 export function detectWorker(entryCommand: string): number[] {
-  // Match on the entry-command basename; pgrep -f scans the full command line.
-  const base = entryCommand.split('/').pop() ?? 'job-search-agent';
-  try {
-    const out = execFileSync('pgrep', ['-f', base], { encoding: 'utf8' });
-    return out
-      .split('\n')
-      .map((l) => Number.parseInt(l.trim(), 10))
-      .filter((n) => Number.isInteger(n) && n > 0);
-  } catch {
-    // pgrep exits non-zero when no matches; that means "not running".
-    return [];
-  }
+  return detectProcess(entryCommand.split('/').pop() ?? 'job-search-agent');
 }
 
 /** Snapshot the supervise state. */
@@ -82,10 +57,20 @@ export function snapshot(opts: SuperviseOpts): SuperviseState {
   return { pids, running: pids.length > 0 };
 }
 
-/**
- * Stop the campaign: SIGTERM each job-search-agent PID. The tee'd log +
- * openclaw-agent child go down with it via process-group semantics.
- */
+/** Detect processes by command-line pattern via pgrep. */
+export function detectProcess(pattern: string): number[] {
+  try {
+    const out = execFileSync('pgrep', ['-f', pattern], { encoding: 'utf8' });
+    return out
+      .split('\n')
+      .map((l) => Number.parseInt(l.trim(), 10))
+      .filter((n) => Number.isInteger(n) && n > 0);
+  } catch {
+    return [];
+  }
+}
+
+/** Stop the campaign: SIGTERM each job-search-agent PID. */
 export async function stopWorker(opts: SuperviseOpts): Promise<{ killed: number[] }> {
   const pids = detectWorker(opts.entryCommand);
   for (const pid of pids) {
@@ -105,16 +90,7 @@ export async function stopWorker(opts: SuperviseOpts): Promise<{ killed: number[
   return { killed: pids };
 }
 
-/**
- * Start the campaign in iTerm2 via AppleScript: open a new tab in the current
- * window (or a new window if none) and run the entry command there. The
- * campaign keeps its visible terminal trace + the per-launch
- * /tmp/campaign-<ts>.log tee'd by the underlying run-one-job script.
- *
- * Throws if iTerm2 is unavailable. The actual job-search-agent PID is not
- * knowable from here without a pidfile; the campaign is "started" once pgrep
- * sees it (call waitForStartup).
- */
+/** Start the campaign in iTerm2 via AppleScript. Throws if iTerm2 unavailable. */
 export function startWorkerInIterm(opts: SuperviseOpts): void {
   const cmd = `cd ${opts.workspace} && ${opts.entryCommand}`;
   // AppleScript: open a new tab in iTerm2 and run the entry command. The cmd
@@ -201,9 +177,50 @@ export async function ensureCdpRunning(cdpUrl: string): Promise<void> {
   }
 }
 
+/** Infrastructure health check result. */
+export interface InfraStatus {
+  cdpAlive: boolean;
+  playwrightMcpAlive: boolean;
+  openclawGatewayAlive: boolean;
+}
+
+/** Check all infrastructure components needed by the campaign agent. */
+export function checkInfrastructure(): InfraStatus {
+  return {
+    cdpAlive: detectProcess('chrome.*remote-debugging').length > 0,
+    playwrightMcpAlive: detectProcess('playwright/mcp').length > 0,
+    openclawGatewayAlive: detectProcess('openclaw.*gateway').length > 0,
+  };
+}
+
 /**
- * Full restart: stop, start in iTerm2, wait for the worker to register, poll
- * CDP. Returns the final detection state.
+ * Ensure campaign infrastructure is healthy. If critical components (Playwright MCP,
+ * OpenClaw gateway) are missing, restart the campaign to force a clean relaunch.
+ * Chrome CDP is handled separately by ensureCdpRunning().
+ * Returns true if a restart was triggered.
+ */
+export async function ensureInfrastructureHealthy(opts: SuperviseOpts): Promise<boolean> {
+  const status = checkInfrastructure();
+  const missing: string[] = [];
+  if (!status.playwrightMcpAlive) missing.push('playwright-mcp');
+  if (!status.openclawGatewayAlive) missing.push('openclaw-gateway');
+  // Chrome CDP is checked separately and less critical (Director can start it)
+
+  if (missing.length === 0) return false;
+
+  opts.log.warn({ missing }, 'Campaign infrastructure unhealthy; restarting campaign');
+  if (status.cdpAlive) {
+    opts.log.info('Chrome CDP is still up; restarting campaign to reinitialize Playwright MCP');
+  } else {
+    opts.log.info('Chrome CDP is also down; ensureCdpRunning will start it');
+  }
+
+  await restartWorker(opts);
+  return true;
+}
+
+/**
+ * Full restart: stop, start in iTerm2, wait for worker to register, poll CDP.
  */
 export async function restartWorker(opts: SuperviseOpts): Promise<{
   iterm: true;
