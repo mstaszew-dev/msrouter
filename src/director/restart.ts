@@ -184,7 +184,9 @@ export interface InfraStatus {
   openclawGatewayAlive: boolean;
 }
 
-/** Check all infrastructure components needed by the campaign agent. */
+/** Check all infrastructure components needed by the campaign agent.
+ *  The OpenClaw gateway is informational only — with --local mode the agent
+ *  bypasses it entirely. Only Playwright MCP is critical for browser automation. */
 export function checkInfrastructure(): InfraStatus {
   return {
     cdpAlive: detectProcess('chrome.*remote-debugging').length > 0,
@@ -194,17 +196,17 @@ export function checkInfrastructure(): InfraStatus {
 }
 
 /**
- * Ensure campaign infrastructure is healthy. If critical components (Playwright MCP,
- * OpenClaw gateway) are missing, restart the campaign to force a clean relaunch.
- * Chrome CDP is handled separately by ensureCdpRunning().
+ * Ensure campaign infrastructure is healthy. If Playwright MCP is missing,
+ * restart the campaign to force a clean relaunch. Chrome CDP is handled
+ * separately by ensureCdpRunning(). The OpenClaw gateway is optional since
+ * the agent now uses --local mode (bypasses gateway entirely).
  * Returns true if a restart was triggered.
  */
 export async function ensureInfrastructureHealthy(opts: SuperviseOpts): Promise<boolean> {
   const status = checkInfrastructure();
   const missing: string[] = [];
   if (!status.playwrightMcpAlive) missing.push('playwright-mcp');
-  if (!status.openclawGatewayAlive) missing.push('openclaw-gateway');
-  // Chrome CDP is checked separately and less critical (Director can start it)
+  // OpenClaw gateway is NOT critical — agent uses --local mode (HTTP direct to msrouter)
 
   if (missing.length === 0) return false;
 
