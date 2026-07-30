@@ -21,28 +21,18 @@ export interface Providers {
   opencode: OpenCodeProvider;
 }
 
-/** OpenCode Zen model variants, big-pickle first. Order is preserved in the
- *  rotation queue (model-major, key-minor). */
+/** OpenCode Zen model variants, in preferred order. Order is preserved in the
+ *  rotation queue (model-major, key-minor: all keys per model, then next model). */
 const OPENCODE_MODELS = (e: {
   OPENCODE_MODEL: string;
-  OPENCODE_NEMOTRON_MODEL: string;
   OPENCODE_DEEPSEEK_FLASH_MODEL: string;
-  OPENCODE_MIMO_MODEL: string;
-  OPENCODE_NORTH_MINI_CODE_MODEL: string;
-  OPENCODE_LAGUNA_MODEL: string;
-  OPENCODE_LING_MODEL: string;
   OPENCODE_QWEN_MODEL: string;
-  OPENCODE_MINIMAX_MODEL: string;
+  OPENCODE_NEMOTRON_MODEL: string;
 }): readonly string[] => [
-  e.OPENCODE_MODEL,
-  e.OPENCODE_NEMOTRON_MODEL,
+  e.OPENCODE_MODEL,           // big-pickle (demoted fast if empty)
   e.OPENCODE_DEEPSEEK_FLASH_MODEL,
-  e.OPENCODE_MIMO_MODEL,
-  e.OPENCODE_NORTH_MINI_CODE_MODEL,
-  e.OPENCODE_LAGUNA_MODEL,
-  e.OPENCODE_LING_MODEL,
   e.OPENCODE_QWEN_MODEL,
-  e.OPENCODE_MINIMAX_MODEL,
+  e.OPENCODE_NEMOTRON_MODEL,
 ];
 
 export function buildProviders(log: Logger): Providers {

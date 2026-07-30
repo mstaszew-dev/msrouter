@@ -41,11 +41,11 @@ describe('OpenCodeProvider pool', () => {
 
   it('builds the rotation queue in model-major, key-minor order', () => {
     const { q } = makeProvider(['k1', 'k2'], ['m1', 'm2']);
-    // order: (m1,k0), (m2,k0), (m1,k1), (m2,k1)
+    // order: (m1,k0), (m1,k1), (m2,k0), (m2,k1) — all keys for m1, then all keys for m2
     expect(q.queueSnapshot()).toEqual([
       { model: 'm1', keyIdx: 0 },
-      { model: 'm2', keyIdx: 0 },
       { model: 'm1', keyIdx: 1 },
+      { model: 'm2', keyIdx: 0 },
       { model: 'm2', keyIdx: 1 },
     ]);
   });
@@ -55,8 +55,8 @@ describe('OpenCodeProvider pool', () => {
     const first = q.queueSnapshot()[0]!;
     q.demoteTriple(first);
     expect(q.queueSnapshot()).toEqual([
-      { model: 'm2', keyIdx: 0 },
       { model: 'm1', keyIdx: 1 },
+      { model: 'm2', keyIdx: 0 },
       { model: 'm2', keyIdx: 1 },
       { model: 'm1', keyIdx: 0 },
     ]);

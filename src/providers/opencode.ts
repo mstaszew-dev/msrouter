@@ -42,10 +42,11 @@ export class OpenCodeProvider implements Provider {
   constructor(private readonly cfg: OpenCodeProviderConfig) {
     this.keys = cfg.keys;
     this.models = cfg.models;
-    // Model-major, key-minor: (m0,k0), (m1,k0), ..., (mN,k0), (m0,k1), ...
+    // Model-major, key-minor: all keys for model0, then all keys for model1, ...
+    // So big-pickle is tried on every key before falling through to deepseek.
     const triples: OpenCodeTriple[] = [];
-    for (let k = 0; k < this.keys.length; k++) {
-      for (let m = 0; m < this.models.length; m++) {
+    for (let m = 0; m < this.models.length; m++) {
+      for (let k = 0; k < this.keys.length; k++) {
         triples.push({ model: this.models[m]!, keyIdx: k });
       }
     }
