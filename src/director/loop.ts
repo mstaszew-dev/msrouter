@@ -27,7 +27,7 @@ import { classify } from './classify.js';
 import { kafkaProduce, type KafkaOpts } from './kafka.js';
 import { readApprovedPatches, readPending } from './ledger.js';
 import { observe } from './observe.js';
-import { ensureCdpRunning, ensureInfrastructureHealthy, snapshot as snapshotWorker, startWorkerInIterm } from './restart.js';
+import { ensureCdpRunning, ensureInfrastructureHealthy, rotateVpnIp, snapshot as snapshotWorker, startWorkerInIterm } from './restart.js';
 import type { Checkpoint, DirectorRunResult, DirectorSurface } from './types.js';
 import type { DecisionClassification } from './types.js';
 
@@ -215,6 +215,22 @@ export class DirectorLoop {
           reason: 'infra-restart',
         };
       }
+      // 0b. Periodically rotate Proton VPN IP (if configured)
+      const vpnInterval = e.VPN_ROTATION_INTERVAL_MINUTES;
+      if (vpnInterval > 0) {
+        const lastRot = checkpoint.lastVpnRotation;
+        const shouldRotate = !lastRot || (Date.now() - new Date(lastRot).getTime()) > vpnInterval * 60_000;
+        if (shouldRotate) {
+          this.opts.log.info('Rotating Proton VPN IP...');
+          const ok = await rotateVpnIp();
+          if (ok) {
+            checkpoint.lastVpnRotation = new Date().toISOString();
+            this.opts.log.info('Proton VPN IP rotated successfully');
+          } else {
+            this.opts.log.warn('Proton VPN IP rotation failed (may already be at new IP)');
+          }
+        }
+      }
       // 1. Ensure campaign is running (supervisor)
       await this.ensureCampaignRunning();
 
@@ -229,6 +245,7 @@ export class DirectorLoop {
       next.lastSubmitted = checkpoint.lastSubmitted;
       next.lastQueueLength = checkpoint.lastQueueLength;
       next.lastProposalHash = checkpoint.lastProposalHash;
+      next.lastVpnRotation = checkpoint.lastVpnRotation;
       checkpoint = next;
       observed = snapshot.recentEvents.length;
       this.opts.log.debug({ events: observed, submitted: snapshot.tracker.submitted, target: snapshot.tracker.target }, 'Observe complete');

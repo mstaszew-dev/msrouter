@@ -4,7 +4,6 @@
  * The campaign entry point is `job-search-agent` (symlink → run-one-job).
  * Detection via pgrep, stop via SIGTERM, start via iTerm AppleScript.
  */
-
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -14,28 +13,20 @@ import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-
 import type { Logger } from 'pino';
-
 export interface SuperviseOpts {
-  /** Command name used to launch the campaign (on PATH). Default: job-search-agent. */
   entryCommand: string;
-  /** Working directory for the iTerm launch (the openclaw-job-search workspace). */
   workspace: string;
-  /** CDP health URL polled after a restart. */
   cdpUrl: string;
   log: Logger;
-  /** CDP health-poll timeout in ms (default 30_000). */
   cdpTimeoutMs?: number;
 }
-
 export interface SuperviseState {
-  /** PIDs of job-search-agent processes currently running (zero or more). */
+  /** PIDs of job-search-agent processes (zero or more). */
   pids: number[];
-  /** True if at least one job-search-agent process is alive. */
+  /** True if at least one is alive. */
   running: boolean;
 }
-
 /** Ensure the Director override files exist (.env + .md). */
 export function ensureOverrideFiles(): void {
   const dir = join(homedir(), '.openclaw');
@@ -45,18 +36,15 @@ export function ensureOverrideFiles(): void {
   if (!existsSync(envPath)) writeFileSync(envPath, '', { mode: 0o644 });
   if (!existsSync(mdPath)) writeFileSync(mdPath, '', { mode: 0o644 });
 }
-
 /** Detect running job-search-agent processes. Returns their PIDs (empty if none). */
 export function detectWorker(entryCommand: string): number[] {
   return detectProcess(entryCommand.split('/').pop() ?? 'job-search-agent');
 }
-
 /** Snapshot the supervise state. */
 export function snapshot(opts: SuperviseOpts): SuperviseState {
   const pids = detectWorker(opts.entryCommand);
   return { pids, running: pids.length > 0 };
 }
-
 /** Detect processes by command-line pattern via pgrep. */
 export function detectProcess(pattern: string): number[] {
   try {
@@ -69,7 +57,6 @@ export function detectProcess(pattern: string): number[] {
     return [];
   }
 }
-
 /** Stop the campaign: SIGTERM each job-search-agent PID. */
 export async function stopWorker(opts: SuperviseOpts): Promise<{ killed: number[] }> {
   const pids = detectWorker(opts.entryCommand);
@@ -89,7 +76,6 @@ export async function stopWorker(opts: SuperviseOpts): Promise<{ killed: number[
   }
   return { killed: pids };
 }
-
 /** Start the campaign in iTerm2 via AppleScript. Throws if iTerm2 unavailable. */
 export function startWorkerInIterm(opts: SuperviseOpts): void {
   const cmd = `cd ${opts.workspace} && ${opts.entryCommand}`;
@@ -123,7 +109,6 @@ end tell`;
     );
   }
 }
-
 /** Block until pgrep sees job-search-agent or the timeout elapses. */
 export async function waitForStartup(opts: SuperviseOpts, timeoutMs = 30_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
@@ -133,7 +118,6 @@ export async function waitForStartup(opts: SuperviseOpts, timeoutMs = 30_000): P
   }
   return false;
 }
-
 /** Block until CDP responds or the timeout elapses. */
 export async function pollCdp(url: string, timeoutMs = 30_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
@@ -148,7 +132,6 @@ export async function pollCdp(url: string, timeoutMs = 30_000): Promise<boolean>
   }
   return false;
 }
-
 /** Launch Chrome with remote debugging if CDP is not reachable. */
 export function startChromeCdp(cdpUrl: string, userDataDir?: string): void {
   const port = new URL(cdpUrl).port || '9222';
@@ -167,7 +150,6 @@ export function startChromeCdp(cdpUrl: string, userDataDir?: string): void {
   });
   child.unref();
 }
-
 /** Ensure Chrome CDP is reachable; launch if not. */
 export async function ensureCdpRunning(cdpUrl: string): Promise<void> {
   const ok = await pollCdp(cdpUrl, 5_000);
@@ -176,14 +158,12 @@ export async function ensureCdpRunning(cdpUrl: string): Promise<void> {
     await sleep(2_000);
   }
 }
-
 /** Infrastructure health check result. */
 export interface InfraStatus {
   cdpAlive: boolean;
   playwrightMcpAlive: boolean;
   openclawGatewayAlive: boolean;
 }
-
 /** Check all infrastructure components needed by the campaign agent.
  *  The OpenClaw gateway is informational only — with --local mode the agent
  *  bypasses it entirely. Only Playwright MCP is critical for browser automation. */
@@ -194,7 +174,6 @@ export function checkInfrastructure(): InfraStatus {
     openclawGatewayAlive: detectProcess('openclaw.*gateway').length > 0,
   };
 }
-
 /**
  * Ensure campaign infrastructure is healthy. If Playwright MCP is missing,
  * restart the campaign to force a clean relaunch. Chrome CDP is handled
@@ -207,23 +186,36 @@ export async function ensureInfrastructureHealthy(opts: SuperviseOpts): Promise<
   const missing: string[] = [];
   if (!status.playwrightMcpAlive) missing.push('playwright-mcp');
   // OpenClaw gateway is NOT critical — agent uses --local mode (HTTP direct to msrouter)
-
   if (missing.length === 0) return false;
-
   opts.log.warn({ missing }, 'Campaign infrastructure unhealthy; restarting campaign');
   if (status.cdpAlive) {
     opts.log.info('Chrome CDP is still up; restarting campaign to reinitialize Playwright MCP');
   } else {
     opts.log.info('Chrome CDP is also down; ensureCdpRunning will start it');
   }
-
   await restartWorker(opts);
   return true;
 }
-
-/**
- * Full restart: stop, start in iTerm2, wait for worker to register, poll CDP.
- */
+/** Check Proton VPN status via scutil, and rotate IP if needed. */
+export function protonVpnConnected(): boolean {
+  try {
+    const out = execFileSync('scutil', ['--nc', 'status', 'ProtonVPN'], { encoding: 'utf8' });
+    return out.trim().startsWith('Connected');
+  } catch {
+    return false;
+  }
+}
+/** Rotate Proton VPN IP: disconnect + reconnect. Gives msrouter a new outbound IP. */
+export async function rotateVpnIp(): Promise<boolean> {
+  try {
+    execFileSync('scutil', ['--nc', 'stop', 'ProtonVPN'], { encoding: 'utf8', timeout: 5000 });
+    await sleep(2000);
+    execFileSync('scutil', ['--nc', 'start', 'ProtonVPN'], { encoding: 'utf8', timeout: 10000 });
+    await sleep(3000);
+    return protonVpnConnected();
+  } catch { return false; }
+}
+/** Full restart: stop, start in iTerm2, wait for worker to register, poll CDP. */
 export async function restartWorker(opts: SuperviseOpts): Promise<{
   iterm: true;
   state: SuperviseState;

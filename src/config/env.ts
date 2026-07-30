@@ -112,6 +112,8 @@ const schema = z.object({
   DIRECTOR_CDP_URL: z.string().url().default('http://127.0.0.1:9222'),
   // Director-owned SQLite RAG db (separate from OpenClaw's rag/index.db).
   DIRECTOR_RAG_DB: z.string().default(''),
+  // Minutes between Proton VPN IP rotations. 0 or negative disables. Default 60 (1 hour).
+  VPN_ROTATION_INTERVAL_MINUTES: z.coerce.number().int().default(60),
 
   // Kafka (Director event streaming). Disabled by default.
   KAFKA_ENABLED: z
