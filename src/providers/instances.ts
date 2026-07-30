@@ -21,18 +21,22 @@ export interface Providers {
   opencode: OpenCodeProvider;
 }
 
-/** OpenCode Zen model variants, in preferred order. Order is preserved in the
- *  rotation queue (model-major, key-minor: all keys per model, then next model). */
+/** OpenCode Zen model variants, ordered by capability (strongest first).
+ *  Per community benchmarks: MiniMax is strongest all-rounder, then
+ *  Qwen/Nemotron for coding, MiMo for refactoring, Big Pickle as fast default.
+ *  Order is preserved in the rotation queue (model-major, key-minor). */
 const OPENCODE_MODELS = (e: {
   OPENCODE_MODEL: string;
-  OPENCODE_DEEPSEEK_FLASH_MODEL: string;
+  OPENCODE_MINIMAX_MODEL: string;
   OPENCODE_QWEN_MODEL: string;
   OPENCODE_NEMOTRON_MODEL: string;
+  OPENCODE_MIMO_MODEL: string;
 }): readonly string[] => [
-  e.OPENCODE_MODEL,           // big-pickle (demoted fast if empty)
-  e.OPENCODE_DEEPSEEK_FLASH_MODEL,
-  e.OPENCODE_QWEN_MODEL,
-  e.OPENCODE_NEMOTRON_MODEL,
+  e.OPENCODE_MODEL,           // big-pickle (fast default, demoted if empty)
+  e.OPENCODE_MINIMAX_MODEL,   // strongest all-rounder
+  e.OPENCODE_QWEN_MODEL,      // good coding + technical reasoning
+  e.OPENCODE_NEMOTRON_MODEL,  // good coding + technical reasoning
+  e.OPENCODE_MIMO_MODEL,      // decent for large-codebase/refactoring
 ];
 
 export function buildProviders(log: Logger): Providers {
