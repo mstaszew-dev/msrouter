@@ -122,7 +122,7 @@ describe('SlackPoller', () => {
     await (p as unknown as { poll: () => Promise<void> }).poll();
 
     expect(p.queueSize).toBe(0);
-    expect(silent.error).toHaveBeenCalled();
+    expect(silent.warn).toHaveBeenCalled();
 
     fetchSpy.mockRestore();
   });

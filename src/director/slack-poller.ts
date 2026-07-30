@@ -98,7 +98,7 @@ export class SlackPoller {
         this.log.info({ count, queueSize: this.queue.length, lastTs: this.lastTs }, 'Slack poll: new messages');
       }
     } catch (e) {
-      this.log.error({ err: e instanceof Error ? e.message : String(e) }, 'Slack poll error');
+      this.log.warn({ err: e instanceof Error ? e.message : String(e) }, 'Slack poll failed (transient, will retry)');
     } finally {
       this.busy = false;
     }
