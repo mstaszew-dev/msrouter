@@ -10,6 +10,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Logger } from 'pino';
+import { detectProcess, detectWorker, snapshot, stopWorker } from './process.js';
 export interface SuperviseOpts {
   entryCommand: string;
   workspace: string;
@@ -32,46 +33,12 @@ export function ensureOverrideFiles(): void {
   if (!existsSync(envPath)) writeFileSync(envPath, '', { mode: 0o644 });
   if (!existsSync(mdPath)) writeFileSync(mdPath, '', { mode: 0o644 });
 }
-/** Detect running job-search-agent processes. Returns their PIDs (empty if none). */
-export function detectWorker(entryCommand: string): number[] {
-  return detectProcess(entryCommand.split('/').pop() ?? 'job-search-agent');
-}
-/** Snapshot the supervise state. */
-export function snapshot(opts: SuperviseOpts): SuperviseState {
-  const pids = detectWorker(opts.entryCommand);
-  return { pids, running: pids.length > 0 };
-}
-/** Detect processes by command-line pattern via pgrep. */
-export function detectProcess(pattern: string): number[] {
-  try {
-    const out = execFileSync('pgrep', ['-f', pattern], { encoding: 'utf8' });
-    return out
-      .split('\n')
-      .map((l) => Number.parseInt(l.trim(), 10))
-      .filter((n) => Number.isInteger(n) && n > 0);
-  } catch {
-    return [];
-  }
-}
-/** Stop the campaign: SIGTERM each job-search-agent PID. */
-export async function stopWorker(opts: SuperviseOpts): Promise<{ killed: number[] }> {
-  const pids = detectWorker(opts.entryCommand);
-  for (const pid of pids) {
-    try {
-      process.kill(pid, 'SIGTERM');
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'ESRCH') {
-        opts.log.warn({ pid, err: String(e) }, 'failed to SIGTERM job-search-agent');
-      }
-    }
-  }
-  // Wait up to 10s for all of them to clear.
-  for (let i = 0; i < 100; i++) {
-    await sleep(100);
-    if (detectWorker(opts.entryCommand).length === 0) break;
-  }
-  return { killed: pids };
-}
+
+/** Process-management helpers (detectProcess, detectWorker, childrenOf,
+ * stopTree, stopWorker, snapshot) live in ./process.ts - re-exported here so
+ * existing imports keep working. */
+export { detectProcess, detectWorker, childrenOf, stopTree, stopWorker, snapshot } from './process.js';
+
 /** Start the campaign in iTerm2 via AppleScript. Throws if iTerm2 unavailable. */
 export function startWorkerInIterm(opts: SuperviseOpts): void {
   const cmd = `cd ${opts.workspace} && ${opts.entryCommand}`;
