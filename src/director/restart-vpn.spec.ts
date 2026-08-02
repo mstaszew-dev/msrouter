@@ -104,11 +104,11 @@ describe('rotateVpnIp', () => {
     expect(await rotateVpnIp()).toBe(true);
   });
 
-  it('retries scutil stop+start until IP changes', async () => {
+  it('retries scutil stop+start up to 5x until IP changes', async () => {
     stubExec({
       which: undefined,
       scutil: 'Connected',
-      curl: ['1.2.3.4', '1.2.3.4', '5.6.7.8', '5.6.7.8'],
+      curl: ['1.2.3.4', '1.2.3.4', '1.2.3.4', '1.2.3.4', '1.2.3.4', '5.6.7.8', '5.6.7.8'],
     });
     expect(await rotateVpnIp()).toBe(true);
   });

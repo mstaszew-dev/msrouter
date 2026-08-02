@@ -37,8 +37,12 @@ export function publicIp(): string {
  * - protonvpn-cli is Linux-only (PyPI 2.2.11 targets linux-cli-community);
  *   kept as a future-proof branch but never hits on macOS.
  *
- * Uses scutil --nc stop + start with up to 3 retries until the public IP
- * actually changes. Returns true only when connected AND IP changed.
+ * Uses scutil --nc stop + start with up to 5 retries until the public IP
+ * actually changes. NOTE: on this ProtonVPN setup reconnects often land on
+ * the SAME exit server (verified empirically: scutil, app relaunch, and
+ * protonvpn:// deep links all kept the IP); the load balancer assigns a new
+ * server only sometimes, so rotation is best-effort. Returns true only when
+ * connected AND IP changed; false is honest (the Director logs it).
  */
 export async function rotateVpnIp(): Promise<boolean> {
   const beforeIp = publicIp();
@@ -54,7 +58,7 @@ export async function rotateVpnIp(): Promise<boolean> {
   }
 
   if (!usedCli) {
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 5; attempt++) {
       try {
         execFileSync('scutil', ['--nc', 'stop', 'ProtonVPN'], { encoding: 'utf8', timeout: 5000 });
       } catch { /* ignore */ }
