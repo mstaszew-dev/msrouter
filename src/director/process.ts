@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Logger } from 'pino';
 import type { SuperviseOpts, SuperviseState } from './restart.js';
@@ -93,4 +94,34 @@ export async function stopWorker(opts: SuperviseOpts): Promise<{ killed: number[
     if (detectWorker(opts.entryCommand).length === 0) break;
   }
   return { killed };
+}
+
+
+/** Read a start lock file. Returns { pid, at } or null if missing/corrupt. */
+export function readStartLock(path: string): { pid: number; at: number } | null {
+  try {
+    const text = readFileSync(path, 'utf8').trim();
+    const lines = text.split('\n');
+    const pid = parseInt(lines[0] ?? '', 10);
+    const at = parseInt(lines[1] ?? '', 10);
+    if (!Number.isInteger(pid) || pid <= 0 || !Number.isFinite(at)) return null;
+    return { pid, at };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Is a startup lock currently held by a live process within the TTL?
+ * Prevents startWorkerInIterm from spawning a second agent when the Director
+ * tick races with a manual start (the agent hasn't registered via pgrep yet
+ * but is coming up).
+ */
+export function isStartLocked(path: string, ttlMs = 60_000): boolean {
+  const lock = readStartLock(path);
+  if (!lock) return false;
+  // Expired lock -> stale, not held.
+  if (Date.now() - lock.at > ttlMs) return false;
+  // Owner no longer alive -> stale.
+  try { process.kill(lock.pid, 0); return true; } catch { return false; }
 }

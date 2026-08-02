@@ -7,10 +7,10 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { Logger } from 'pino';
-import { detectProcess, detectWorker, snapshot, stopWorker } from './process.js';
+import { detectProcess, detectWorker, isStartLocked, readStartLock, snapshot, stopWorker } from './process.js';
 export interface SuperviseOpts {
   entryCommand: string;
   workspace: string;
@@ -37,10 +37,28 @@ export function ensureOverrideFiles(): void {
 /** Process-management helpers (detectProcess, detectWorker, childrenOf,
  * stopTree, stopWorker, snapshot) live in ./process.ts - re-exported here so
  * existing imports keep working. */
-export { detectProcess, detectWorker, childrenOf, stopTree, stopWorker, snapshot } from './process.js';
+export { detectProcess, detectWorker, childrenOf, isStartLocked, readStartLock, stopTree, stopWorker, snapshot } from './process.js';
 
-/** Start the campaign in iTerm2 via AppleScript. Throws if iTerm2 unavailable. */
+/** Path for the startup lock (prevents double-spawn during manual/Director races). */
+function startLockPath(): string {
+  return join(homedir(), '.openclaw', 'agent-start.lock');
+}
+
+/** Start the campaign in iTerm2 via AppleScript. Throws if iTerm2 unavailable.
+ *  Checks a startup lock first to avoid double-spawning when the Director tick
+ *  races with a manual start (the agent hasn't registered via pgrep yet). */
 export function startWorkerInIterm(opts: SuperviseOpts): void {
+  const lockPath = startLockPath();
+  if (isStartLocked(lockPath)) {
+    opts.log.info('startup lock is held; skipping spawn (another instance is coming up)');
+    return;
+  }
+  // Write the lock so a concurrent caller skips the spawn.
+  try {
+    mkdirSync(dirname(lockPath), { recursive: true });
+    writeFileSync(lockPath, `${process.pid}\n${Date.now()}\n`);
+  } catch { /* best-effort */ }
+
   const cmd = `cd ${opts.workspace} && ${opts.entryCommand}`;
   // AppleScript: open a new tab in iTerm2 and run the entry command. The cmd
   // has no quotes/backslashes here, but escape minimally for safety.
@@ -75,8 +93,13 @@ end tell`;
 /** Block until pgrep sees job-search-agent or the timeout elapses. */
 export async function waitForStartup(opts: SuperviseOpts, timeoutMs = 30_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
+  const lockPath = startLockPath();
   while (Date.now() < deadline) {
-    if (detectWorker(opts.entryCommand).length > 0) return true;
+    if (detectWorker(opts.entryCommand).length > 0) {
+      // Agent registered -> clear the startup lock.
+      try { writeFileSync(lockPath, ''); } catch { /* ignore */ }
+      return true;
+    }
     await sleep(500);
   }
   return false;
@@ -162,7 +185,7 @@ export async function ensureInfrastructureHealthy(opts: SuperviseOpts): Promise<
 /** VPN rotation helpers (protonVpnConnected, rotateVpnIp, shouldRotateVpn, ...)
  * live in ./vpn.ts - re-exported here so existing imports keep working.
  */
-export { protonVpnConnected, protonVpnServer, publicIp, relaunchProtonVpnApp, rotateVpnIp, shouldRotateVpn } from './vpn.js';
+export { protonVpnConnected, protonVpnServer, publicIp, rotateVpnIp, shouldRotateVpn } from './vpn.js';
 
 /** Full restart: stop, start in iTerm2, wait for worker to register, poll CDP. */
 export async function restartWorker(opts: SuperviseOpts): Promise<{

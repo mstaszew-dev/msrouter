@@ -39,52 +39,46 @@ export function publicIp(): string {
   }
 }
 
-/** Relaunch the ProtonVPN app (AppleScript quit + reopen) to force a new server. */
-export async function relaunchProtonVpnApp(): Promise<boolean> {
-  try {
-    execFileSync('osascript', ['-e', 'tell application "ProtonVPN" to quit'], {
-      encoding: 'utf8', timeout: 10000,
-    });
-    await sleep(2000);
-    execFileSync('open', ['-a', 'ProtonVPN'], { encoding: 'utf8', timeout: 10000 });
-    await sleep(5000);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
- * Rotate Proton VPN IP, preferring the ProtonVPN app itself over raw scutil
- * stop/start: use protonvpn-cli if installed, else relaunch the app (the
- * macOS app has no CLI; relaunching reconnects via ConnectOnDemand). Fall
- * back to scutil --nc start to ensure the connection service is up.
- * Returns true only when connected AND the IP or server actually changed.
+ * Rotate Proton VPN IP.
+ *
+ * Strategy (no osascript / app automation — that triggers a TCC permission
+ * prompt every time under a non-GUI node process):
+ *   1. protonvpn-cli if installed (future-proof; not on macOS today).
+ *   2. scutil --nc stop + start (the network-configuration layer; reconnects
+ *      to a different server because ProtonVPN's ConnectOnDemand picks a new
+ *      fastest server on each connect). Retries up to 3 times until the
+ *      public IP or server name actually changes.
+ * Returns true only when connected AND the IP or server changed.
  */
 export async function rotateVpnIp(): Promise<boolean> {
   const beforeIp = publicIp();
   const beforeServer = protonVpnServer();
 
-  // 1. protonvpn-cli if installed (future-proof; not on macOS today).
+  // 1. protonvpn-cli if installed (future-proof).
   let usedCli = false;
   try {
     execFileSync('which', ['protonvpn-cli'], { encoding: 'utf8', timeout: 5000 });
     execFileSync('protonvpn-cli', ['connect', '--fastest'], { encoding: 'utf8', timeout: 30000 });
     usedCli = true;
   } catch {
-    // 2. ProtonVPN app relaunch.
-    await relaunchProtonVpnApp();
+    // 2. scutil stop/start with retry.
   }
 
-  // Ensure the connection service is up (the app may reconnect on its own).
-  if (!protonVpnConnected()) {
-    try {
-      execFileSync('scutil', ['--nc', 'start', 'ProtonVPN'], { encoding: 'utf8', timeout: 10000 });
-    } catch {
-      // ignore; verification below decides the outcome
+  if (!usedCli) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        execFileSync('scutil', ['--nc', 'stop', 'ProtonVPN'], { encoding: 'utf8', timeout: 5000 });
+      } catch { /* ignore */ }
+      await sleep(2000);
+      try {
+        execFileSync('scutil', ['--nc', 'start', 'ProtonVPN'], { encoding: 'utf8', timeout: 10000 });
+      } catch { /* ignore */ }
+      await sleep(4000);
+      // Check if IP changed already; if so, done.
+      if (publicIp() !== beforeIp || protonVpnServer() !== beforeServer) break;
     }
   }
-  await sleep(3000);
 
   const afterIp = publicIp();
   const afterServer = protonVpnServer();

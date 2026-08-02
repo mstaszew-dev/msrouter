@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type pino from 'pino';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
-import { detectWorker, detectProcess, ensureOverrideFiles, pollCdp, snapshot } from './restart.js';
+import { detectWorker, detectProcess, ensureOverrideFiles, isStartLocked, pollCdp, readStartLock, snapshot } from './restart.js';
 
 const silent = {
   warn: vi.fn(),
@@ -113,3 +113,46 @@ describe('detectProcess', () => {
 // VPN functions (protonVpnConnected, rotateVpnIp, etc.) are tested in
 // restart-vpn.spec.ts with mocked execFileSync - never touch the live VPN here.
 
+
+describe('start lock', () => {
+  it('readStartLock parses pid + timestamp', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    const p = join(dir, 'lock');
+    writeFileSync(p, '123\n456\n');
+    expect(readStartLock(p)).toEqual({ pid: 123, at: 456 });
+  });
+
+  it('readStartLock returns null for missing or corrupt files', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    expect(readStartLock(join(dir, 'nope'))).toBeNull();
+    const bad = join(dir, 'bad');
+    writeFileSync(bad, 'not-a-pid\n');
+    expect(readStartLock(bad)).toBeNull();
+  });
+
+  it('isStartLocked false when no lock exists', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    expect(isStartLocked(join(dir, 'nope'))).toBe(false);
+  });
+
+  it('isStartLocked true for a fresh lock with a live owner', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    const p = join(dir, 'lock');
+    writeFileSync(p, `${process.pid}\n${Date.now()}\n`);
+    expect(isStartLocked(p, 60_000)).toBe(true);
+  });
+
+  it('isStartLocked false when the lock is older than the TTL', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    const p = join(dir, 'lock');
+    writeFileSync(p, `${process.pid}\n${Date.now() - 120_000}\n`);
+    expect(isStartLocked(p, 60_000)).toBe(false);
+  });
+
+  it('isStartLocked false when the owner pid is dead', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lock-'));
+    const p = join(dir, 'lock');
+    writeFileSync(p, `999999999\n${Date.now()}\n`);
+    expect(isStartLocked(p, 60_000)).toBe(false);
+  });
+});

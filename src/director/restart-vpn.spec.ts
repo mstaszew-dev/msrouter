@@ -15,7 +15,6 @@ import {
   protonVpnConnected,
   protonVpnServer,
   publicIp,
-  relaunchProtonVpnApp,
   rotateVpnIp,
   shouldRotateVpn,
 } from './restart.js';
@@ -77,36 +76,21 @@ describe('protonVpnServer / publicIp', () => {
   });
 });
 
-describe('relaunchProtonVpnApp', () => {
-  it('quits and reopens the app via osascript + open', async () => {
-    stubExec({ osascript: '', open: '' });
-    expect(await relaunchProtonVpnApp()).toBe(true);
-    const cmds = mockedExec.mock.calls.map((c) => c[0]);
-    expect(cmds).toContain('osascript');
-    expect(cmds).toContain('open');
-  });
-
-  it('returns false if quitting the app fails', async () => {
-    stubExec({});
-    expect(await relaunchProtonVpnApp()).toBe(false);
-  });
-});
-
 describe('rotateVpnIp', () => {
-  it('prefers the ProtonVPN app when no protonvpn-cli exists', async () => {
-    // which protonvpn-cli -> throw; app relaunch ok; connection up; IP+server changed
+  it('uses scutil stop+start when no protonvpn-cli exists, never osascript', async () => {
     stubExec({
-      which: undefined, // throws: no cli
-      osascript: '',
-      open: '',
+      which: undefined,
       scutil: 'Connected',
       defaults: ['NL-FREE#120', 'NL-FREE#321'],
       curl: ['1.2.3.4', '5.6.7.8'],
     });
     expect(await rotateVpnIp()).toBe(true);
     const cmds = mockedExec.mock.calls.map((c) => c[0]);
-    expect(cmds).toContain('osascript'); // app path taken
-    expect(cmds).not.toContain('protonvpn-cli');
+    expect(cmds).not.toContain('osascript');
+    expect(cmds).not.toContain('open');
+    const scutilCalls = mockedExec.mock.calls.filter((c) => c[0] === 'scutil');
+    expect(scutilCalls.some((c) => c[1]?.includes('stop'))).toBe(true);
+    expect(scutilCalls.some((c) => c[1]?.includes('start'))).toBe(true);
   });
 
   it('uses protonvpn-cli when installed (app not invoked)', async () => {
@@ -123,12 +107,10 @@ describe('rotateVpnIp', () => {
     expect(cmds).not.toContain('osascript');
   });
 
-  it('starts the VPN via scutil if the app did not reconnect', async () => {
+  it('retries scutil stop+start until IP changes', async () => {
     stubExec({
       which: undefined,
-      osascript: '',
-      open: '',
-      scutil: ['Disconnected', 'Connected', 'Connected'], // status, start-call value, final status
+      scutil: ['Disconnected', 'Connected', 'Connected'],
       defaults: ['NL-FREE#120', 'NL-FREE#321'],
       curl: ['1.2.3.4', '5.6.7.8'],
     });
@@ -137,14 +119,13 @@ describe('rotateVpnIp', () => {
     expect(calls.some((c) => c[1]?.includes('start'))).toBe(true);
   });
 
-  it('returns false when neither IP nor server changed', async () => {
+  it('returns false when neither IP nor server changed after retries', async () => {
+    // retry loop does stop+start+status checks 3x; provide enough values
     stubExec({
       which: undefined,
-      osascript: '',
-      open: '',
       scutil: 'Connected',
-      defaults: ['NL-FREE#120', 'NL-FREE#120'],
-      curl: ['1.2.3.4', '1.2.3.4'],
+      defaults: 'NL-FREE#120',
+      curl: '1.2.3.4',
     });
     expect(await rotateVpnIp()).toBe(false);
   });
@@ -152,11 +133,9 @@ describe('rotateVpnIp', () => {
   it('returns false when the VPN is not connected after rotation', async () => {
     stubExec({
       which: undefined,
-      osascript: '',
-      open: '',
       scutil: 'Disconnected',
-      defaults: ['NL-FREE#120', 'NL-FREE#321'],
-      curl: ['1.2.3.4', '5.6.7.8'],
+      defaults: 'NL-FREE#120',
+      curl: '1.2.3.4',
     });
     expect(await rotateVpnIp()).toBe(false);
   });
