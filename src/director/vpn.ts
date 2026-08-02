@@ -11,20 +11,6 @@ export function protonVpnConnected(): boolean {
   }
 }
 
-/** Current Proton VPN server name (from the app's stored preference). */
-export function protonVpnServer(): string {
-  try {
-    const out = execFileSync(
-      'defaults',
-      ['read', 'ch.protonvpn.mac', 'ConnectedServerNameDoNotUse'],
-      { encoding: 'utf8', timeout: 5000 },
-    );
-    return out.trim();
-  } catch {
-    return '';
-  }
-}
-
 /** Current public IP via ipify (best-effort, short timeout). */
 export function publicIp(): string {
   try {
@@ -42,20 +28,22 @@ export function publicIp(): string {
 /**
  * Rotate Proton VPN IP.
  *
- * Strategy (no osascript / app automation — that triggers a TCC permission
- * prompt every time under a non-GUI node process):
- *   1. protonvpn-cli if installed (future-proof; not on macOS today).
- *   2. scutil --nc stop + start (the network-configuration layer; reconnects
- *      to a different server because ProtonVPN's ConnectOnDemand picks a new
- *      fastest server on each connect). Retries up to 3 times until the
- *      public IP or server name actually changes.
- * Returns true only when connected AND the IP or server changed.
+ * Strategy (no osascript / app automation, no `defaults read`):
+ * - osascript triggers a TCC permission prompt every time under a node process.
+ * - `defaults read ch.protonvpn.mac ConnectedServerNameDoNotUse` fails with
+ *   "domain/default pair does not exist" on macOS containers — the key is not
+ *   at that path. So server-name comparison is removed; IP change is the sole
+ *   verification signal.
+ * - protonvpn-cli is Linux-only (PyPI 2.2.11 targets linux-cli-community);
+ *   kept as a future-proof branch but never hits on macOS.
+ *
+ * Uses scutil --nc stop + start with up to 3 retries until the public IP
+ * actually changes. Returns true only when connected AND IP changed.
  */
 export async function rotateVpnIp(): Promise<boolean> {
   const beforeIp = publicIp();
-  const beforeServer = protonVpnServer();
 
-  // 1. protonvpn-cli if installed (future-proof).
+  // 1. protonvpn-cli if installed (Linux only; future-proof).
   let usedCli = false;
   try {
     execFileSync('which', ['protonvpn-cli'], { encoding: 'utf8', timeout: 5000 });
@@ -76,16 +64,16 @@ export async function rotateVpnIp(): Promise<boolean> {
       } catch { /* ignore */ }
       await sleep(4000);
       // Check if IP changed already; if so, done.
-      if (publicIp() !== beforeIp || protonVpnServer() !== beforeServer) break;
+      if (publicIp() !== beforeIp) break;
     }
   }
 
   const afterIp = publicIp();
-  const afterServer = protonVpnServer();
-  const changed = afterIp !== beforeIp || afterServer !== beforeServer;
+  const changed = afterIp !== beforeIp && afterIp !== '';
   const connected = protonVpnConnected() || usedCli;
   return connected && changed;
 }
+
 /**
  * Decide whether the VPN IP should be rotated now, based on the last rotation
  * timestamp and the configured interval (minutes). Pure and unit-testable.

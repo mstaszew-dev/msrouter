@@ -1,7 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-// Mock execFileSync (restart.ts imports it from node:child_process); keep
-// spawn real. Also fast-forward timers so the sleep() calls don't stall.
+// Mock execFileSync; keep spawn real. Fast-forward timers.
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   return { ...actual, execFileSync: vi.fn() };
@@ -13,7 +12,6 @@ vi.mock('node:timers/promises', () => ({
 import { execFileSync } from 'node:child_process';
 import {
   protonVpnConnected,
-  protonVpnServer,
   publicIp,
   rotateVpnIp,
   shouldRotateVpn,
@@ -21,8 +19,6 @@ import {
 
 const mockedExec = vi.mocked(execFileSync);
 
-/** Command-based stub. value can be a literal or an array (shifted per call);
- *  `undefined` means the command is unavailable (throws, like a missing binary). */
 function stubExec(calls: Record<string, unknown | unknown[]>) {
   mockedExec.mockReset();
   mockedExec.mockImplementation(((cmd: string) => {
@@ -59,20 +55,15 @@ describe('protonVpnConnected', () => {
   });
 });
 
-describe('protonVpnServer / publicIp', () => {
-  it('reads the ProtonVPN server name from app defaults', () => {
-    stubExec({ defaults: 'NL-FREE#120' });
-    expect(protonVpnServer()).toBe('NL-FREE#120');
-  });
-
-  it('returns empty string when defaults fail', () => {
-    stubExec({});
-    expect(protonVpnServer()).toBe('');
-  });
-
+describe('publicIp', () => {
   it('reads the public IP via ipify', () => {
     stubExec({ curl: '1.2.3.4' });
     expect(publicIp()).toBe('1.2.3.4');
+  });
+
+  it('returns empty string when curl fails', () => {
+    stubExec({});
+    expect(publicIp()).toBe('');
   });
 });
 
@@ -81,8 +72,7 @@ describe('rotateVpnIp', () => {
     stubExec({
       which: undefined,
       scutil: 'Connected',
-      defaults: ['NL-FREE#120', 'NL-FREE#321'],
-      curl: ['1.2.3.4', '5.6.7.8'],
+      curl: ['1.2.3.4', '5.6.7.8', '5.6.7.8'],
     });
     expect(await rotateVpnIp()).toBe(true);
     const cmds = mockedExec.mock.calls.map((c) => c[0]);
@@ -93,38 +83,40 @@ describe('rotateVpnIp', () => {
     expect(scutilCalls.some((c) => c[1]?.includes('start'))).toBe(true);
   });
 
-  it('uses protonvpn-cli when installed (app not invoked)', async () => {
+  it('uses protonvpn-cli when installed (scutil stop/start not invoked)', async () => {
     stubExec({
       which: '/usr/local/bin/protonvpn-cli',
       'protonvpn-cli': '',
       scutil: 'Connected',
-      defaults: ['NL-FREE#120', 'NL-FREE#321'],
       curl: ['1.2.3.4', '5.6.7.8'],
     });
     expect(await rotateVpnIp()).toBe(true);
     const cmds = mockedExec.mock.calls.map((c) => c[0]);
     expect(cmds).toContain('protonvpn-cli');
-    expect(cmds).not.toContain('osascript');
+  });
+
+  it('succeeds when IP changes (no server comparison needed)', async () => {
+    stubExec({
+      which: undefined,
+      scutil: 'Connected',
+      curl: ['1.2.3.4', '5.6.7.8', '5.6.7.8'],
+    });
+    expect(await rotateVpnIp()).toBe(true);
   });
 
   it('retries scutil stop+start until IP changes', async () => {
     stubExec({
       which: undefined,
-      scutil: ['Disconnected', 'Connected', 'Connected'],
-      defaults: ['NL-FREE#120', 'NL-FREE#321'],
-      curl: ['1.2.3.4', '5.6.7.8'],
+      scutil: 'Connected',
+      curl: ['1.2.3.4', '1.2.3.4', '5.6.7.8', '5.6.7.8'],
     });
     expect(await rotateVpnIp()).toBe(true);
-    const calls = mockedExec.mock.calls.filter((c) => c[0] === 'scutil');
-    expect(calls.some((c) => c[1]?.includes('start'))).toBe(true);
   });
 
-  it('returns false when neither IP nor server changed after retries', async () => {
-    // retry loop does stop+start+status checks 3x; provide enough values
+  it('returns false when IP does not change after retries', async () => {
     stubExec({
       which: undefined,
       scutil: 'Connected',
-      defaults: 'NL-FREE#120',
       curl: '1.2.3.4',
     });
     expect(await rotateVpnIp()).toBe(false);
@@ -134,10 +126,20 @@ describe('rotateVpnIp', () => {
     stubExec({
       which: undefined,
       scutil: 'Disconnected',
-      defaults: 'NL-FREE#120',
-      curl: '1.2.3.4',
+      curl: ['1.2.3.4', '5.6.7.8'],
     });
     expect(await rotateVpnIp()).toBe(false);
+  });
+
+  it('never calls defaults (broken on macOS containers)', async () => {
+    stubExec({
+      which: undefined,
+      scutil: 'Connected',
+      curl: ['1.2.3.4', '5.6.7.8'],
+    });
+    await rotateVpnIp();
+    const cmds = mockedExec.mock.calls.map((c) => c[0]);
+    expect(cmds).not.toContain('defaults');
   });
 });
 

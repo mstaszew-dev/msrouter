@@ -185,7 +185,7 @@ export async function ensureInfrastructureHealthy(opts: SuperviseOpts): Promise<
 /** VPN rotation helpers (protonVpnConnected, rotateVpnIp, shouldRotateVpn, ...)
  * live in ./vpn.ts - re-exported here so existing imports keep working.
  */
-export { protonVpnConnected, protonVpnServer, publicIp, rotateVpnIp, shouldRotateVpn } from './vpn.js';
+export { protonVpnConnected, publicIp, rotateVpnIp, shouldRotateVpn } from './vpn.js';
 
 /** Full restart: stop, start in iTerm2, wait for worker to register, poll CDP. */
 export async function restartWorker(opts: SuperviseOpts): Promise<{
