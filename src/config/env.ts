@@ -98,14 +98,14 @@ const schema = z.object({
   DIRECTOR_MODEL: z.string().default(''),
   // Campaign state the Director observes.
   DIRECTOR_CAMPAIGN_DIR: z.string().default('/Users/mst/Downloads/job-search/job-apply'),
-  // OpenClaw workspace (where run-one-job lives).
+  // Campaign agent workspace (where the launcher + campaign_agent/ live).
   DIRECTOR_OPENCLAW_WORKSPACE: z.string().default('/Users/mst/ZCodeProject/openclaw-job-search'),
   // Launcher wrapper the Director invokes to restart the worker.
   DIRECTOR_RUNNER: z.string().default('job-search-agent'),
   // Pidfile the launcher writes; Director reads/kills via this.
-  DIRECTOR_PIDFILE: z.string().default('~/.openclaw/run-one-job.pid'),
+  DIRECTOR_PIDFILE: z.string().default('~/.campaign-agent/job-search-agent.pid'),
   // The single patch target the Director edits on approval.
-  DIRECTOR_OVERRIDES: z.string().default('~/.openclaw/director-overrides.env'),
+  DIRECTOR_OVERRIDES: z.string().default('~/.campaign-agent/director-overrides.env'),
   // Append-only ledger of every proposal + decision.
   DIRECTOR_LEDGER: z.string().default(''),
   // CDP health URL the Director polls after a restart.

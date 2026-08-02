@@ -75,20 +75,20 @@ describe('ensureOverrideFiles', () => {
 
   it('creates director-overrides.env if missing', () => {
     ensureOverrideFiles();
-    const envPath = join(process.env['HOME']!, '.openclaw', 'director-overrides.env');
+    const envPath = join(process.env['HOME']!, '.campaign-agent', 'director-overrides.env');
     expect(existsSync(envPath)).toBe(true);
   });
 
   it('creates director-prompt-overrides.md if missing', () => {
     ensureOverrideFiles();
-    const mdPath = join(process.env['HOME']!, '.openclaw', 'director-prompt-overrides.md');
+    const mdPath = join(process.env['HOME']!, '.campaign-agent', 'director-prompt-overrides.md');
     expect(existsSync(mdPath)).toBe(true);
   });
 
   it('does not overwrite existing files', () => {
     // Pre-create with content
     ensureOverrideFiles();
-    const envPath = join(process.env['HOME']!, '.openclaw', 'director-overrides.env');
+    const envPath = join(process.env['HOME']!, '.campaign-agent', 'director-overrides.env');
     writeFileSync(envPath, 'EXISTING_KEY=1\n');
 
     // Call again; should not truncate

@@ -72,7 +72,7 @@ describe('callTool: write_prompt_override', () => {
 
   beforeEach(() => {
     realHome = process.env['HOME']!;
-    // Point HOME at a temp dir so we don't pollute the real ~/.openclaw
+    // Point HOME at a temp dir so we don't pollute the real ~/.campaign-agent
     const tmpHome = mkdtempSync(join(tmpdir(), 'director-tools-home-'));
     process.env['HOME'] = tmpHome;
   });
@@ -90,7 +90,7 @@ describe('callTool: write_prompt_override', () => {
   it('appends text to the prompt override file', async () => {
     const res = await callTool('write_prompt_override', { text: 'slow down on Drushim' }, silent);
     expect(res.isError).not.toBe(true);
-    const mdPath = join(process.env['HOME']!, '.openclaw', 'director-prompt-overrides.md');
+    const mdPath = join(process.env['HOME']!, '.campaign-agent', 'director-prompt-overrides.md');
     expect(existsSync(mdPath)).toBe(true);
     const content = readFileSync(mdPath, 'utf8');
     expect(content).toContain('slow down on Drushim');
@@ -99,7 +99,7 @@ describe('callTool: write_prompt_override', () => {
   it('appends multiple entries (does not truncate)', async () => {
     await callTool('write_prompt_override', { text: 'first note' }, silent);
     await callTool('write_prompt_override', { text: 'second note' }, silent);
-    const mdPath = join(process.env['HOME']!, '.openclaw', 'director-prompt-overrides.md');
+    const mdPath = join(process.env['HOME']!, '.campaign-agent', 'director-prompt-overrides.md');
     const content = readFileSync(mdPath, 'utf8');
     expect(content).toContain('first note');
     expect(content).toContain('second note');

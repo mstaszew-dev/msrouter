@@ -31,8 +31,8 @@ describe('loadEnv - Director config', () => {
     const cfg = loadEnv({});
     expect(cfg.env.DIRECTOR_INTERVAL_MINUTES).toBe(1);
     expect(cfg.env.DIRECTOR_CAMPAIGN_DIR).toBe('/Users/mst/Downloads/job-search/job-apply');
-    expect(cfg.env.DIRECTOR_PIDFILE).toBe('~/.openclaw/run-one-job.pid');
-    expect(cfg.env.DIRECTOR_OVERRIDES).toBe('~/.openclaw/director-overrides.env');
+    expect(cfg.env.DIRECTOR_PIDFILE).toBe('~/.campaign-agent/job-search-agent.pid');
+    expect(cfg.env.DIRECTOR_OVERRIDES).toBe('~/.campaign-agent/director-overrides.env');
     expect(cfg.env.DIRECTOR_CDP_URL).toBe('http://127.0.0.1:9222');
   });
 

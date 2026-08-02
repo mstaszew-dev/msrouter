@@ -26,7 +26,7 @@ export interface SuperviseState {
 }
 /** Ensure the Director override files exist (.env + .md). */
 export function ensureOverrideFiles(): void {
-  const dir = join(homedir(), '.openclaw');
+  const dir = join(homedir(), '.campaign-agent');
   mkdirSync(dir, { recursive: true, mode: 0o755 });
   const envPath = join(dir, 'director-overrides.env');
   const mdPath = join(dir, 'director-prompt-overrides.md');
@@ -41,7 +41,7 @@ export { detectProcess, detectWorker, childrenOf, isStartLocked, readStartLock, 
 
 /** Path for the startup lock (prevents double-spawn during manual/Director races). */
 function startLockPath(): string {
-  return join(homedir(), '.openclaw', 'agent-start.lock');
+  return join(homedir(), '.campaign-agent', 'agent-start.lock');
 }
 
 /** Start the campaign in iTerm2 via AppleScript. Throws if iTerm2 unavailable.

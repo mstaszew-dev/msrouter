@@ -158,7 +158,7 @@ async function writePromptOverride({ text }: { text: string }): Promise<ToolResu
     return { content: 'write_prompt_override: text is required', isError: true };
   }
   try {
-    const dir = join(homedir(), '.openclaw');
+    const dir = join(homedir(), '.campaign-agent');
     mkdirSync(dir, { recursive: true, mode: 0o755 });
     const mdPath = join(dir, 'director-prompt-overrides.md');
     // Append with timestamp header
