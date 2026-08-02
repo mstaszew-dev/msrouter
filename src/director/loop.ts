@@ -215,7 +215,10 @@ export class DirectorLoop {
           reason: 'infra-restart',
         };
       }
-      // 0b. Periodically rotate Proton VPN IP (if configured)
+      // 0b. Periodically rotate Proton VPN IP (if configured). After a
+      // successful rotation, restart the agent so it reconnects on the new IP
+      // with a fresh retry loop (a live-but-stuck agent is never restarted by
+      // ensureCampaignRunning, which only starts missing processes).
       const vpnInterval = e.VPN_ROTATION_INTERVAL_MINUTES;
       if (vpnInterval > 0) {
         const shouldRotate = shouldRotateVpn(checkpoint.lastVpnRotation, vpnInterval);
@@ -224,7 +227,13 @@ export class DirectorLoop {
           const ok = await rotateVpnIp();
           if (ok) {
             checkpoint.lastVpnRotation = new Date().toISOString();
-            this.opts.log.info('Proton VPN IP rotated successfully');
+            this.opts.log.info('Proton VPN IP rotated successfully; restarting agent');
+            await restartWorker({
+              entryCommand: e.DIRECTOR_RUNNER || 'job-search-agent',
+              workspace: e.DIRECTOR_OPENCLAW_WORKSPACE,
+              cdpUrl: e.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
+              log: this.opts.log,
+            });
           } else {
             this.opts.log.warn('Proton VPN IP rotation failed (may already be at new IP)');
           }
