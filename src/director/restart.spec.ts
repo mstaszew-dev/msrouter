@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type pino from 'pino';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
-import { detectWorker, detectProcess, ensureOverrideFiles, pollCdp, protonVpnConnected, rotateVpnIp, snapshot } from './restart.js';
+import { detectWorker, detectProcess, ensureOverrideFiles, pollCdp, snapshot } from './restart.js';
 
 const silent = {
   warn: vi.fn(),
@@ -104,17 +104,6 @@ describe('detectProcess', () => {
     expect(pids).toEqual([]);
   });
 });
+// VPN functions (protonVpnConnected, rotateVpnIp, etc.) are tested in
+// restart-vpn.spec.ts with mocked execFileSync - never touch the live VPN here.
 
-describe('protonVpnConnected', () => {
-  it('returns a boolean without throwing', () => {
-    const result = protonVpnConnected();
-    expect(typeof result).toBe('boolean');
-  });
-});
-
-describe('rotateVpnIp', () => {
-  it('returns a boolean without throwing (may fail if VPN not configured)', async () => {
-    const result = await rotateVpnIp();
-    expect(typeof result).toBe('boolean');
-  }, 15000);
-});

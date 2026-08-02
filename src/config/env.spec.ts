@@ -113,3 +113,15 @@ describe('loadEnv - OpenCode key pool', () => {
     expect(cfg.opencodeKeys).toEqual(['k2']);
   });
 });
+
+describe('loadEnv - VPN rotation', () => {
+  it('defaults VPN_ROTATION_INTERVAL_MINUTES to 30', () => {
+    const cfg = loadEnv({});
+    expect(cfg.env.VPN_ROTATION_INTERVAL_MINUTES).toBe(30);
+  });
+
+  it('accepts an explicit VPN_ROTATION_INTERVAL_MINUTES override', () => {
+    const cfg = loadEnv({ VPN_ROTATION_INTERVAL_MINUTES: '15' });
+    expect(cfg.env.VPN_ROTATION_INTERVAL_MINUTES).toBe(15);
+  });
+});

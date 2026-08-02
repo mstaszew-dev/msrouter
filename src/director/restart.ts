@@ -192,25 +192,11 @@ export async function ensureInfrastructureHealthy(opts: SuperviseOpts): Promise<
   await restartWorker(opts);
   return true;
 }
-/** Check Proton VPN status via scutil, and rotate IP if needed. */
-export function protonVpnConnected(): boolean {
-  try {
-    const out = execFileSync('scutil', ['--nc', 'status', 'ProtonVPN'], { encoding: 'utf8' });
-    return out.trim().startsWith('Connected');
-  } catch {
-    return false;
-  }
-}
-/** Rotate Proton VPN IP: disconnect + reconnect. Gives msrouter a new outbound IP. */
-export async function rotateVpnIp(): Promise<boolean> {
-  try {
-    execFileSync('scutil', ['--nc', 'stop', 'ProtonVPN'], { encoding: 'utf8', timeout: 5000 });
-    await sleep(2000);
-    execFileSync('scutil', ['--nc', 'start', 'ProtonVPN'], { encoding: 'utf8', timeout: 10000 });
-    await sleep(3000);
-    return protonVpnConnected();
-  } catch { return false; }
-}
+/** VPN rotation helpers (protonVpnConnected, rotateVpnIp, shouldRotateVpn, ...)
+ * live in ./vpn.ts - re-exported here so existing imports keep working.
+ */
+export { protonVpnConnected, protonVpnServer, publicIp, relaunchProtonVpnApp, rotateVpnIp, shouldRotateVpn } from './vpn.js';
+
 /** Full restart: stop, start in iTerm2, wait for worker to register, poll CDP. */
 export async function restartWorker(opts: SuperviseOpts): Promise<{
   iterm: true;

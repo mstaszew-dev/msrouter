@@ -27,7 +27,7 @@ import { classify } from './classify.js';
 import { kafkaProduce, type KafkaOpts } from './kafka.js';
 import { readApprovedPatches, readPending } from './ledger.js';
 import { observe } from './observe.js';
-import { ensureCdpRunning, ensureInfrastructureHealthy, restartWorker, rotateVpnIp, snapshot as snapshotWorker, startWorkerInIterm } from './restart.js';
+import { ensureCdpRunning, ensureInfrastructureHealthy, restartWorker, rotateVpnIp, shouldRotateVpn, snapshot as snapshotWorker, startWorkerInIterm } from './restart.js';
 import type { Checkpoint, DirectorRunResult, DirectorSurface } from './types.js';
 import type { DecisionClassification } from './types.js';
 
@@ -218,8 +218,7 @@ export class DirectorLoop {
       // 0b. Periodically rotate Proton VPN IP (if configured)
       const vpnInterval = e.VPN_ROTATION_INTERVAL_MINUTES;
       if (vpnInterval > 0) {
-        const lastRot = checkpoint.lastVpnRotation;
-        const shouldRotate = !lastRot || (Date.now() - new Date(lastRot).getTime()) > vpnInterval * 60_000;
+        const shouldRotate = shouldRotateVpn(checkpoint.lastVpnRotation, vpnInterval);
         if (shouldRotate) {
           this.opts.log.info('Rotating Proton VPN IP...');
           const ok = await rotateVpnIp();
