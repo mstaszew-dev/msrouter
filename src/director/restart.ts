@@ -9,10 +9,6 @@ import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { setTimeout as sleep } from 'node:timers/promises';
 import type { Logger } from 'pino';
 export interface SuperviseOpts {
   entryCommand: string;

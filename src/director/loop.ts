@@ -27,7 +27,7 @@ import { classify } from './classify.js';
 import { kafkaProduce, type KafkaOpts } from './kafka.js';
 import { readApprovedPatches, readPending } from './ledger.js';
 import { observe } from './observe.js';
-import { ensureCdpRunning, ensureInfrastructureHealthy, rotateVpnIp, snapshot as snapshotWorker, startWorkerInIterm } from './restart.js';
+import { ensureCdpRunning, ensureInfrastructureHealthy, restartWorker, rotateVpnIp, snapshot as snapshotWorker, startWorkerInIterm } from './restart.js';
 import type { Checkpoint, DirectorRunResult, DirectorSurface } from './types.js';
 import type { DecisionClassification } from './types.js';
 
@@ -258,6 +258,28 @@ export class DirectorLoop {
       const classifications = classify(snapshot, new Date().toISOString(), lastEventAt);
       classificationsCount = classifications.length;
       this.opts.log.debug({ classifications: classificationsCount, kinds: classifications.map(c => c.kind) }, 'Classification complete');
+
+      // 3a. Stall-triggered VPN rotation: if the campaign is stale (no progress
+      // for 60+ min), the free-tier providers are likely rate-limiting the
+      // current IP. Rotate the VPN IP and restart the agent to get a fresh IP.
+      const hasStale = classifications.some(c => c.kind === 'stale-campaign');
+      if (hasStale && !checkpoint.staleWarningActive) {
+        this.opts.log.warn('Campaign stale; rotating Proton VPN IP and restarting agent');
+        const ok = await rotateVpnIp();
+        if (ok) {
+          checkpoint.lastVpnRotation = new Date().toISOString();
+          this.opts.log.info('Proton VPN IP rotated due to stall');
+        } else {
+          this.opts.log.warn('VPN rotation failed during stall recovery');
+        }
+        // Restart the agent so it picks up the new IP on fresh connections
+        await restartWorker({
+          entryCommand: e.DIRECTOR_RUNNER || 'job-search-agent',
+          workspace: e.DIRECTOR_OPENCLAW_WORKSPACE,
+          cdpUrl: e.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
+          log: this.opts.log,
+        });
+      }
 
       // Publish observation event to Kafka (only when data changed)
       const subChanged = snapshot.tracker.submitted !== checkpoint.lastSubmitted;
