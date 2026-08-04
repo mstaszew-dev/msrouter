@@ -22,6 +22,7 @@ import { scrubSecrets } from '../providers/fetch.js';
 import type { ChatRequestBody } from '../providers/types.js';
 
 import { beginIdem, dropIdem, idempotencyHit, storeIdemResult } from './idempotency.js';
+import { createGraphqlHandler } from './graphql.js';
 import { pipeSseStream } from './stream.js';
 import { chatCompletionSchema } from './validation.js';
 
@@ -44,6 +45,8 @@ export function registerHandlers(router: Router, deps: HandlerDeps): void {
   router.add('GET', '/health/live', (_req, res) =>
     sendJson(res, 200, { status: 'ok', uptime: process.uptime() }),
   );
+  // GraphQL endpoint (models/health queries + completion mutation).
+  router.add('POST', '/graphql', createGraphqlHandler(chain, log));
   router.add('GET', '/health/ready', (_req, res) =>
     sendJson(res, 200, { status: 'ok', providers: 'see /metrics' }),
   );
@@ -179,10 +182,11 @@ export function resolveModel(requested: string): string {
   return cfg.WALK_ALIAS[0] ?? 'mst/free';
 }
 
-/** List the gateway's virtual models (OpenAI/OpenRouter-compatible shape). */
-function handleModels(res: ServerResponse): void {
+/** The gateway's virtual models (OpenAI/OpenRouter-compatible shape).
+ *  Shared by GET /v1/models and the GraphQL `models` query. */
+export function buildModelList(): Array<{ id: string; object: string; owned_by: string }> {
   const cfg = env();
-  const data = [
+  const data: Array<{ id: string; object: string; owned_by: string }> = [
     ...cfg.WALK_ALIAS.map((alias) => ({ id: alias, object: 'model', owned_by: 'msrouter' })),
     { id: cfg.OPENROUTER_MODEL, object: 'model', owned_by: 'openrouter' },
   ];
@@ -199,7 +203,12 @@ function handleModels(res: ServerResponse): void {
     data.push({ id: cfg.OPENCODE_QWEN_MODEL, object: 'model', owned_by: 'opencode-qwen' });
     data.push({ id: cfg.OPENCODE_MINIMAX_MODEL, object: 'model', owned_by: 'opencode-minimax' });
   }
-  sendJson(res, 200, { object: 'list', data });
+  return data;
+}
+
+/** List the gateway's virtual models (OpenAI/OpenRouter-compatible shape). */
+function handleModels(res: ServerResponse): void {
+  sendJson(res, 200, { object: 'list', data: buildModelList() });
 }
 
 /** Centralized error response: maps DomainError subclasses to status + body. */
