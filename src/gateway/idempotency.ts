@@ -17,11 +17,12 @@ type IdemEntry =
   | { kind: 'value'; status: number; body: unknown; exp: number }
   | { kind: 'promise'; promise: Promise<{ status: number; body: unknown }>; exp: number };
 
-const idemCache = new Map<string, IdemEntry>();
+export const idemCache = new Map<string, IdemEntry>();
 const IDEM_TTL_MS = 60_000;
 const IDEM_MAX_ENTRIES = 1000;
 
 export interface IdemHandle {
+  promise: Promise<{ status: number; body: unknown }>;
   key: string;
   resolve: (v: { status: number; body: unknown }) => void;
   reject: (e: unknown) => void;
@@ -62,7 +63,7 @@ export function beginIdem(
   });
   idemCache.set(idemKey, { kind: 'promise', promise, exp: Date.now() + IDEM_TTL_MS });
   pruneIdem();
-  return { key: idemKey, resolve, reject };
+  return { key: idemKey, promise, resolve, reject };
 }
 
 /** Resolve the in-flight promise + replace with a resolved value entry. */
@@ -78,7 +79,7 @@ export function dropIdem(idemKey: string | undefined): void {
 }
 
 /** Evict the oldest entries when the bounded cache is over capacity. */
-function pruneIdem(): void {
+export function pruneIdem(): void {
   if (idemCache.size <= IDEM_MAX_ENTRIES) return;
   // Map preserves insertion order; drop the first (oldest) entries.
   let toDrop = idemCache.size - IDEM_MAX_ENTRIES;
