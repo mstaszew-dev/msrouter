@@ -11,9 +11,10 @@
  */
 
 import type pino from 'pino';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { NoProviderAvailableError } from '../common/errors.js';
+import { loadEnv } from '../config/env.js';
 
 import { ProviderChain } from './chain.js';
 import type { Providers } from './instances.js';
@@ -43,6 +44,7 @@ function makeProviders(
     openaiResults?: ProviderCallResult[];
     opencodeModels?: string[];
     opencodeKeys?: number;
+    localResults?: ProviderCallResult[];
   } = {},
 ): Providers {
   const orKeys = overrides.openrouterKeys ?? 2;
@@ -78,6 +80,11 @@ function makeProviders(
     message: 'opencode stub',
   }));
 
+  const localResults = overrides.localResults ?? [];
+  const localAttempt = vi.fn(async (): Promise<ProviderCallResult> => {
+    return localResults.shift() ?? { kind: 'TRANSIENT', status: 0, message: 'local stub' };
+  });
+
   return {
     openrouter: {
       id: 'openrouter',
@@ -99,6 +106,7 @@ function makeProviders(
           keyIdx: Math.floor(i / ocModels.length),
         })),
     } as never,
+    local: { id: 'local', available: true, attempt: localAttempt } as never,
   };
 }
 
@@ -408,5 +416,61 @@ describe('ProviderChain - OpenCode pooling', () => {
       { label: 'opencode[key1/nemotron]', model: 'nemotron' },
       { label: 'opencode[key1/big-pickle]', model: 'big-pickle' },
     ]);
+  });
+});
+
+describe('ProviderChain - local (ollama) entry', () => {
+  // Mirrors the test/setup.ts fixture so loadEnv() restores the known env.
+  const DEFAULT_ENV = {
+    NODE_ENV: 'test',
+    PORT: '8788',
+    OPENROUTER_KEY1: 'sk-or-test-key-1111',
+    OPENROUTER_KEY2: 'sk-or-test-key-2222',
+    OPENAI_API_KEY: 'sk-openai-test',
+    ZAI_API_KEY: 'sk-zai-test',
+    OPENCODE_KEY1: 'sk-opencode-test-1',
+    OPENCODE_KEY2: 'sk-opencode-test-2',
+    FORCE_FREE: 'true',
+    SCHEDULE_INTERVAL_MINUTES: '-1',
+    UPSTREAM_TIMEOUT_MS: '5000',
+    LOCAL_ENABLED: 'false',
+    LOCAL_MODEL: 'qwen3:14b-32k',
+    LOCAL_BASE_URL: 'http://127.0.0.1:11434',
+  };
+
+  afterEach(() => loadEnv(DEFAULT_ENV));
+
+  it('places the local entry LAST when LOCAL_ENABLED=true', () => {
+    loadEnv({ ...DEFAULT_ENV, LOCAL_ENABLED: 'true' });
+    const p = makeProviders({ openrouterKeys: 1 });
+    const chain = new ProviderChain(p, silentLogger);
+    const snapshot = chain.queueSnapshot();
+    const last = snapshot[snapshot.length - 1]!;
+    expect(last.provider).toBe('local');
+    expect(last.model).toBe('qwen3:14b-32k');
+  });
+
+  it('omits the local entry when LOCAL_ENABLED is false (default)', () => {
+    const p = makeProviders({ openrouterKeys: 1 });
+    const chain = new ProviderChain(p, silentLogger);
+    expect(chain.queueSnapshot().some((e) => e.provider === 'local')).toBe(false);
+  });
+
+  it('direct:local/<model> pins the local provider without fallback', async () => {
+    loadEnv({ ...DEFAULT_ENV, LOCAL_ENABLED: 'true' });
+    const p = makeProviders({
+      openrouterKeys: 1,
+      localResults: [{ kind: 'OK', response: okResponse() }],
+    });
+    const chain = new ProviderChain(p, silentLogger);
+    const res = await chain.handle(
+      { ...baseBody, model: 'direct:local/qwen3:14b-32k' },
+      new AbortController().signal,
+    );
+    expect(res.servedBy.provider).toBe('local');
+    const localAttempt = p.local as unknown as { attempt: ReturnType<typeof vi.fn> };
+    expect(localAttempt.attempt).toHaveBeenCalledTimes(1);
+    const opts = localAttempt.attempt.mock.calls[0]![2] as { model: string };
+    expect(opts.model).toBe('qwen3:14b-32k');
   });
 });

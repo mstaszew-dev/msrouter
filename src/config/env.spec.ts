@@ -125,3 +125,23 @@ describe('loadEnv - VPN rotation', () => {
     expect(cfg.env.VPN_ROTATION_INTERVAL_MINUTES).toBe(15);
   });
 });
+
+describe('loadEnv - Local (Ollama) provider', () => {
+  it('defaults LOCAL_ENABLED to false with the default ollama endpoint/model', () => {
+    const cfg = loadEnv({});
+    expect(cfg.env.LOCAL_ENABLED).toBe(false);
+    expect(cfg.env.LOCAL_BASE_URL).toBe('http://127.0.0.1:11434');
+    expect(cfg.env.LOCAL_MODEL).toBe('qwen3:8b-32k');
+  });
+
+  it('accepts LOCAL_ENABLED=true and a model override', () => {
+    const cfg = loadEnv({ LOCAL_ENABLED: 'true', LOCAL_MODEL: 'qwen3:8b' });
+    expect(cfg.env.LOCAL_ENABLED).toBe(true);
+    expect(cfg.env.LOCAL_MODEL).toBe('qwen3:8b');
+  });
+
+  it('treats LOCAL_ENABLED=0 as false', () => {
+    const cfg = loadEnv({ LOCAL_ENABLED: '0' });
+    expect(cfg.env.LOCAL_ENABLED).toBe(false);
+  });
+});

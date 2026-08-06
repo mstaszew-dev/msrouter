@@ -8,9 +8,10 @@ import type pino from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 
 import { Router } from '../common/http.js';
+import { loadEnv } from '../config/env.js';
 import type { ProviderCallResult } from '../providers/types.js';
 
-import { registerHandlers, resolveModel } from './handlers.js';
+import { buildModelList, registerHandlers, resolveModel } from './handlers.js';
 
 const silentLogger = {
   warn: vi.fn(),
@@ -70,5 +71,20 @@ describe('resolveModel - unknown model defaults to the alias walk', () => {
     expect(resolveModel('some-unknown-model')).toBe('mst/free');
     expect(resolveModel('gpt-4')).toBe('mst/free');
     expect(resolveModel('')).toBe('mst/free');
+  });
+});
+
+describe('buildModelList - local (ollama) model advertisement', () => {
+  it('includes the local model with owned_by=local when LOCAL_ENABLED=true', () => {
+    loadEnv({ LOCAL_ENABLED: 'true', LOCAL_MODEL: 'qwen3:14b-32k' });
+    const local = buildModelList().find((m) => m.id === 'qwen3:14b-32k');
+    expect(local).toBeDefined();
+    expect(local?.owned_by).toBe('local');
+  });
+
+  it('omits the local model when LOCAL_ENABLED is false', () => {
+    loadEnv({});
+    const ids = buildModelList().map((m) => m.id);
+    expect(ids).not.toContain('qwen3:14b-32k');
   });
 });

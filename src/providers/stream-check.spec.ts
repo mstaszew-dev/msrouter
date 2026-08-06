@@ -31,6 +31,35 @@ describe('isEmptyCompletion', () => {
     expect(isEmptyCompletion(json)).toBe(false);
   });
 
+  it('returns false when the message carries tool_calls (empty content, finish_reason=tool_calls)', () => {
+    // qwen3 (local ollama) returns content="" + tool_calls for function calls;
+    // a tool-calling model must NOT be treated as an empty completion.
+    const json = {
+      choices: [
+        {
+          message: {
+            content: '',
+            tool_calls: [{ id: 'call_1', function: { name: 'read', arguments: '{}' } }],
+          },
+          finish_reason: 'tool_calls',
+        },
+      ],
+    };
+    expect(isEmptyCompletion(json)).toBe(false);
+  });
+
+  it('returns true for empty content with finish_reason=length and no tool_calls', () => {
+    const json = {
+      choices: [
+        {
+          message: { content: '', tool_calls: [] },
+          finish_reason: 'length',
+        },
+      ],
+    };
+    expect(isEmptyCompletion(json)).toBe(true);
+  });
+
   it('returns false when error field is present', () => {
     const json = {
       error: { message: 'rate limit' },

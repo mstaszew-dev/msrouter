@@ -192,6 +192,7 @@ export function buildModelList(): Array<{ id: string; object: string; owned_by: 
   ];
   if (cfg.OPENAI_API_KEY) data.push({ id: cfg.OPENAI_MODEL, object: 'model', owned_by: 'openai' });
   if (cfg.ZAI_API_KEY) data.push({ id: cfg.ZAI_MODEL, object: 'model', owned_by: 'zai' });
+  if (cfg.LOCAL_ENABLED) data.push({ id: cfg.LOCAL_MODEL, object: 'model', owned_by: 'local' });
   if (config().opencodeKeys.length > 0) {
     data.push({ id: cfg.OPENCODE_MODEL, object: 'model', owned_by: 'opencode-bigpickle' });
     data.push({ id: cfg.OPENCODE_NEMOTRON_MODEL, object: 'model', owned_by: 'opencode-nemotron' });

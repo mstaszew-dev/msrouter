@@ -13,15 +13,9 @@
 
 import { z } from 'zod';
 
-const csv = z
-  .string()
-  .default('')
-  .transform((s) =>
-    s
-      .split(',')
-      .map((x) => x.trim())
-      .filter(Boolean),
-  );
+const csv = z.string().default('').transform((s) =>
+  s.split(',').map((x) => x.trim()).filter(Boolean),
+);
 
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -35,6 +29,13 @@ const schema = z.object({
   ZAI_API_KEY: z.string().optional(),
   ZAI_BASE_URL: z.string().url().default('https://api.z.ai/api/paas/v4'),
   ZAI_MODEL: z.string().default('glm-4.6'),
+
+  // Local (Ollama) provider: native /api/chat (the OpenAI-compat /v1 endpoint
+  // ignores the think flag). LOCAL_ENABLED gates the routing entry (first) and
+  // /v1/models advertisement. Base URL WITHOUT the /v1 suffix.
+  LOCAL_ENABLED: z.string().default('false').transform((s) => s === 'true' || s === '1'),
+  LOCAL_BASE_URL: z.string().url().default('http://127.0.0.1:11434'),
+  LOCAL_MODEL: z.string().default('qwen3:8b-32k'),
   OPENCODE_API_KEY: z.string().optional(),
   OPENCODE_BASE_URL: z.string().url().default('https://opencode.ai/zen/v1'),
   OPENCODE_MODEL: z.string().default('big-pickle'),

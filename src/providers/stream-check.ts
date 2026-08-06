@@ -25,6 +25,9 @@ export function isEmptyCompletion(json: unknown): boolean {
     const finishReason = choice.finish_reason;
     // Not empty if content is present and non-empty
     if (typeof content === 'string' && content.length > 0) return false;
+    // Not empty if the message carries tool calls (function-call models like
+    // local qwen3 return content="" + tool_calls with finish_reason=tool_calls).
+    if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) return false;
     // Not empty if finish_reason is 'stop' (model chose to say nothing)
     if (finishReason === 'stop') return false;
   }
