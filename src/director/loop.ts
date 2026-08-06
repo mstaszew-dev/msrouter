@@ -225,8 +225,12 @@ export class DirectorLoop {
         if (shouldRotate) {
           this.opts.log.info('Rotating Proton VPN IP...');
           const ok = await rotateVpnIp();
+          // Back off a FULL interval on BOTH success and failure. A failed
+          // rotation still stopped/started the tunnel (~30s of network flap),
+          // so leaving lastVpnRotation unset would retry it every tick and
+          // keep breaking in-flight fetches (Slack polls, agent requests).
+          checkpoint.lastVpnRotation = new Date().toISOString();
           if (ok) {
-            checkpoint.lastVpnRotation = new Date().toISOString();
             this.opts.log.info('Proton VPN IP rotated successfully; restarting agent');
             await restartWorker({
               entryCommand: e.DIRECTOR_RUNNER || 'job-search-agent',
@@ -274,8 +278,10 @@ export class DirectorLoop {
       if (hasStale && !checkpoint.staleWarningActive) {
         this.opts.log.warn('Campaign stale; rotating Proton VPN IP and restarting agent');
         const ok = await rotateVpnIp();
+        // Back off a full interval even on failure (a failed rotation still
+        // flapped the tunnel; retrying next tick would repeat the disruption).
+        checkpoint.lastVpnRotation = new Date().toISOString();
         if (ok) {
-          checkpoint.lastVpnRotation = new Date().toISOString();
           this.opts.log.info('Proton VPN IP rotated due to stall');
         } else {
           this.opts.log.warn('VPN rotation failed during stall recovery');

@@ -8,6 +8,24 @@ import { describe, expect, it, vi } from 'vitest';
 import { DirectorLoop } from './loop.js';
 import type { DirectorSurface } from './types.js';
 
+// Mock the supervision/infra helpers to no-ops so runOnce is hermetic and
+// fast (the real ones pgrep/osascript/iTerm and can take >5s). rotateVpnIp
+// always FAILS: the regression test below asserts that a failed rotation
+// still persists lastVpnRotation (no per-tick retry).
+vi.mock('./restart.js', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('./restart.js')>();
+  return {
+    ...mod,
+    ensureCdpRunning: vi.fn(async () => {}),
+    ensureInfrastructureHealthy: vi.fn(async () => false),
+    snapshotWorker: vi.fn(() => ({ pids: [], running: true })),
+    startWorkerInIterm: vi.fn(),
+    restartWorker: vi.fn(async () => ({ iterm: true, state: { pids: [], running: true } })),
+    rotateVpnIp: vi.fn(async () => false),
+  };
+});
+import { rotateVpnIp } from './restart.js';
+
 const silent = {
   warn: vi.fn(),
   info: vi.fn(),
@@ -181,5 +199,36 @@ describe('DirectorLoop.runOnce', () => {
     });
     const result = await loop.runOnce(new AbortController().signal);
     expect(result.reason).toBe('error');
+  });
+
+  it('backs off a full interval when VPN rotation fails (no per-tick retry)', async () => {
+    // Regression: a FAILED rotation (~30s of tunnel flap) must still persist
+    // lastVpnRotation. Otherwise shouldRotateVpn() returns true every tick and
+    // the disruption repeats every 5 min, breaking in-flight fetches (Slack
+    // polls, agent requests).
+    const campaign = makeCampaign();
+    const stateDir = mkdtempSync(join(tmpdir(), 'director-state-'));
+    const env = makeEnv({
+      DIRECTOR_CAMPAIGN_DIR: campaign,
+      DIRECTOR_LEDGER: join(stateDir, 'l.jsonl'),
+      VPN_ROTATION_INTERVAL_MINUTES: 1,
+    });
+    const chain = {
+      handle: vi.fn(async () => ({
+        response: new Response('{"choices":[{"message":{"content":"{\\"patches\\":[]}"}}]}'),
+        servedBy: {},
+      })),
+    };
+    const loop = new DirectorLoop({
+      env: env as never,
+      chain: chain as never,
+      surface: nullSurface(),
+      log: silent,
+      checkpointPath: join(stateDir, 'cp.json'),
+    });
+    vi.mocked(rotateVpnIp).mockClear();
+    await loop.runOnce(new AbortController().signal);
+    await loop.runOnce(new AbortController().signal);
+    expect(vi.mocked(rotateVpnIp)).toHaveBeenCalledTimes(1);
   });
 });

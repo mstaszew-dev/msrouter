@@ -46,8 +46,11 @@ const schema = z.object({
   OPENCODE_NORTH_MINI_CODE_MODEL: z.string().default('north-mini-code-free'),
   OPENCODE_LAGUNA_MODEL: z.string().default('laguna-s-2.1-free'),
   OPENCODE_LING_MODEL: z.string().default('ling-3.0-flash-free'),
-  OPENCODE_QWEN_MODEL: z.string().default('qwen3.6-plus-free'),
-  OPENCODE_MINIMAX_MODEL: z.string().default('minimax-m3-free'),
+  // Exact model IDs verified against the OpenCode Zen catalog
+  // (GET /zen/v1/models): qwen3.6-plus and minimax-m3 have NO "-free" variant
+  // (only some models do). The old "-free" suffixes returned 401 on every key.
+  OPENCODE_QWEN_MODEL: z.string().default('qwen3.6-plus'),
+  OPENCODE_MINIMAX_MODEL: z.string().default('minimax-m3'),
 
   // Slack (Director surface)
   SLACK_BOT_TOKEN: z.string().optional(),
