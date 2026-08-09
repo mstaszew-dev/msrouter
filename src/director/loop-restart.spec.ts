@@ -65,6 +65,7 @@ function nullSurface(): DirectorSurface {
     postProposal: vi.fn(), postDecision: vi.fn(), postApplied: vi.fn(),
     postObservation: vi.fn(), postRestart: vi.fn(),
     pollSlackMessages: vi.fn(async () => ({ decisions: [], latestTs: undefined })),
+    flushOutbox: vi.fn(async () => 0),
   };
 }
 

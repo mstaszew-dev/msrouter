@@ -6,13 +6,58 @@
  * The surface is the runtime approval gate. There is no dry-run flag: a
  * NullSurface IS the pre-Slack state of the world, where every proposal lands
  * in ledger.jsonl and waits for a human (or a future surface) to decide.
+ *
+ * Slack delivery durability: SlackSurface.sendToSlack enqueues any message
+ * that fails (network error or Slack ok:false) into a JSON outbox file next to
+ * the ledger. flushOutbox() re-attempts every pending entry at the top of each
+ * Director tick, so a transient failure (the cause of the missing 1200/1200
+ * status post) is recovered on the next tick instead of lost forever. Entries
+ * are dropped after MAX_OUTBOX_ATTEMPTS to avoid an unbounded poison queue.
  */
+
+import { randomUUID } from 'node:crypto';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { dirname } from 'node:path';
 
 import type { Logger } from 'pino';
 
 import { appendLedger } from './ledger.js';
 import type { SlackPoller } from './slack-poller.js';
-import type { DirectorSurface, Patch, PatchDecision } from './types.js';
+import type { DirectorSurface, Patch, PatchDecision, SlackOutboxEntry } from './types.js';
+
+/** Drop an outbox entry after this many failed attempts (poison-queue guard). */
+export const MAX_OUTBOX_ATTEMPTS = 10;
+
+/**
+ * Read the Slack outbox. Missing/corrupt file -> empty array (self-healing).
+ * Shape: { entries: SlackOutboxEntry[] }. Kept under one key so a partial write
+ * cannot leave a truncated JSON array.
+ */
+export async function readOutbox(path: string): Promise<SlackOutboxEntry[]> {
+  let raw: string;
+  try {
+    raw = await readFile(path, 'utf8');
+  } catch {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(raw) as { entries?: SlackOutboxEntry[] };
+    return Array.isArray(parsed.entries) ? parsed.entries : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Atomically overwrite the outbox (temp file + rename) so a crash mid-write
+ * cannot corrupt the queue. Creates parent dirs as needed.
+ */
+export async function writeOutbox(path: string, entries: SlackOutboxEntry[]): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`;
+  await writeFile(tmp, JSON.stringify({ entries }, null, 2), 'utf8');
+  await rename(tmp, path);
+}
 
 export interface SurfaceOpts {
   ledgerPath: string;
@@ -25,6 +70,9 @@ export interface SurfaceOpts {
   slackWebhook?: string;
   /** In-process Slack poller (if provided, pollSlackMessages drains its queue). */
   slackPoller?: SlackPoller;
+  /** Path to the durable Slack outbox JSON. Defaults to ledgerPath + '.slack-outbox.json'
+   *  so it lives next to the ledger without extra config. */
+  outboxPath?: string;
 }
 
 export class NullSurface implements DirectorSurface {
@@ -84,6 +132,11 @@ export class NullSurface implements DirectorSurface {
     // NullSurface has no Slack connection; return empty.
     return { decisions: [], latestTs: _lastTs };
   }
+
+  /** No outbox on NullSurface; nothing to flush. */
+  async flushOutbox(): Promise<number> {
+    return 0;
+  }
 }
 
 /**
@@ -96,6 +149,7 @@ export class SlackSurface extends NullSurface {
   private readonly webhookUrl?: string;
   private readonly log: Logger;
   private readonly poller?: SlackPoller;
+  private readonly outboxPath: string;
 
   constructor(opts: SurfaceOpts) {
     super(opts);
@@ -104,6 +158,7 @@ export class SlackSurface extends NullSurface {
     this.channel = opts.slackChannel;
     this.webhookUrl = opts.slackWebhook;
     this.poller = opts.slackPoller;
+    this.outboxPath = opts.outboxPath ?? `${opts.ledgerPath}.slack-outbox.json`;
   }
 
   override async postProposal(patch: Patch): Promise<void> {
@@ -136,10 +191,16 @@ export class SlackSurface extends NullSurface {
     await this.sendToSlack(message);
   }
 
-  private async sendToSlack(message: string): Promise<void> {
+  /**
+   * Attempt to deliver a message to Slack. Returns true on success, false on
+   * any failure (network error or Slack ok:false). The caller decides whether
+   * to enqueue the failure; post* methods enqueue so the next tick recovers it.
+   */
+  private async deliverToSlack(message: string): Promise<boolean> {
     if (!this.botToken && !this.webhookUrl) {
       this.log.debug('No Slack credentials configured; skipping Slack post');
-      return;
+      // No credentials is a permanent no-op, not a failure to retry.
+      return true;
     }
 
     try {
@@ -158,7 +219,9 @@ export class SlackSurface extends NullSurface {
         const data = await res.json() as { ok?: boolean; error?: string };
         if (!data.ok) {
           this.log.error({ error: data.error }, 'Slack chat.postMessage failed');
+          return false;
         }
+        return true;
       } else if (this.webhookUrl) {
         const res = await fetch(this.webhookUrl, {
           method: 'POST',
@@ -167,11 +230,74 @@ export class SlackSurface extends NullSurface {
         });
         if (!res.ok) {
           this.log.error({ status: res.status }, 'Slack webhook post failed');
+          return false;
         }
+        return true;
       }
+      return true;
     } catch (e) {
       this.log.error({ err: e instanceof Error ? e.message : String(e) }, 'Slack post failed');
+      return false;
     }
+  }
+
+  /** Deliver now; on failure, enqueue to the outbox for the next tick. */
+  private async sendToSlack(message: string): Promise<void> {
+    if (await this.deliverToSlack(message)) return;
+    await this.enqueueOutbox(message);
+  }
+
+  /** Append a message to the durable outbox for later retry. */
+  private async enqueueOutbox(message: string): Promise<void> {
+    const entries = await readOutbox(this.outboxPath);
+    entries.push({ id: randomUUID(), message, attempts: 0 });
+    await writeOutbox(this.outboxPath, entries);
+    this.log.warn({ outboxSize: entries.length, outboxPath: this.outboxPath }, 'Slack post failed; enqueued to outbox for retry');
+  }
+
+  /**
+   * Re-attempt every pending outbox entry. Called once at the top of each
+   * Director tick. Removes entries that succeed or that exceed
+   * MAX_OUTBOX_ATTEMPTS (poison-queue guard). Returns the count still pending.
+   */
+  override async flushOutbox(): Promise<number> {
+    let entries = await readOutbox(this.outboxPath);
+    if (entries.length === 0) return 0;
+
+    const remaining: SlackOutboxEntry[] = [];
+    for (const entry of entries) {
+      const ok = await this.deliverToSlack(entry.message);
+      if (ok) {
+        this.log.info({ id: entry.id }, 'Outbox entry delivered to Slack');
+        continue;
+      }
+      const attempts = entry.attempts + 1;
+      if (attempts >= MAX_OUTBOX_ATTEMPTS) {
+        this.log.error(
+          { id: entry.id, attempts, message: entry.message.slice(0, 120) },
+          'Dropping outbox entry after max attempts',
+        );
+        continue;
+      }
+      remaining.push({
+        ...entry,
+        attempts,
+        lastErrorAt: new Date().toISOString(),
+      });
+    }
+
+    // Persist the new state. writeOutbox is atomic (temp + rename), so a crash
+    // between deliveries leaves either the old or the new file, never a hybrid.
+    await writeOutbox(this.outboxPath, remaining);
+
+    if (remaining.length < entries.length) {
+      this.log.info(
+        { delivered: entries.length - remaining.length, remaining: remaining.length },
+        'Outbox flush complete',
+      );
+    }
+    entries = remaining;
+    return entries.length;
   }
 
   /**

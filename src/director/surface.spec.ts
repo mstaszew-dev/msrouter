@@ -4,10 +4,20 @@
  * SlackSurface.fetch calls are NOT tested here (requires network mocking).
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { appendLedger } from './ledger.js';
-import { NullSurface, SlackSurface } from './surface.js';
-import type { Patch, PatchDecision, SurfaceOpts } from './types.js';
+import {
+  NullSurface,
+  SlackSurface,
+  MAX_OUTBOX_ATTEMPTS,
+  readOutbox,
+  writeOutbox,
+} from './surface.js';
+import type { SurfaceOpts } from './surface.js';
+import type { Patch, PatchDecision, SlackOutboxEntry } from './types.js';
 
 vi.mock('./ledger.js', () => ({
   appendLedger: vi.fn().mockResolvedValue(undefined),
@@ -289,5 +299,437 @@ describe('SlackSurface Slack API fallback (pollSlackMessages direct API)', () =>
     const surface = new SlackSurface(makeOpts({ slackBotToken: undefined }));
     const result = await surface.pollSlackMessages('ts-123');
     expect(result).toEqual({ decisions: [], latestTs: 'ts-123' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Outbox I/O helpers (readOutbox / writeOutbox) - pure fs, no Slack.
+// ---------------------------------------------------------------------------
+
+describe('Slack outbox I/O helpers', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'outbox-io-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('readOutbox returns [] for a missing file', async () => {
+    expect(await readOutbox(join(dir, 'nope.json'))).toEqual([]);
+  });
+
+  it('readOutbox self-heals on corrupt JSON', async () => {
+    const path = join(dir, 'corrupt.json');
+    await writeOutbox(path, [{ id: 'x', message: 'hi', attempts: 0 }]);
+    // Corrupt it manually.
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(path, '{ this is not json', 'utf8');
+    expect(await readOutbox(path)).toEqual([]);
+  });
+
+  it('writeOutbox + readOutbox round-trips entries', async () => {
+    const path = join(dir, 'ob.json');
+    const entries: SlackOutboxEntry[] = [
+      { id: 'a', message: 'msg-a', attempts: 0 },
+      { id: 'b', message: 'msg-b', attempts: 2, lastErrorAt: '2026-01-01T00:00:00Z', lastError: 'boom' },
+    ];
+    await writeOutbox(path, entries);
+    expect(await readOutbox(path)).toEqual(entries);
+  });
+
+  it('readOutbox returns [] when entries is not an array', async () => {
+    const path = join(dir, 'bad-shape.json');
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(path, JSON.stringify({ entries: 'not-an-array' }), 'utf8');
+    expect(await readOutbox(path)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SlackSurface outbox: enqueue on failure, drain on flush, attempt cap.
+// Uses real temp files for the outbox; mocks global fetch.
+// ---------------------------------------------------------------------------
+
+describe('SlackSurface outbox durability', () => {
+  let dir: string;
+  let outboxPath: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'outbox-surface-'));
+    outboxPath = join(dir, 'slack-outbox.json');
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** Make fetch succeed (Slack chat.postMessage ok:true). */
+  function mockFetchOk() {
+    (fetch as any).mockResolvedValueOnce({ json: async () => ({ ok: true }) });
+  }
+
+  /** Make fetch look like a network throw. */
+  function mockFetchThrow(msg = 'network down') {
+    (fetch as any).mockRejectedValueOnce(new Error(msg));
+  }
+
+  /** Make Slack return ok:false (treated as delivery failure). */
+  function mockFetchSlackError(error = 'rate_limited') {
+    (fetch as any).mockResolvedValueOnce({ json: async () => ({ ok: false, error }) });
+  }
+
+  it('does NOT enqueue when delivery succeeds', async () => {
+    mockFetchOk();
+    const surface = new SlackSurface(makeOpts({ outboxPath }));
+    await surface.postObservation({ submitted: 1200, target: 1200, queueLength: 0 });
+
+    expect(existsSync(outboxPath)).toBe(false);
+    const remaining = await surface.flushOutbox();
+    expect(remaining).toBe(0);
+  });
+
+  it('enqueues to the outbox on a network failure', async () => {
+    mockFetchThrow('ECONNRESET');
+    const surface = new SlackSurface(makeOpts({ outboxPath }));
+    await surface.postObservation({ submitted: 1200, target: 1200, queueLength: 0 });
+
+    const entries = await readOutbox(outboxPath);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].message).toContain('1200/1200');
+    expect(entries[0].attempts).toBe(0);
+    // flushOutbox should have been called implicitly nowhere yet; the entry persists.
+    expect(mockLog.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ outboxSize: 1 }),
+      expect.stringContaining('enqueued to outbox'),
+    );
+  });
+
+  it('enqueues on Slack ok:false and flushOutbox delivers it on the next tick', async () => {
+    // Tick 1: Slack rejects (rate_limited) -> enqueued.
+    mockFetchSlackError('rate_limited');
+    const surface = new SlackSurface(makeOpts({ outboxPath }));
+    await surface.postObservation({ submitted: 1200, target: 1200, queueLength: 0 });
+    expect(await readOutbox(outboxPath)).toHaveLength(1);
+
+    // Tick 2: flushOutbox retries and Slack now accepts -> drained.
+    mockFetchOk();
+    const remaining = await surface.flushOutbox();
+    expect(remaining).toBe(0);
+    expect(await readOutbox(outboxPath)).toEqual([]);
+  });
+
+  it('increments attempts on each failed flush and keeps the entry', async () => {
+    mockFetchThrow();
+    const surface = new SlackSurface(makeOpts({ outboxPath }));
+    await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
+
+    // Three failed retries.
+    for (let i = 0; i < 3; i++) {
+      mockFetchThrow();
+      await surface.flushOutbox();
+    }
+    const entries = await readOutbox(outboxPath);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].attempts).toBe(3);
+    expect(entries[0].lastErrorAt).toBeTruthy();
+  });
+
+  it('drops an entry after MAX_OUTBOX_ATTEMPTS failed attempts', async () => {
+    mockFetchThrow();
+    const surface = new SlackSurface(makeOpts({ outboxPath }));
+    await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
+
+    // Pre-seed attempts at the cap minus one so the next flush crosses the cap.
+    const entries = await readOutbox(outboxPath);
+    await writeOutbox(outboxPath, [{ ...entries[0]!, attempts: MAX_OUTBOX_ATTEMPTS - 1 }]);
+
+    mockFetchThrow();
+    const remaining = await surface.flushOutbox();
+    expect(remaining).toBe(0);
+    expect(await readOutbox(outboxPath)).toEqual([]);
+    expect(mockLog.error).toHaveBeenCalledWith(
+      expect.objectContaining({ attempts: MAX_OUTBOX_ATTEMPTS }),
+      expect.stringContaining('Dropping outbox entry'),
+    );
+  });
+
+  it('flushOutbox is a no-op when the outbox is empty', async () => {
+    const surface = new SlackSurface(makeOpts({ outboxPath }));
+    const remaining = await surface.flushOutbox();
+    expect(remaining).toBe(0);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it('flushOutbox drains multiple entries, keeping only the failures', async () => {
+    // Pre-seed three entries.
+    await writeOutbox(outboxPath, [
+      { id: 'ok-1', message: 'will-deliver-1', attempts: 0 },
+      { id: 'fail-1', message: 'will-fail', attempts: 0 },
+      { id: 'ok-2', message: 'will-deliver-2', attempts: 0 },
+    ]);
+    const surface = new SlackSurface(makeOpts({ outboxPath }));
+
+    mockFetchOk();
+    mockFetchThrow();
+    mockFetchOk();
+
+    const remaining = await surface.flushOutbox();
+    expect(remaining).toBe(1);
+    const left = await readOutbox(outboxPath);
+    expect(left).toHaveLength(1);
+    expect(left[0].id).toBe('fail-1');
+  });
+
+  it('outboxPath defaults to ledgerPath + .slack-outbox.json when not given', async () => {
+    mockFetchThrow();
+    const ledgerPath = join(dir, 'ledger.jsonl');
+    const surface = new SlackSurface(makeOpts({ outboxPath: undefined, ledgerPath }));
+    await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
+
+    const expectedDefault = `${ledgerPath}.slack-outbox.json`;
+    expect(existsSync(expectedDefault)).toBe(true);
+    expect(await readOutbox(expectedDefault)).toHaveLength(1);
+  });
+
+  it('deliverToSlack treats missing credentials as success (no enqueue)', async () => {
+    const surface = new SlackSurface(
+      makeOpts({ outboxPath, slackBotToken: undefined, slackChannel: undefined, slackWebhook: undefined }),
+    );
+    await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
+    expect(existsSync(outboxPath)).toBe(false);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  // --- every post* method must enqueue on failure, not just postObservation ---
+
+  it('postProposal enqueues to outbox when delivery fails', async () => {
+    mockFetchThrow();
+    const surface = new SlackSurface(makeOpts({ outboxPath }));
+    await surface.postProposal(samplePatch);
+    const entries = await readOutbox(outboxPath);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].message).toContain('Director Proposal');
+  });
+
+  it('postDecision enqueues to outbox when delivery fails', async () => {
+    mockFetchThrow();
+    const surface = new SlackSurface(makeOpts({ outboxPath }));
+    await surface.postDecision({
+      patchId: 'p1',
+      decision: 'approved',
+      decidedAt: '2026-01-01T00:00:00Z',
+      decidedBy: 'slack',
+    });
+    const entries = await readOutbox(outboxPath);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].message).toContain('Director Decision');
+  });
+
+  it('postApplied enqueues to outbox when delivery fails', async () => {
+    mockFetchThrow();
+    const surface = new SlackSurface(makeOpts({ outboxPath }));
+    await surface.postApplied(samplePatch);
+    const entries = await readOutbox(outboxPath);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].message).toContain('Director Applied');
+  });
+
+  it('postRestart enqueues to outbox when delivery fails', async () => {
+    mockFetchThrow();
+    const surface = new SlackSurface(makeOpts({ outboxPath }));
+    await surface.postRestart({ pid: 12345, logPath: '/tmp/log' });
+    const entries = await readOutbox(outboxPath);
+    expect(entries).toHaveLength(1);
+    expect(entries[0].message).toContain('Director Restart');
+  });
+
+  it('all post* methods deliver (no enqueue) when Slack accepts', async () => {
+    const surface = new SlackSurface(makeOpts({ outboxPath }));
+    mockFetchOk();
+    await surface.postProposal(samplePatch);
+    mockFetchOk();
+    await surface.postDecision({
+      patchId: 'p1', decision: 'approved',
+      decidedAt: '2026-01-01T00:00:00Z', decidedBy: 'slack',
+    });
+    mockFetchOk();
+    await surface.postApplied(samplePatch);
+    mockFetchOk();
+    await surface.postRestart({ pid: 1, logPath: '/tmp/log' });
+    mockFetchOk();
+    await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
+    expect(existsSync(outboxPath)).toBe(false);
+  });
+
+  it('flushOutbox logs "Outbox flush complete" when at least one entry is delivered', async () => {
+    await writeOutbox(outboxPath, [{ id: 'ok-1', message: 'm', attempts: 0 }]);
+    const surface = new SlackSurface(makeOpts({ outboxPath }));
+    mockFetchOk();
+    await surface.flushOutbox();
+    expect(mockLog.info).toHaveBeenCalledWith(
+      expect.objectContaining({ delivered: 1, remaining: 0 }),
+      'Outbox flush complete',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Webhook delivery path (separate from botToken path). Covers the else-if
+// branch in deliverToSlack and its failure -> outbox enqueue.
+// ---------------------------------------------------------------------------
+
+describe('SlackSurface webhook delivery + outbox', () => {
+  let dir: string;
+  let outboxPath: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'outbox-webhook-'));
+    outboxPath = join(dir, 'slack-outbox.json');
+    vi.stubGlobal('fetch', vi.fn());
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('delivers via webhook when botToken is absent and does not enqueue', async () => {
+    (fetch as any).mockResolvedValueOnce({ ok: true });
+    const surface = new SlackSurface(
+      makeOpts({ outboxPath, slackBotToken: undefined, slackChannel: undefined, slackWebhook: 'https://hooks.slack.test/x' }),
+    );
+    await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
+    expect(existsSync(outboxPath)).toBe(false);
+    expect(fetch).toHaveBeenCalledWith(
+      'https://hooks.slack.test/x',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  it('enqueues to outbox when the webhook returns a non-ok HTTP status', async () => {
+    (fetch as any).mockResolvedValueOnce({ ok: false, status: 503 });
+    const surface = new SlackSurface(
+      makeOpts({ outboxPath, slackBotToken: undefined, slackChannel: undefined, slackWebhook: 'https://hooks.slack.test/x' }),
+    );
+    await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
+    expect(await readOutbox(outboxPath)).toHaveLength(1);
+  });
+
+  it('falls back to webhook when botToken is set but channel is missing', async () => {
+    (fetch as any).mockResolvedValueOnce({ ok: true });
+    const surface = new SlackSurface(
+      makeOpts({ outboxPath, slackChannel: undefined, slackWebhook: 'https://hooks.slack.test/x' }),
+    );
+    await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
+    expect(fetch).toHaveBeenCalledWith(
+      'https://hooks.slack.test/x',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(existsSync(outboxPath)).toBe(false);
+  });
+
+  it('treats botToken-without-channel-and-without-webhook as success (no fetch, no enqueue)', async () => {
+    // Misconfiguration: bot token set, but neither channel nor webhook. This is
+    // a permanent no-op (returns true), not a retryable failure.
+    const surface = new SlackSurface(
+      makeOpts({ outboxPath, slackChannel: undefined, slackWebhook: undefined }),
+    );
+    await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(existsSync(outboxPath)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// pollSlackMessages direct-API fallback: network error returns empty (covers
+// the catch block, which predates the outbox work but shares the fetch seam).
+// ---------------------------------------------------------------------------
+
+describe('SlackSurface pollSlackMessages error handling', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn());
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('returns empty on a network error during conversations.history', async () => {
+    (fetch as any).mockRejectedValueOnce(new Error('ETIMEDOUT'));
+    const surface = new SlackSurface(makeOpts());
+    const result = await surface.pollSlackMessages();
+    expect(result).toEqual({ decisions: [], latestTs: undefined });
+  });
+
+  it('passes lastTs as oldest param when provided', async () => {
+    (fetch as any).mockResolvedValueOnce({ json: async () => ({ ok: true, messages: [] }) });
+    const surface = new SlackSurface(makeOpts());
+    await surface.pollSlackMessages('1700000000.000');
+    const calledUrl = (fetch as any).mock.calls[0][0] as string;
+    expect(calledUrl).toContain('oldest=1700000000.000');
+  });
+
+  it('skips messages missing text or ts, but still parses the valid ones', async () => {
+    (fetch as any).mockResolvedValueOnce({
+      json: async () => ({
+        ok: true,
+        messages: [
+          { text: 'approve patch-ok', ts: '1700000020.000' },
+          { text: 'no-ts-here' }, // missing ts -> skipped
+          { ts: '1700000021.000' }, // missing text -> skipped
+          { text: 'reject patch-ok2', ts: '1700000022.000' },
+        ],
+      }),
+    });
+    const surface = new SlackSurface(makeOpts());
+    const result = await surface.pollSlackMessages();
+    expect(result.decisions).toHaveLength(2);
+    expect(result.latestTs).toBe('1700000022.000');
+  });
+
+  it('handles a non-Error throw in poll gracefully', async () => {
+    (fetch as any).mockRejectedValueOnce('string error, not an Error');
+    const surface = new SlackSurface(makeOpts());
+    const result = await surface.pollSlackMessages('ts-1');
+    expect(result).toEqual({ decisions: [], latestTs: 'ts-1' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// deliverToSlack non-Error throw (covers the String(e) branch in its catch).
+// ---------------------------------------------------------------------------
+
+describe('SlackSurface deliverToSlack non-Error throws', () => {
+  let dir: string;
+  let outboxPath: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'outbox-nonerr-'));
+    outboxPath = join(dir, 'slack-outbox.json');
+    vi.stubGlobal('fetch', vi.fn());
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('enqueues to outbox when fetch throws a non-Error value', async () => {
+    (fetch as any).mockRejectedValueOnce('a string, not an Error');
+    const surface = new SlackSurface(makeOpts({ outboxPath }));
+    await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
+    expect(await readOutbox(outboxPath)).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NullSurface.flushOutbox is a no-op (no outbox).
+// ---------------------------------------------------------------------------
+
+describe('NullSurface.flushOutbox', () => {
+  it('returns 0 and does nothing', async () => {
+    const surface = new NullSurface(makeOpts());
+    expect(await surface.flushOutbox()).toBe(0);
   });
 });

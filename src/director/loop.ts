@@ -205,6 +205,10 @@ export class DirectorLoop {
 
     try {
       const t0 = Date.now();
+      // 0. Drain any Slack posts that failed on a previous tick. Done first so
+      // a recovered message (e.g. a missed 1200/1200 status) lands before this
+      // tick emits new ones. No-op when the outbox is empty.
+      await this.opts.surface.flushOutbox();
       this.opts.log.info('Phase 1: Campaign supervision');
       // 0. Ensure Chrome CDP is running (Playwright MCP depends on it)
       await ensureCdpRunning(e.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222');
