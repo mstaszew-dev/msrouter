@@ -419,7 +419,7 @@ describe('ProviderChain - OpenCode pooling', () => {
   });
 });
 
-describe('ProviderChain - local (ollama) entry', () => {
+describe('ProviderChain - local (llama-server) entry', () => {
   // Mirrors the test/setup.ts fixture so loadEnv() restores the known env.
   const DEFAULT_ENV = {
     NODE_ENV: 'test',

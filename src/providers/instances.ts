@@ -20,7 +20,7 @@ export interface Providers {
   openai: SingleKeyProvider;
   zai: SingleKeyProvider;
   opencode: OpenCodeProvider;
-  /** Local (Ollama) provider; always built, only routed when
+  /** Local (llama-server) provider; always built, only routed when
    *  LOCAL_ENABLED=true (chain-routing gates the entry). */
   local: LocalProvider;
 }
@@ -85,16 +85,16 @@ export function buildProviders(log: Logger): Providers {
       timeoutMs,
       log,
     }),
-    // Local Ollama: speaks ollama's native /api/chat with think:false (the /v1
-    // endpoint ignores `think`). Routed last when LOCAL_ENABLED=true (see
-    // chain-routing.ts) as the always-available fallback when every remote free
-    // tier is flapping.
+    // Local llama-server: speaks its OpenAI-compatible /v1/chat/completions
+    // endpoint (the ollama daemon is NOT in use; llama-server does not implement
+    // /api/chat). Routed last when LOCAL_ENABLED=true (see chain-routing.ts) as
+    // the always-available fallback when every remote free tier is flapping.
     local: new LocalProvider(
       {
         baseUrl: env.LOCAL_BASE_URL,
         defaultModel: env.LOCAL_MODEL,
       },
-      timeoutMs,
+      env.LOCAL_TIMEOUT_MS,
       log,
     ),
   };

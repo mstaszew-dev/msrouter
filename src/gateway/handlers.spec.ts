@@ -74,7 +74,7 @@ describe('resolveModel - unknown model defaults to the alias walk', () => {
   });
 });
 
-describe('buildModelList - local (ollama) model advertisement', () => {
+describe('buildModelList - local (llama-server) model advertisement', () => {
   it('includes the local model with owned_by=local when LOCAL_ENABLED=true', () => {
     loadEnv({ LOCAL_ENABLED: 'true', LOCAL_MODEL: 'qwen3:14b-32k' });
     const local = buildModelList().find((m) => m.id === 'qwen3:14b-32k');

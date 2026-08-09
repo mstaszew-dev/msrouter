@@ -1,44 +1,47 @@
 /**
- * Local (Ollama) provider.
+ * Local provider (llama-server, OpenAI-compatible).
  *
- * Ollama's OpenAI-compatible /v1 endpoint IGNORES the `think` field (verified
- * on ollama 0.32.5: qwen3 still emits a <think> block and burns ~80s before
- * any content, often finishing length-limited with content=""). So this
- * provider speaks ollama's NATIVE /api/chat instead, forcing think:false
- * (direct answers, no reasoning tokens) and keep_alive:"-1" so the model stays
- * loaded between the campaign agent's bursty calls (a model reload would
- * exceed the agent's request timeout).
+ * The local model is served by a direct `llama-server` process (build b10298)
+ * exposing a patched 128K-context qwen2.5:1.5b GGUF via its OpenAI-compatible
+ * /v1/chat/completions endpoint, NOT by the ollama daemon. (The ollama daemon
+ * is not running on this machine; llama-server does not implement ollama's
+ * native /api/chat or /api/tags, so any /api/chat call 404s.)
  *
- * The response is mapped back to the OpenAI chat-completions shape
- * (choices/message/tool_calls/finish_reason) so the gateway's existing
- * empty-content guard and error handling stay uniform. Non-streaming only:
- * stream:true returns BAD_REQUEST so the chain skips to the next provider
- * instead of hanging.
+ * This provider therefore reuses the shared postChatCompletion helper the
+ * remote OpenAI-compatible providers use: it owns URL joining, timeout,
+ * header setup, secret scrubbing, empty-completion detection, SSE streaming,
+ * and HTTP status classification. The body is passed through verbatim with
+ * only `model` rewritten to the chain-resolved id (matching openrouter.ts).
+ *
+ * A prompt-token guard fast-fails oversized requests BEFORE any network call:
+ * a single-slot llama-server processes prompts serially, so a giant prompt
+ * (browser snapshots, accumulated history) would block the slot for the whole
+ * timeout. Local is routed LAST in the chain (the fallback when every remote
+ * provider is flapping), so a guard rejection lets the chain answer from the
+ * remote providers it already tried - it never burns the slot on a prompt
+ * that cannot fit the attempt window.
  */
 import type { Logger } from 'pino';
 
-import { scrubSecrets } from './fetch.js';
-import { isEmptyCompletion } from './stream-check.js';
+import { postChatCompletion } from './fetch.js';
 import type {
   AttemptOptions,
   ChatRequestBody,
   Provider,
   ProviderCallResult,
 } from './types.js';
-import { classifyAttempt } from './types.js';
-
-const API_CHAT_PATH = 'api/chat';
 
 /**
- * Prompt-token ceiling for local. qwen3:8b-32k runs at ~80 tok/s prompt
- * processing and ollama processes ONE request per model at a time, so a big
- * prompt (browser snapshots, accumulated history) can take minutes and clog
- * ollama's queue (the campaign agent's own 120s timeout then aborts every
- * attempt). Requests above this estimate are fast-failed to the chain so a
- * remote provider with more context serves them instead. 16k prompt + 4k
- * predict stays well under the 32k context with margin.
+ * Prompt-token ceiling for local. Sized to the local attempt window: msrouter
+ * allows local up to 300s (LOCAL_TIMEOUT_MS, matched by the campaign agent's
+ * 300s client cap), so the guard admits only prompts that fit that window.
+ * The chars/4 heuristic overestimates real tokens ~1.6x, so a 50k estimate is
+ * ~31k real tokens: prefill at the slowest observed 220 tok/s is ~142s, plus
+ * a full 4096-token generation at ~38 tok/s decode is ~108s - about 250s,
+ * inside 300s. Larger prompts fast-fail so the chain answers from the remote
+ * providers it already tried, instead of burning the slot.
  */
-const LOCAL_MAX_PROMPT_TOKENS = 16_000;
+const LOCAL_MAX_PROMPT_TOKENS = 50_000;
 
 /** Rough prompt-token estimate (chars/4 + per-message overhead), matching the
  *  campaign agent's own estimate so the guard is consistent with what the
@@ -53,85 +56,6 @@ function estimatePromptTokens(messages: unknown[]): number {
     chars += 10;
   }
   return Math.floor(chars / 4);
-}
-
-function joinUrl(baseUrl: string, suffix: string): string {
-  return `${baseUrl.replace(/\/+$/, '')}/${suffix}`;
-}
-
-function safeJsonParse(value: unknown): unknown {
-  if (typeof value !== 'string') return value;
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
-}
-
-/** Map OpenAI-format messages to ollama /api/chat messages. */
-function mapMessages(messages: unknown[]): unknown[] {
-  return messages.map((m) => {
-    if (!m || typeof m !== 'object') return m;
-    const msg = m as Record<string, unknown>;
-    const out: Record<string, unknown> = { role: msg.role, content: msg.content ?? '' };
-    if (msg.role === 'assistant') {
-      const tcs = msg.tool_calls;
-      if (Array.isArray(tcs) && tcs.length > 0) {
-        out.tool_calls = tcs.map((tc) => {
-          const t = tc as Record<string, unknown>;
-          const fn = (t.function ?? {}) as Record<string, unknown>;
-          return { function: { name: fn.name, arguments: safeJsonParse(fn.arguments) } };
-        });
-      }
-    }
-    return out;
-  });
-}
-
-/** Map an ollama /api/chat response to the OpenAI chat-completions shape. */
-function mapOllamaToOpenAi(json: Record<string, unknown>): Record<string, unknown> {
-  const msg = (json.message ?? {}) as Record<string, unknown>;
-  const rawCalls = msg.tool_calls;
-  const toolCalls = Array.isArray(rawCalls)
-    ? rawCalls.map((tc, i) => {
-        const t = tc as Record<string, unknown>;
-        const fn = (t.function ?? {}) as Record<string, unknown>;
-        return {
-          id: t.id ?? `call_${i}`,
-          type: 'function',
-          function: { name: fn.name, arguments: JSON.stringify(fn.arguments ?? {}) },
-        };
-      })
-    : undefined;
-  const content = typeof msg.content === 'string' ? msg.content : '';
-  const doneReason = json.done_reason;
-  const finishReason = toolCalls && toolCalls.length > 0 ? 'tool_calls' : doneReason === 'length' ? 'length' : 'stop';
-  return {
-    id: json.id ?? `local-${Date.now()}`,
-    object: 'chat.completion',
-    created: Math.floor(Date.now() / 1000),
-    model: json.model,
-    choices: [
-      {
-        index: 0,
-        message: {
-          role: 'assistant',
-          content,
-          ...(toolCalls && toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
-        },
-        finish_reason: finishReason,
-      },
-    ],
-    usage: {
-      prompt_tokens: (json.prompt_eval_count as number) ?? 0,
-      completion_tokens: (json.eval_count as number) ?? 0,
-      total_tokens: ((json.prompt_eval_count as number) ?? 0) + ((json.eval_count as number) ?? 0),
-    },
-  };
-}
-
-function truncate(s: string, max: number): string {
-  return s.length <= max ? s : s.slice(0, max) + '...';
 }
 
 export interface LocalConfig {
@@ -154,7 +78,7 @@ export class LocalProvider implements Provider {
   }
 
   /** Always available when the entry is routed (chain-routing gates on
-   *  LOCAL_ENABLED); an unreachable ollama fails attempts as TRANSIENT. */
+   *  LOCAL_ENABLED); an unreachable llama-server fails attempts as TRANSIENT. */
   get available(): boolean {
     return true;
   }
@@ -169,81 +93,28 @@ export class LocalProvider implements Provider {
     signal: AbortSignal,
     opts: AttemptOptions,
   ): Promise<ProviderCallResult> {
-    if (body.stream) {
-      return { kind: 'BAD_REQUEST', status: 400, message: 'local: streaming not supported' };
-    }
     const promptTokens = estimatePromptTokens(Array.isArray(body.messages) ? body.messages : []);
     if (promptTokens > LOCAL_MAX_PROMPT_TOKENS) {
       return {
         kind: 'BAD_REQUEST',
         status: 400,
-        message: `local: prompt ~${promptTokens} tokens exceeds the local 32k budget (max ${LOCAL_MAX_PROMPT_TOKENS}); use a remote provider`,
+        message: `local: prompt ~${promptTokens} tokens exceeds the 300s local budget (max ${LOCAL_MAX_PROMPT_TOKENS}); use a remote provider`,
       };
     }
-    const outbound: Record<string, unknown> = {
-      model: opts.model,
-      messages: mapMessages(Array.isArray(body.messages) ? body.messages : []),
-      stream: false,
-      think: false,
-      // Go duration, NOT "-1" (ollama 0.32.5 rejects "-1": "missing unit in
-      // duration"). 30m keeps the model hot across the campaign agent's
-      // bursty ticks but frees the ~12GB when idle for longer.
-      keep_alive: '30m',
-      options: {
-        ...(body.temperature !== undefined ? { temperature: body.temperature } : {}),
-        ...(body.max_tokens !== undefined ? { num_predict: body.max_tokens } : {}),
-      },
-    };
-    if (Array.isArray(body.tools) && body.tools.length > 0) {
-      outbound.tools = body.tools;
-    }
+    // Verbatim passthrough: only rewrite model to the chain-resolved id. The
+    // rest of the body (messages, stream, tools, temperature, max_tokens) is
+    // already OpenAI-shaped, which llama-server's /v1 endpoint accepts.
+    const outbound: ChatRequestBody = { ...body, model: opts.model };
     this.log.debug({ provider: this.id, model: opts.model }, 'local attempt');
 
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), this.timeoutMs);
-    signal.addEventListener('abort', () => ac.abort(), { once: true });
-    try {
-      const res = await fetch(joinUrl(this.baseUrl, API_CHAT_PATH), {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(outbound),
-        signal: ac.signal,
-      });
-      const outcome = classifyAttempt(res.status, `upstream ${res.status}`);
-      if (outcome) {
-        let text = '';
-        try {
-          text = await res.text();
-        } catch { /* ignore */ }
-        return { ...outcome, message: outcome.message + (text ? `: ${truncate(scrubSecrets(text), 300)}` : '') };
-      }
-      let json: Record<string, unknown>;
-      try {
-        json = (await res.json()) as Record<string, unknown>;
-      } catch {
-        return { kind: 'TRANSIENT', status: res.status, message: 'local: unparseable response body' };
-      }
-      const mapped = mapOllamaToOpenAi(json);
-      // Mirror fetch.ts: a 200 with empty content and finish_reason !== stop
-      // (e.g. qwen3 hit num_predict while thinking) is a useless response.
-      if (isEmptyCompletion(mapped)) {
-        return { kind: 'TRANSIENT', status: 200, message: 'local: empty completion' };
-      }
-      return {
-        kind: 'OK',
-        response: new Response(JSON.stringify(mapped), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }),
-      };
-    } catch (e) {
-      return {
-        kind: 'TRANSIENT',
-        status: 0,
-        message: `fetch error: ${truncate(scrubSecrets(e instanceof Error ? e.message : String(e)), 200)}`,
-      };
-    } finally {
-      clearTimeout(timer);
-    }
+    // llama-server ignores Authorization, but UpstreamOptions.authorization is
+    // a required header value, so send a harmless placeholder. No real key.
+    return postChatCompletion(outbound, {
+      baseUrl: this.baseUrl,
+      authorization: 'Bearer local',
+      signal,
+      timeoutMs: this.timeoutMs,
+      keyTag: 'local',
+    });
   }
 }

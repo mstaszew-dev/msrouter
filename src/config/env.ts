@@ -30,12 +30,15 @@ const schema = z.object({
   ZAI_BASE_URL: z.string().url().default('https://api.z.ai/api/paas/v4'),
   ZAI_MODEL: z.string().default('glm-4.6'),
 
-  // Local (Ollama) provider: native /api/chat (the OpenAI-compat /v1 endpoint
-  // ignores the think flag). LOCAL_ENABLED gates the routing entry (first) and
-  // /v1/models advertisement. Base URL WITHOUT the /v1 suffix.
+  // Local llama-server provider: OpenAI /v1/chat/completions on a patched
+  // 128K GGUF (no ollama daemon). Base URL includes /v1.
   LOCAL_ENABLED: z.string().default('false').transform((s) => s === 'true' || s === '1'),
-  LOCAL_BASE_URL: z.string().url().default('http://127.0.0.1:11434'),
-  LOCAL_MODEL: z.string().default('qwen3:8b-32k'),
+  LOCAL_BASE_URL: z.string().url().default('http://127.0.0.1:11434/v1'),
+  LOCAL_MODEL: z.string().default('qwen2.5:1.5b-128k'),
+  // Local prefills are slow (~220-370 tok/s), so local gets its own timeout
+  // instead of UPSTREAM_TIMEOUT_MS. 300s lets big 128K prompts prefill; the
+  // campaign agent's client cap matches (300s) so it doesn't abort mid-prefill.
+  LOCAL_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
   OPENCODE_API_KEY: z.string().optional(),
   OPENCODE_BASE_URL: z.string().url().default('https://opencode.ai/zen/v1'),
   OPENCODE_MODEL: z.string().default('big-pickle'),
@@ -57,11 +60,8 @@ const schema = z.object({
   SLACK_CHANNEL: z.string().optional(),
   SLACK_WEBHOOK: z.string().optional(),
 
-  // OpenRouter default model used when the client sends an alias (e.g. mst/free)
-  // and the chain substitutes a per-provider default. `openrouter/free` is
-  // OpenRouter's own auto-router over free models: it picks whichever upstream
-  // free model currently has capacity and retries across providers, so OpenRouter
-  // handles upstream throttling instead of us hitting each one in turn.
+  // OpenRouter default model when the client sends an alias (e.g. mst/free).
+  // `openrouter/free` is OpenRouter's auto-router over free models.
   OPENROUTER_MODEL: z.string().default('openrouter/free'),
   // The alias(es) that mean "walk every provider with its own default model".
   // Comma-separated; canonical ones are "mst/free" and "free".

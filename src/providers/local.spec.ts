@@ -1,11 +1,14 @@
 /**
- * Local (Ollama) provider tests.
+ * Local provider tests.
  *
- * Ollama's OpenAI-compatible /v1 endpoint IGNORES the `think` field (verified
- * on ollama 0.32.5), so qwen3's think mode burns tokens and ~80s before any
- * content. LocalProvider speaks ollama's NATIVE /api/chat instead, forcing
- * think:false, and maps the response back to the OpenAI shape the gateway
- * expects (choices/message/tool_calls/finish_reason).
+ * The local model is served by a direct llama-server process exposing its
+ * OpenAI-compatible /v1/chat/completions endpoint (NOT the ollama daemon,
+ * which is not running and whose /api/chat llama-server does not implement).
+ * LocalProvider delegates to the shared postChatCompletion helper, so these
+ * tests assert the OpenAI-shaped contract: verbatim body passthrough with the
+ * model rewritten to the chain-resolved id, endpoint {base}/chat/completions,
+ * no think/keep_alive/options fields, and the shared helper's streaming,
+ * empty-completion, and error handling.
  */
 import type pino from 'pino';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -19,8 +22,10 @@ const silent = {
   debug: vi.fn(),
 } as unknown as pino.Logger;
 
-function makeProvider(baseUrl = 'http://127.0.0.1:11434') {
-  return new LocalProvider({ baseUrl, defaultModel: 'qwen3:14b-32k' }, 5000, silent);
+// baseUrl mirrors env.ts default: the OpenAI-compat version path is part of
+// the base, and postChatCompletion appends the bare 'chat/completions' suffix.
+function makeProvider(baseUrl = 'http://127.0.0.1:11434/v1') {
+  return new LocalProvider({ baseUrl, defaultModel: 'qwen2.5:1.5b-128k' }, 5000, silent);
 }
 
 function stubFetchOnce(responseBody: unknown, status = 200) {
@@ -29,100 +34,129 @@ function stubFetchOnce(responseBody: unknown, status = 200) {
   return fetchMock;
 }
 
+/** Build an SSE streaming Response body carrying one content delta + a [DONE]. */
+function streamingResponse(content = 'Hello'): Response {
+  const encoder = new TextEncoder();
+  const events = [
+    `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: null }] })}\n\n`,
+    `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] })}\n\n`,
+    'data: [DONE]\n\n',
+  ];
+  const stream = new ReadableStream({
+    start(controller) {
+      for (const ev of events) controller.enqueue(encoder.encode(ev));
+      controller.close();
+    },
+  });
+  return new Response(stream, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+}
+
 const baseBody = {
   model: 'ignored',
   messages: [{ role: 'user', content: 'hi' }],
   stream: false,
 };
 
-describe('LocalProvider (ollama /api/chat)', () => {
+describe('LocalProvider (llama-server /v1/chat/completions)', () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it('is available without an api key', () => {
     expect(makeProvider().available).toBe(true);
   });
 
-  it('posts to {base}/api/chat with think:false, keep_alive and the resolved model', async () => {
-    const fetchMock = stubFetchOnce({ message: { role: 'assistant', content: 'OK' }, done_reason: 'stop' });
+  it('posts to {base}/chat/completions with the resolved model and OpenAI body shape', async () => {
+    const fetchMock = stubFetchOnce({
+      choices: [{ message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
+    });
     const p = makeProvider();
     const res = await p.attempt(
       { ...baseBody, max_tokens: 512, temperature: 0.3 },
       new AbortController().signal,
-      { model: 'qwen3:14b-32k' },
+      { model: 'qwen2.5:1.5b-128k' },
     );
     expect(res.kind).toBe('OK');
     const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
-    expect(url).toBe('http://127.0.0.1:11434/api/chat');
+    expect(url).toBe('http://127.0.0.1:11434/v1/chat/completions');
     const body = JSON.parse(String(init.body)) as Record<string, unknown>;
-    expect(body.model).toBe('qwen3:14b-32k');
-    expect(body.think).toBe(false);
-    // Go duration (ollama rejects "-1"); 30m keeps the model hot between ticks.
-    expect(body.keep_alive).toBe('30m');
-    expect((body.options as Record<string, unknown>).num_predict).toBe(512);
-    expect((body.options as Record<string, unknown>).temperature).toBe(0.3);
-    expect(init.headers).not.toHaveProperty('authorization');
+    // model is rewritten to the chain-resolved id; everything else passes through.
+    expect(body.model).toBe('qwen2.5:1.5b-128k');
+    // No ollama-native fields: the body is plain OpenAI shape.
+    expect(body).not.toHaveProperty('think');
+    expect(body).not.toHaveProperty('keep_alive');
+    expect(body).not.toHaveProperty('options');
+    // max_tokens passes through verbatim (NOT remapped to options.num_predict).
+    expect(body.max_tokens).toBe(512);
+    expect(body.temperature).toBe(0.3);
+    // llama-server ignores Authorization, but the shared helper sends the
+    // placeholder; no real key is ever attached.
+    expect(init.headers).toHaveProperty('authorization', 'Bearer local');
   });
 
-  it('maps an ollama tool_calls response to the OpenAI shape', async () => {
-    const fetchMock = stubFetchOnce({
-      model: 'qwen3:14b-32k',
-      message: {
-        role: 'assistant',
-        content: '',
-        tool_calls: [
-          { id: 'call_x', function: { index: 0, name: 'read', arguments: { path: '/tmp/foo.txt' } } },
-        ],
-      },
-      done_reason: 'stop',
-    });
+  it('passes an OpenAI tool_calls response through unchanged (no shape remapping)', async () => {
+    const upstream = {
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: '',
+            tool_calls: [
+              { id: 'call_x', type: 'function', function: { name: 'read', arguments: '{"path":"/tmp/foo.txt"}' } },
+            ],
+          },
+          finish_reason: 'tool_calls',
+        },
+      ],
+    };
+    const fetchMock = stubFetchOnce(upstream);
     const p = makeProvider();
-    const res = await p.attempt(baseBody, new AbortController().signal, { model: 'qwen3:14b-32k' });
+    const res = await p.attempt(baseBody, new AbortController().signal, { model: 'qwen2.5:1.5b-128k' });
     expect(res.kind).toBe('OK');
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const json = (await (res as { response: Response }).response.json()) as {
-      choices: Array<{ finish_reason: string; message: { content: string; tool_calls: unknown[] } }>;
-    };
-    const choice = json.choices[0]!;
-    expect(choice.finish_reason).toBe('tool_calls');
-    expect(choice.message.content).toBe('');
-    expect(choice.message.tool_calls).toEqual([
-      {
-        id: 'call_x',
-        type: 'function',
-        function: { name: 'read', arguments: '{"path":"/tmp/foo.txt"}' },
-      },
-    ]);
+    const json = (await (res as { response: Response }).response.json()) as typeof upstream;
+    // Verbatim passthrough: the response is not remapped by the provider.
+    expect(json).toEqual(upstream);
+    expect(json.choices[0]!.finish_reason).toBe('tool_calls');
+    expect(json.choices[0]!.message.tool_calls).toEqual(upstream.choices[0]!.message.tool_calls);
   });
 
-  it('maps done_reason=length to finish_reason=length and flags it as an empty completion', async () => {
-    stubFetchOnce({ message: { role: 'assistant', content: '' }, done_reason: 'length' });
+  it('flags an empty finish_reason=length completion as TRANSIENT', async () => {
+    stubFetchOnce({
+      choices: [{ message: { role: 'assistant', content: '' }, finish_reason: 'length' }],
+    });
     const p = makeProvider();
-    const res = await p.attempt(baseBody, new AbortController().signal, { model: 'qwen3:14b-32k' });
+    const res = await p.attempt(baseBody, new AbortController().signal, { model: 'qwen2.5:1.5b-128k' });
     expect(res.kind).toBe('TRANSIENT');
   });
 
-  it('returns BAD_REQUEST when the client asks for streaming (not supported)', async () => {
+  it('supports streaming requests', async () => {
+    const fetchMock = vi.fn(async () => streamingResponse('Hi there'));
+    vi.stubGlobal('fetch', fetchMock);
     const p = makeProvider();
     const res = await p.attempt(
       { ...baseBody, stream: true },
       new AbortController().signal,
-      { model: 'qwen3:14b-32k' },
+      { model: 'qwen2.5:1.5b-128k' },
     );
-    expect(res.kind).toBe('BAD_REQUEST');
+    expect(res.kind).toBe('OK');
+    const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
+    expect(url).toBe('http://127.0.0.1:11434/v1/chat/completions');
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    expect(body.stream).toBe(true);
   });
 
-  it('fast-fails oversized prompts (local 32k context cannot serve them in time)', async () => {
+  it('fast-fails oversized prompts (would clog the single llama-server slot)', async () => {
     const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
-    const big = 'x'.repeat(80_000); // ~20k tokens by the chars/4 heuristic
+    // ~150k tokens by the chars/4 heuristic: well past the 50000 guard.
+    const big = 'x'.repeat(600_000);
     const res = await makeProvider().attempt(
       { ...baseBody, messages: [{ role: 'user', content: big }] },
       new AbortController().signal,
-      { model: 'qwen3:14b-32k' },
+      { model: 'qwen2.5:1.5b-128k' },
     );
     expect(res.kind).toBe('BAD_REQUEST');
     // No fetch: the guard returns before any network call, so a huge prompt
-    // cannot clog ollama's single-model queue.
+    // cannot block the single llama-server slot for the whole timeout.
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -134,7 +168,7 @@ describe('LocalProvider (ollama /api/chat)', () => {
       }),
     );
     const res = await makeProvider().attempt(baseBody, new AbortController().signal, {
-      model: 'qwen3:14b-32k',
+      model: 'qwen2.5:1.5b-128k',
     });
     expect(res.kind).toBe('TRANSIENT');
   });
@@ -142,7 +176,7 @@ describe('LocalProvider (ollama /api/chat)', () => {
   it('classifies an upstream 500 as TRANSIENT with the error body scrubbed', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":"boom sk-or-v1-abc123456"}', { status: 500 })));
     const res = await makeProvider().attempt(baseBody, new AbortController().signal, {
-      model: 'qwen3:14b-32k',
+      model: 'qwen2.5:1.5b-128k',
     });
     expect(res.kind).toBe('TRANSIENT');
     expect((res as { message: string }).message).not.toContain('abc123456');

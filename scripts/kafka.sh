@@ -112,9 +112,15 @@ report() {
 
 Kafka broker is up on ${KAFKA_BOOTSTRAP}
 
+  Kafka is OBSERVATION-ONLY: the Director publishes proposed/decided/observation
+  events here for visibility and monitoring. Nothing consumes these topics, so
+  lag is expected and benign. Slack is delivered DIRECTLY from msrouter TS
+  (SlackSurface -> Slack Web API outbound, SlackPoller <- conversations.history
+  inbound); Kafka is not in the Slack path.
+
   Topics:
-    director-slack-raw  - inbound Slack messages (poller -> Kafka)
-    director-events     - outbound Director events (Kafka -> sender -> Slack)
+    director-events     - Director observation/event stream (director -> Kafka, monitoring only)
+    director-slack-raw  - legacy/unused (old Kafka-based Slack pipeline, replaced by the in-process SlackPoller)
 
   Tail:    scripts/kafka.sh tail director-events
   Produce: scripts/kafka.sh produce director-events test-key '{"kind":"test"}'

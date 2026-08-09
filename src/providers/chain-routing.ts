@@ -36,7 +36,7 @@ export type ChainProvider = RoutingEntry['provider'];
  *   key-minor) -> local (when LOCAL_ENABLED).
  * Unavailable providers are skipped.
  *
- * The local Ollama entry comes LAST on purpose: remote free tiers are faster
+ * The local (llama-server) entry comes LAST on purpose: remote free tiers are faster
  * for the campaign's large contexts, so they should serve when healthy.
  * Local remains the always-available fallback when every remote free tier
  * is flapping (the campaign agent's recurring outage). Demote-on-failure
