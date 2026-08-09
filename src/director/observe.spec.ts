@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { observe, parseEventsLine } from './observe.js';
+import { observe, parseEventsLine, isCampaignComplete } from './observe.js';
 
 function makeCampaignDir(): string {
   const dir = mkdtempSync(join(tmpdir(), 'director-obs-'));
@@ -30,6 +30,57 @@ function makeCampaignDir(): string {
   );
   return dir;
 }
+
+/** Write a tracker.json with the given submitted/target pair, returns the dir. */
+function makeCampaignWith(submitted: number, target: number): string {
+  const dir = mkdtempSync(join(tmpdir(), 'director-complete-'));
+  writeFileSync(
+    join(dir, 'tracker.json'),
+    JSON.stringify({
+      submittedCount: submitted,
+      targetApplications: target,
+      target,
+      stats: { submitted },
+      updatedAt: '2026-07-27T12:00:00Z',
+    }),
+  );
+  return dir;
+}
+
+describe('isCampaignComplete', () => {
+  it('returns true when submitted meets target', async () => {
+    const dir = makeCampaignWith(1200, 1200);
+    await expect(isCampaignComplete(dir)).resolves.toBe(true);
+  });
+
+  it('returns true when submitted exceeds target (campaign overshoot)', async () => {
+    const dir = makeCampaignWith(1215, 1200);
+    await expect(isCampaignComplete(dir)).resolves.toBe(true);
+  });
+
+  it('returns false when submitted is below target', async () => {
+    const dir = makeCampaignWith(748, 1200);
+    await expect(isCampaignComplete(dir)).resolves.toBe(false);
+  });
+
+  it('returns false when target is zero (disabled / unknown)', async () => {
+    // A target of 0 means the campaign has no goal defined; we must not treat
+    // a fresh/empty tracker as "complete" or the Director would never start.
+    const dir = makeCampaignWith(0, 0);
+    await expect(isCampaignComplete(dir)).resolves.toBe(false);
+  });
+
+  it('returns false when the tracker is missing or unreadable', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'director-empty-'));
+    await expect(isCampaignComplete(dir)).resolves.toBe(false);
+  });
+
+  it('returns false when the tracker is not valid JSON', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'director-badjson-'));
+    writeFileSync(join(dir, 'tracker.json'), '{ not json');
+    await expect(isCampaignComplete(dir)).resolves.toBe(false);
+  });
+});
 
 describe('parseEventsLine', () => {
   it('parses a submitted event', () => {

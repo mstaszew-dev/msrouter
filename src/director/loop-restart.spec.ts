@@ -16,12 +16,12 @@ vi.mock('./restart.js', () => ({
   startWorkerInIterm: vi.fn(),
 }));
 
+import { DirectorLoop } from './loop.js';
 import {
   restartWorker,
   rotateVpnIp,
   shouldRotateVpn,
 } from './restart.js';
-import { DirectorLoop } from './loop.js';
 import type { DirectorSurface } from './types.js';
 
 const silent = {

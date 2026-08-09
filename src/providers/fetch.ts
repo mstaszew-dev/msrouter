@@ -8,9 +8,9 @@
  * timeouts on every outbound I/O).
  */
 
+import { checkStreamContent, isEmptyCompletion } from './stream-check.js';
 import type { ProviderCallResult } from './types.js';
 import { classifyAttempt, type ChatRequestBody } from './types.js';
-import { checkStreamContent, isEmptyCompletion } from './stream-check.js';
 
 export interface UpstreamOptions {
   baseUrl: string;

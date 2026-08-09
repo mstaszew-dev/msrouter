@@ -20,8 +20,11 @@ vi.mock('node:child_process', async (importOriginal) => {
 });
 
 import { execFileSync, spawn as realSpawn } from 'node:child_process';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-import { childrenOf, detectWorker, stopTree } from './restart.js';
+import { childrenOf, detectWorker, ensureInfrastructureHealthy, stopTree } from './restart.js';
 
 const mockedExec = vi.mocked(execFileSync);
 
@@ -52,7 +55,7 @@ describe('detectWorker', () => {
   });
 
   it('dedupes overlapping pids', () => {
-    mockedExec.mockImplementation((() => '100\n') as never);
+    mockedExec.mockImplementation((() => '100\n'));
     expect(detectWorker('/x/job-search-agent')).toEqual([100]);
   });
 });
@@ -92,5 +95,30 @@ describe('stopTree', () => {
   it('does not throw on an already-dead pid', async () => {
     const killed = await stopTree([999_999_999], silent);
     expect(Array.isArray(killed)).toBe(true);
+  });
+});
+
+describe('ensureInfrastructureHealthy completion guard', () => {
+  it('does NOT restart the campaign when the target is already met', async () => {
+    // Regression: a finished campaign (submitted >= target) exits on purpose.
+    // Missing playwright-mcp used to trigger restartWorker -> startWorkerInIterm,
+    // re-opening iTerm tabs forever. The completion guard must short-circuit
+    // even when infrastructure is unhealthy.
+    const dir = mkdtempSync(join(tmpdir(), 'director-infra-done-'));
+    writeFileSync(
+      join(dir, 'tracker.json'),
+      JSON.stringify({ stats: { submitted: 1200 }, targetApplications: 1200, target: 1200 }),
+    );
+    const opts = {
+      entryCommand: 'job-search-agent',
+      workspace: '/tmp/x',
+      cdpUrl: 'http://127.0.0.1:9222',
+      log: silent,
+      campaignDir: dir,
+    };
+    // Infrastructure will report playwright-mcp missing, but the guard must
+    // still return false (no restart) because the campaign is complete.
+    const restarted = await ensureInfrastructureHealthy(opts);
+    expect(restarted).toBe(false);
   });
 });

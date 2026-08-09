@@ -65,6 +65,23 @@ export async function observe(
   };
 }
 
+/**
+ * Has the campaign reached its target? Returns true when a positive target is
+ * set and submitted >= target. Returns false when target is 0/missing (so a
+ * fresh tracker is never mistaken for a finished campaign), when the tracker
+ * is missing, or when it is unparseable. Never throws - callers (the Director
+ * spawn guard) need a safe default that keeps the campaign running.
+ */
+export async function isCampaignComplete(campaignDir: string): Promise<boolean> {
+  let tracker: TrackerSummary;
+  try {
+    tracker = await readTrackerSummary(campaignDir);
+  } catch {
+    return false;
+  }
+  return tracker.target > 0 && tracker.submitted >= tracker.target;
+}
+
 async function readTrackerSummary(campaignDir: string): Promise<TrackerSummary> {
   const raw = await readFile(join(campaignDir, 'tracker.json'), 'utf8');
   const t = JSON.parse(raw) as Record<string, unknown>;

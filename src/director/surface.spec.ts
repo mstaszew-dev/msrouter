@@ -5,8 +5,8 @@
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
-import { NullSurface, SlackSurface } from './surface.js';
 import { appendLedger } from './ledger.js';
+import { NullSurface, SlackSurface } from './surface.js';
 import type { Patch, PatchDecision, SurfaceOpts } from './types.js';
 
 vi.mock('./ledger.js', () => ({

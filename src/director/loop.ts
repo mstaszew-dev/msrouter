@@ -26,7 +26,7 @@ import { readOverrides, applyPatch } from './apply.js';
 import { classify } from './classify.js';
 import { kafkaProduce, type KafkaOpts } from './kafka.js';
 import { readApprovedPatches, readPending } from './ledger.js';
-import { observe } from './observe.js';
+import { observe, isCampaignComplete } from './observe.js';
 import { ensureCdpRunning, ensureInfrastructureHealthy, restartWorker, rotateVpnIp, shouldRotateVpn, snapshot as snapshotWorker, startWorkerInIterm } from './restart.js';
 import type { Checkpoint, DirectorRunResult, DirectorSurface } from './types.js';
 import type { DecisionClassification } from './types.js';
@@ -142,8 +142,18 @@ export class DirectorLoop {
     return count;
   }
 
-  /** Check if the campaign is running and start it via iTerm if not. */
+  /** Check if the campaign is running and start it via iTerm if not.
+   *  Suppressed when the campaign target is already met: the agent exits on
+   *  purpose in that state, so respawning it would open an iTerm tab every
+   *  tick that immediately logs "Campaign complete" and quits. */
   async ensureCampaignRunning(): Promise<void> {
+    // Completion guard: never respawn a finished campaign. isCampaignComplete
+    // never throws (defaults to false on missing/unparseable tracker), so the
+    // safe failure mode is to keep supervising as before.
+    if (await isCampaignComplete(this.opts.env.DIRECTOR_CAMPAIGN_DIR)) {
+      this.opts.log.info('Campaign target met; not respawning worker');
+      return;
+    }
     const state = snapshotWorker({
       entryCommand: this.opts.env.DIRECTOR_RUNNER || 'job-search-agent',
       workspace: this.opts.env.DIRECTOR_OPENCLAW_WORKSPACE,
@@ -204,6 +214,7 @@ export class DirectorLoop {
         workspace: e.DIRECTOR_OPENCLAW_WORKSPACE,
         cdpUrl: e.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
         log: this.opts.log,
+        campaignDir: e.DIRECTOR_CAMPAIGN_DIR,
       });
       if (restarted) {
         this.opts.log.info('Campaign was restarted due to infrastructure issues; waiting for next tick');

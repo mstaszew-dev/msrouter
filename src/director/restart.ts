@@ -9,7 +9,10 @@ import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
+
 import type { Logger } from 'pino';
+
+import { isCampaignComplete } from './observe.js';
 import { detectProcess, detectWorker, isStartLocked, readStartLock, snapshot, stopWorker } from './process.js';
 export interface SuperviseOpts {
   entryCommand: string;
@@ -17,6 +20,9 @@ export interface SuperviseOpts {
   cdpUrl: string;
   log: Logger;
   cdpTimeoutMs?: number;
+  /** Campaign dir; when the target is met the campaign is treated as finished
+   *  and infrastructure restarts that would reopen iTerm tabs are suppressed. */
+  campaignDir?: string;
 }
 export interface SuperviseState {
   /** PIDs of job-search-agent processes (zero or more). */
@@ -165,9 +171,20 @@ export function checkInfrastructure(): InfraStatus {
  * restart the campaign to force a clean relaunch. Chrome CDP is handled
  * separately by ensureCdpRunning(). The OpenClaw gateway is optional since
  * the agent now uses --local mode (bypasses gateway entirely).
+ *
+ * Suppressed when the campaign target is already met: a finished campaign
+ * exits on purpose, so a "missing playwright-mcp" reading would otherwise
+ * reopen an iTerm tab every tick via restartWorker -> startWorkerInIterm.
  * Returns true if a restart was triggered.
  */
 export async function ensureInfrastructureHealthy(opts: SuperviseOpts): Promise<boolean> {
+  // Completion guard: never restart a finished campaign. isCampaignComplete
+  // never throws (defaults to false on missing/unparseable tracker), so the
+  // safe failure mode is to keep supervising as before.
+  if (opts.campaignDir && (await isCampaignComplete(opts.campaignDir))) {
+    opts.log.info('Campaign target met; skipping infrastructure health restart');
+    return false;
+  }
   const status = checkInfrastructure();
   const missing: string[] = [];
   if (!status.playwrightMcpAlive) missing.push('playwright-mcp');

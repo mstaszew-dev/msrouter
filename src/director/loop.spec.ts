@@ -6,6 +6,7 @@ import type pino from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 
 import { DirectorLoop } from './loop.js';
+import { rotateVpnIp, snapshotWorker, startWorkerInIterm } from './restart.js';
 import type { DirectorSurface } from './types.js';
 
 // Mock the supervision/infra helpers to no-ops so runOnce is hermetic and
@@ -24,7 +25,6 @@ vi.mock('./restart.js', async (importOriginal) => {
     rotateVpnIp: vi.fn(async () => false),
   };
 });
-import { rotateVpnIp } from './restart.js';
 
 const silent = {
   warn: vi.fn(),
@@ -66,6 +66,25 @@ function makeCampaign(): string {
       },
     }) + '\n',
   );
+  return dir;
+}
+
+/** A campaign whose submitted count meets/exceeds the target: the agent exits
+ *  on purpose and the Director must NOT keep respawning it in iTerm2. */
+function makeCompletedCampaign(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'director-done-'));
+  writeFileSync(
+    join(dir, 'tracker.json'),
+    JSON.stringify({
+      submittedCount: 1215,
+      targetApplications: 1200,
+      target: 1200,
+      applyQueue: [],
+      updatedAt: '2026-08-09T14:00:00Z',
+      stats: { submitted: 1215, skippedDuplicate: 0, skippedSalary: 0, skippedFilter: 0, blockedManual: 0, errors: 0 },
+    }),
+  );
+  writeFileSync(join(dir, 'events.jsonl'), '');
   return dir;
 }
 
@@ -230,5 +249,33 @@ describe('DirectorLoop.runOnce', () => {
     await loop.runOnce(new AbortController().signal);
     await loop.runOnce(new AbortController().signal);
     expect(vi.mocked(rotateVpnIp)).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT respawn the worker in iTerm2 when the campaign target is met', async () => {
+    // Regression: when submitted >= target the agent exits on purpose. The
+    // Director's ensureCampaignRunning saw running=false and re-opened an
+    // iTerm2 tab every tick via startWorkerInIterm, forever. The completion
+    // guard must suppress the spawn even when pgrep says the worker is gone.
+    const campaign = makeCompletedCampaign();
+    const stateDir = mkdtempSync(join(tmpdir(), 'director-state-'));
+    const env = makeEnv({
+      DIRECTOR_CAMPAIGN_DIR: campaign,
+      DIRECTOR_LEDGER: join(stateDir, 'l.jsonl'),
+    });
+    // Force the supervisor to observe the worker as NOT running (this is the
+    // state that previously triggered the infinite-respawn loop).
+    vi.mocked(snapshotWorker).mockReturnValueOnce({ pids: [], running: false });
+    vi.mocked(startWorkerInIterm).mockClear();
+
+    const chain = { handle: vi.fn() };
+    const loop = new DirectorLoop({
+      env: env as never,
+      chain: chain as never,
+      surface: nullSurface(),
+      log: silent,
+      checkpointPath: join(stateDir, 'cp.json'),
+    });
+    await loop.runOnce(new AbortController().signal);
+    expect(vi.mocked(startWorkerInIterm)).not.toHaveBeenCalled();
   });
 });

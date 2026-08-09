@@ -10,6 +10,7 @@ vi.mock('node:timers/promises', () => ({
 }));
 
 import { execFileSync } from 'node:child_process';
+
 import {
   protonVpnConnected,
   publicIp,
@@ -31,7 +32,7 @@ function stubExec(calls: Record<string, unknown | unknown[]>) {
       return next as never;
     }
     return v as never;
-  }) as typeof execFileSync);
+  }));
 }
 
 beforeEach(() => {

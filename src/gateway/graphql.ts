@@ -9,16 +9,18 @@
  * NOT passed as rootValue methods - graphql 17 does not route mutation args
  * to rootValue methods reliably (verified empirically).
  */
+import type { ServerResponse } from 'node:http';
+
 import {
   buildSchema,
   graphql,
   type GraphQLSchema,
 } from 'graphql';
-import type { ServerResponse } from 'node:http';
 import type { Logger } from 'pino';
 
 import { sendJson, type HttpRequest } from '../common/http.js';
 import type { ProviderChain } from '../providers/chain.js';
+
 import { buildModelList } from './handlers.js';
 
 const typeDefs = `

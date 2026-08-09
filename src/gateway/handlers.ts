@@ -21,8 +21,8 @@ import { type ProviderChain } from '../providers/chain.js';
 import { scrubSecrets } from '../providers/fetch.js';
 import type { ChatRequestBody } from '../providers/types.js';
 
-import { beginIdem, dropIdem, idempotencyHit, storeIdemResult } from './idempotency.js';
 import { createGraphqlHandler } from './graphql.js';
+import { beginIdem, dropIdem, idempotencyHit, storeIdemResult } from './idempotency.js';
 import { pipeSseStream } from './stream.js';
 import { chatCompletionSchema } from './validation.js';
 

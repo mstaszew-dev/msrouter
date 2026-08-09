@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
 import { graphql } from 'graphql';
+import { describe, expect, it, vi } from 'vitest';
 
 import { Router } from '../common/http.js';
+
 import { createGraphqlHandler, schema } from './graphql.js';
 import { registerHandlers } from './handlers.js';
 
