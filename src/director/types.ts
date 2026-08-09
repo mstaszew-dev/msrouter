@@ -62,6 +62,21 @@ export interface LedgerEntry {
   detail?: string;
 }
 
+/** A Slack message that failed to send and is awaiting retry. The outbox is a
+ *  JSON file next to the ledger so undelivered posts survive process restarts. */
+export interface SlackOutboxEntry {
+  /** Stable id (crypto.randomUUID) so dedup survives reloads. */
+  id: string;
+  /** The full message text to post. */
+  message: string;
+  /** Number of delivery attempts so far (0 = just enqueued). */
+  attempts: number;
+  /** ISO timestamp of the last failure; set on each failed attempt. */
+  lastErrorAt?: string;
+  /** Last error message, for logging/diagnostics. */
+  lastError?: string;
+}
+
 export interface DirectorSurface {
   postProposal(patch: Patch): Promise<void>;
   postDecision(decision: PatchDecision): Promise<void>;
@@ -69,6 +84,10 @@ export interface DirectorSurface {
   postObservation(snapshot: { submitted: number; target: number; queueLength: number }): Promise<void>;
   postRestart(detail: { pid: number; logPath: string }): Promise<void>;
   pollSlackMessages(lastTs?: string): Promise<{ decisions: PatchDecision[]; latestTs?: string }>;
+  /** Re-attempt all pending outbox messages. Called once at the top of each
+   *  Director tick before any new posts. A no-op for surfaces with no outbox
+   *  (NullSurface) or no pending entries. Returns the count still pending. */
+  flushOutbox(): Promise<number>;
 }
 
 export interface DirectorRunResult {

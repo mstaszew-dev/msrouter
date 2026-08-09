@@ -4,7 +4,7 @@
 
 export { DirectorLoop } from './loop.js';
 export type { DirectorLoopOpts } from './loop.js';
-export { NullSurface } from './surface.js';
+export { NullSurface, SlackSurface, MAX_OUTBOX_ATTEMPTS, readOutbox, writeOutbox } from './surface.js';
 export type { SurfaceOpts } from './surface.js';
 export { RagClient } from './rag.js';
 export type { RagClientOpts, RagResult } from './rag.js';
@@ -36,4 +36,5 @@ export type {
   DirectorSurface,
   DirectorRunResult,
   Checkpoint,
+  SlackOutboxEntry,
 } from './types.js';
