@@ -131,7 +131,7 @@ describe('loadEnv - Local (llama-server) provider', () => {
     const cfg = loadEnv({});
     expect(cfg.env.LOCAL_ENABLED).toBe(false);
     expect(cfg.env.LOCAL_BASE_URL).toBe('http://127.0.0.1:11434/v1');
-    expect(cfg.env.LOCAL_MODEL).toBe('qwen2.5:1.5b-128k');
+    expect(cfg.env.LOCAL_MODEL).toBe('qwen3.5:2b');
     expect(cfg.env.LOCAL_TIMEOUT_MS).toBe(300_000);
   });
 

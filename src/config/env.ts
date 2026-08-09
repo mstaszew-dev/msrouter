@@ -34,7 +34,7 @@ const schema = z.object({
   // 128K GGUF (no ollama daemon). Base URL includes /v1.
   LOCAL_ENABLED: z.string().default('false').transform((s) => s === 'true' || s === '1'),
   LOCAL_BASE_URL: z.string().url().default('http://127.0.0.1:11434/v1'),
-  LOCAL_MODEL: z.string().default('qwen2.5:1.5b-128k'),
+  LOCAL_MODEL: z.string().default('qwen3.5:2b'),
   // Local prefills are slow (~220-370 tok/s), so local gets its own timeout
   // instead of UPSTREAM_TIMEOUT_MS. 300s lets big 128K prompts prefill; the
   // campaign agent's client cap matches (300s) so it doesn't abort mid-prefill.

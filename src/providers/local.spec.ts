@@ -25,7 +25,7 @@ const silent = {
 // baseUrl mirrors env.ts default: the OpenAI-compat version path is part of
 // the base, and postChatCompletion appends the bare 'chat/completions' suffix.
 function makeProvider(baseUrl = 'http://127.0.0.1:11434/v1') {
-  return new LocalProvider({ baseUrl, defaultModel: 'qwen2.5:1.5b-128k' }, 5000, silent);
+  return new LocalProvider({ baseUrl, defaultModel: 'qwen3.5:2b' }, 5000, silent);
 }
 
 function stubFetchOnce(responseBody: unknown, status = 200) {
@@ -72,14 +72,14 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
     const res = await p.attempt(
       { ...baseBody, max_tokens: 512, temperature: 0.3 },
       new AbortController().signal,
-      { model: 'qwen2.5:1.5b-128k' },
+      { model: 'qwen3.5:2b' },
     );
     expect(res.kind).toBe('OK');
     const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
     expect(url).toBe('http://127.0.0.1:11434/v1/chat/completions');
     const body = JSON.parse(String(init.body)) as Record<string, unknown>;
     // model is rewritten to the chain-resolved id; everything else passes through.
-    expect(body.model).toBe('qwen2.5:1.5b-128k');
+    expect(body.model).toBe('qwen3.5:2b');
     // No ollama-native fields: the body is plain OpenAI shape.
     expect(body).not.toHaveProperty('think');
     expect(body).not.toHaveProperty('keep_alive');
@@ -109,7 +109,7 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
     };
     const fetchMock = stubFetchOnce(upstream);
     const p = makeProvider();
-    const res = await p.attempt(baseBody, new AbortController().signal, { model: 'qwen2.5:1.5b-128k' });
+    const res = await p.attempt(baseBody, new AbortController().signal, { model: 'qwen3.5:2b' });
     expect(res.kind).toBe('OK');
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const json = (await (res as { response: Response }).response.json()) as typeof upstream;
@@ -124,7 +124,7 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
       choices: [{ message: { role: 'assistant', content: '' }, finish_reason: 'length' }],
     });
     const p = makeProvider();
-    const res = await p.attempt(baseBody, new AbortController().signal, { model: 'qwen2.5:1.5b-128k' });
+    const res = await p.attempt(baseBody, new AbortController().signal, { model: 'qwen3.5:2b' });
     expect(res.kind).toBe('TRANSIENT');
   });
 
@@ -135,7 +135,7 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
     const res = await p.attempt(
       { ...baseBody, stream: true },
       new AbortController().signal,
-      { model: 'qwen2.5:1.5b-128k' },
+      { model: 'qwen3.5:2b' },
     );
     expect(res.kind).toBe('OK');
     const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
@@ -152,7 +152,7 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
     const res = await makeProvider().attempt(
       { ...baseBody, messages: [{ role: 'user', content: big }] },
       new AbortController().signal,
-      { model: 'qwen2.5:1.5b-128k' },
+      { model: 'qwen3.5:2b' },
     );
     expect(res.kind).toBe('BAD_REQUEST');
     // No fetch: the guard returns before any network call, so a huge prompt
@@ -168,7 +168,7 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
       }),
     );
     const res = await makeProvider().attempt(baseBody, new AbortController().signal, {
-      model: 'qwen2.5:1.5b-128k',
+      model: 'qwen3.5:2b',
     });
     expect(res.kind).toBe('TRANSIENT');
   });
@@ -176,7 +176,7 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
   it('classifies an upstream 500 as TRANSIENT with the error body scrubbed', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":"boom sk-or-v1-abc123456"}', { status: 500 })));
     const res = await makeProvider().attempt(baseBody, new AbortController().signal, {
-      model: 'qwen2.5:1.5b-128k',
+      model: 'qwen3.5:2b',
     });
     expect(res.kind).toBe('TRANSIENT');
     expect((res as { message: string }).message).not.toContain('abc123456');

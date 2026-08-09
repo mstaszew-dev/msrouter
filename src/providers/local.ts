@@ -1,11 +1,12 @@
 /**
  * Local provider (llama-server, OpenAI-compatible).
  *
- * The local model is served by a direct `llama-server` process (build b10298)
- * exposing a patched 128K-context qwen2.5:1.5b GGUF via its OpenAI-compatible
- * /v1/chat/completions endpoint, NOT by the ollama daemon. (The ollama daemon
- * is not running on this machine; llama-server does not implement ollama's
- * native /api/chat or /api/tags, so any /api/chat call 404s.)
+ * The local model is served by a direct `llama-server` process (build b10333)
+ * exposing the Qwen3.5-2B GGUF (native 256K context, DeltaNet hybrid arch)
+ * via its OpenAI-compatible /v1/chat/completions endpoint, NOT by the ollama
+ * daemon. (The ollama daemon is not running on this machine; llama-server does
+ * not implement ollama's native /api/chat or /api/tags, so any /api/chat call
+ * 404s.)
  *
  * This provider therefore reuses the shared postChatCompletion helper the
  * remote OpenAI-compatible providers use: it owns URL joining, timeout,
