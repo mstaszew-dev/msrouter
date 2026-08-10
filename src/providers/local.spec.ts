@@ -119,13 +119,13 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
     expect(json.choices[0]!.message.tool_calls).toEqual(upstream.choices[0]!.message.tool_calls);
   });
 
-  it('flags an empty finish_reason=length completion as EMPTY (no deliverable, not a failure)', async () => {
+  it('flags an empty finish_reason=length completion as TRANSIENT', async () => {
     stubFetchOnce({
       choices: [{ message: { role: 'assistant', content: '' }, finish_reason: 'length' }],
     });
     const p = makeProvider();
     const res = await p.attempt(baseBody, new AbortController().signal, { model: 'qwen3.5:2b' });
-    expect(res.kind).toBe('EMPTY');
+    expect(res.kind).toBe('TRANSIENT');
   });
 
   it('supports streaming requests', async () => {

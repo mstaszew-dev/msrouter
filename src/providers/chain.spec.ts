@@ -164,13 +164,14 @@ describe('ProviderChain - alias walk (mst/free and free)', () => {
     expect(p.openrouter.attempt).toHaveBeenCalledTimes(2);
   });
 
-  it('skips an EMPTY provider to the next entry without retrying or demoting', async () => {
-    // OpenRouter returns an empty completion (no content, no tool calls).
-    // The chain must skip to OpenAI, NOT retry the same prompt in place
-    // (TRANSIENT semantics) and NOT demote openrouter (EMPTY is not a failure).
+  it('retries a TRANSIENT (empty completion) provider then skips to the next entry', async () => {
+    // OpenRouter returns an empty completion (no content, no tool calls) which
+    // is classified TRANSIENT. The chain retries in place up to
+    // MAX_TRANSIENT_RETRIES, then skips to the next provider.
+    loadEnv({ TRANSIENT_BACKOFF_MS: '1' }); // keep retries instant in the test
     const p = makeProviders({
       openrouterKeys: 1,
-      openrouterResults: [{ kind: 'EMPTY', status: 200, message: 'no content' }],
+      openrouterResults: [{ kind: 'TRANSIENT', status: 200, message: 'empty completion' }],
       openaiResults: [{ kind: 'OK', response: okResponse() }],
     });
     const chain = new ProviderChain(p, silentLogger);
@@ -179,11 +180,8 @@ describe('ProviderChain - alias walk (mst/free and free)', () => {
       new AbortController().signal,
     );
     expect(res.servedBy.provider).toBe('openai');
-    // Exactly one attempt on openrouter: EMPTY is not retried.
-    expect(p.openrouter.attempt).toHaveBeenCalledTimes(1);
-    // openrouter stays in the queue (not demoted to the back).
-    const labels = chain.queueSnapshot().map((c) => c.label);
-    expect(labels[0]).toBe('openrouter[key1/openrouter/free]');
+    // MAX_TRANSIENT_RETRIES=2 => 3 attempts on openrouter before skipping.
+    expect(p.openrouter.attempt).toHaveBeenCalledTimes(3);
   });
 
   it('returns OK from OpenRouter key 1 without trying fallbacks', async () => {

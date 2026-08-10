@@ -172,10 +172,9 @@ export class ProviderChain {
         await sleep(backoffMs(attempt, env().TRANSIENT_BACKOFF_MS));
         continue;
       }
-      // EMPTY / BAD_REQUEST: skip to the next entry (no retry, no demote).
-      // EMPTY means the upstream answered 200 but gave no deliverable (no
-      // content, no tool calls) - retrying the same prompt won't change that,
-      // and it is not the provider's fault, so it must not demote or backoff.
+      // KEY_FAILURE demotes when configured; BAD_REQUEST and (per the original
+      // semantics) empty-completion TRANSIENT responses fall through to skip
+      // this entry and try the next one.
       if (res.kind === 'KEY_FAILURE' && behavior.demoteOnKeyFailure) {
         this.queue.demote(entry);
         this.log.warn(

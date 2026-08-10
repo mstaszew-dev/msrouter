@@ -12,9 +12,9 @@
  *
  * "Empty" is defined by what the caller receives: NO content AND NO tool calls
  * means the response has no deliverable, regardless of why (even if the message
- * carries reasoning_content - thinking is not an answer). The chain treats
- * EMPTY as "skip to the next provider", distinct from TRANSIENT (provider
- * failure) and from BAD_REQUEST (rejected prompt).
+ * carries reasoning_content - thinking is not an answer). Empty responses are
+ * classified TRANSIENT so the chain skips to the next provider instead of
+ * forwarding a useless response.
  */
 export function isEmptyCompletion(json: unknown): boolean {
   if (!json || typeof json !== 'object') return false;

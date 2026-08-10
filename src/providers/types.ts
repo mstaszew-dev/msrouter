@@ -29,13 +29,12 @@ export interface ChatRequestBody {
 export type AttemptOutcome =
   | { kind: 'KEY_FAILURE'; status: number; message: string }
   | { kind: 'TRANSIENT'; status: number; message: string }
-  | { kind: 'BAD_REQUEST'; status: number; message: string }
-  | { kind: 'EMPTY'; status: number; message: string };
+  | { kind: 'BAD_REQUEST'; status: number; message: string };
 
 /** Outcome of a single upstream attempt (OK carries the Response to stream). */
 export type ProviderCallResult =
   | { kind: 'OK'; response: Response }
-  | ({ kind: 'KEY_FAILURE' | 'TRANSIENT' | 'BAD_REQUEST' | 'EMPTY' } & AttemptOutcome);
+  | ({ kind: 'KEY_FAILURE' | 'TRANSIENT' | 'BAD_REQUEST' } & AttemptOutcome);
 
 /**
  * A Provider is stateless-ish: it knows how to make one attempt for a given
