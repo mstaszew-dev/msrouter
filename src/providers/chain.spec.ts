@@ -85,6 +85,12 @@ function makeProviders(
     return localResults.shift() ?? { kind: 'TRANSIENT', status: 0, message: 'local stub' };
   });
 
+  const lmstudioAttempt = vi.fn(async (): Promise<ProviderCallResult> => ({
+    kind: 'KEY_FAILURE',
+    status: 0,
+    message: 'lmstudio stub',
+  }));
+
   return {
     openrouter: {
       id: 'openrouter',
@@ -107,6 +113,7 @@ function makeProviders(
         })),
     } as never,
     local: { id: 'local', available: true, attempt: localAttempt } as never,
+    lmstudio: { id: 'lmstudio', available: true, attempt: lmstudioAttempt } as never,
   };
 }
 
@@ -436,6 +443,9 @@ describe('ProviderChain - local (llama-server) entry', () => {
     LOCAL_ENABLED: 'false',
     LOCAL_MODEL: 'qwen3:14b-32k',
     LOCAL_BASE_URL: 'http://127.0.0.1:11434',
+    LMSTUDIO_ENABLED: 'false',
+    LMSTUDIO_MODEL: 'google/gemma-4-e2b',
+    LMSTUDIO_BASE_URL: 'http://127.0.0.1:1234/v1',
   };
 
   afterEach(() => loadEnv(DEFAULT_ENV));
@@ -472,5 +482,20 @@ describe('ProviderChain - local (llama-server) entry', () => {
     expect(localAttempt.attempt).toHaveBeenCalledTimes(1);
     const opts = localAttempt.attempt.mock.calls[0]![2] as { model: string };
     expect(opts.model).toBe('qwen3:14b-32k');
+  });
+
+  it('places BOTH local providers (llama-server, LM Studio) at the END of the queue', () => {
+    loadEnv({ ...DEFAULT_ENV, LOCAL_ENABLED: 'true', LMSTUDIO_ENABLED: 'true' });
+    const p = makeProviders({ openrouterKeys: 1 });
+    const chain = new ProviderChain(p, silentLogger);
+    const labels = chain.queueSnapshot().map((e) => e.label);
+    expect(labels[labels.length - 2]).toBe('local');
+    expect(labels[labels.length - 1]).toBe('lmstudio');
+  });
+
+  it('omits the lmstudio entry when LMSTUDIO_ENABLED is false (default)', () => {
+    const p = makeProviders({ openrouterKeys: 1 });
+    const chain = new ProviderChain(p, silentLogger);
+    expect(chain.queueSnapshot().some((e) => e.provider === 'lmstudio')).toBe(false);
   });
 });

@@ -146,3 +146,18 @@ describe('loadEnv - Local (llama-server) provider', () => {
     expect(cfg.env.LOCAL_ENABLED).toBe(false);
   });
 });
+
+describe('loadEnv - LM Studio (Bionic) local provider', () => {
+  it('defaults LMSTUDIO_ENABLED to false with the default LM Studio endpoint/model', () => {
+    const cfg = loadEnv({});
+    expect(cfg.env.LMSTUDIO_ENABLED).toBe(false);
+    expect(cfg.env.LMSTUDIO_BASE_URL).toBe('http://127.0.0.1:1234/v1');
+    expect(cfg.env.LMSTUDIO_MODEL).toBe('google/gemma-4-e2b');
+  });
+
+  it('accepts LMSTUDIO_ENABLED=true and a model override', () => {
+    const cfg = loadEnv({ LMSTUDIO_ENABLED: 'true', LMSTUDIO_MODEL: 'google/gemma-4-12b' });
+    expect(cfg.env.LMSTUDIO_ENABLED).toBe(true);
+    expect(cfg.env.LMSTUDIO_MODEL).toBe('google/gemma-4-12b');
+  });
+});

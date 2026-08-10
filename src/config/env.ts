@@ -6,9 +6,6 @@
  *
  * The OpenRouter key pool is collected by scanning process.env for
  * `OPENROUTER_KEY\d+`, so adding keys is just adding env vars - no code change.
- *
- * Mirrors the flosum-nodejs-example env loader pattern. See
- * NODEJS_CODE_REVIEW.md section 4 (secrets from env) and section 12 (.env.example).
  */
 
 import { z } from 'zod';
@@ -30,15 +27,17 @@ const schema = z.object({
   ZAI_BASE_URL: z.string().url().default('https://api.z.ai/api/paas/v4'),
   ZAI_MODEL: z.string().default('glm-4.6'),
 
-  // Local llama-server provider: OpenAI /v1/chat/completions on a patched
-  // 128K GGUF (no ollama daemon). Base URL includes /v1.
+  // Local llama-server: OpenAI /v1/chat/completions on a patched 128K GGUF.
   LOCAL_ENABLED: z.string().default('false').transform((s) => s === 'true' || s === '1'),
   LOCAL_BASE_URL: z.string().url().default('http://127.0.0.1:11434/v1'),
   LOCAL_MODEL: z.string().default('qwen3.5:2b'),
   // Local prefills are slow (~220-370 tok/s), so local gets its own timeout
-  // instead of UPSTREAM_TIMEOUT_MS. 300s lets big 128K prompts prefill; the
-  // campaign agent's client cap matches (300s) so it doesn't abort mid-prefill.
+  // instead of UPSTREAM_TIMEOUT_MS (matches the campaign agent's 300s cap).
   LOCAL_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
+  // LM Studio (Bionic) local: OpenAI /v1/chat/completions, no API key.
+  LMSTUDIO_ENABLED: z.string().default('false').transform((s) => s === 'true' || s === '1'),
+  LMSTUDIO_BASE_URL: z.string().url().default('http://127.0.0.1:1234/v1'),
+  LMSTUDIO_MODEL: z.string().default('google/gemma-4-e2b'),
   OPENCODE_API_KEY: z.string().optional(),
   OPENCODE_BASE_URL: z.string().url().default('https://opencode.ai/zen/v1'),
   OPENCODE_MODEL: z.string().default('big-pickle'),

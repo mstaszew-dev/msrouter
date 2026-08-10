@@ -28,6 +28,12 @@ export function isEmptyCompletion(json: unknown): boolean {
     // Not empty if the message carries tool calls (function-call models like
     // local qwen3 return content="" + tool_calls with finish_reason=tool_calls).
     if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) return false;
+    // Not empty if the message carries reasoning content (thinking models like
+    // qwen3.5-2b / gemma-4-e2b return content="" + reasoning_content with
+    // finish_reason=length while thinking - a real response, not a failure).
+    if (typeof message.reasoning_content === 'string' && message.reasoning_content.length > 0) {
+      return false;
+    }
     // Not empty if finish_reason is 'stop' (model chose to say nothing)
     if (finishReason === 'stop') return false;
   }

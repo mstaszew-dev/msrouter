@@ -11,6 +11,7 @@ import type { Logger } from 'pino';
 import { config } from '../config/env.js';
 
 import { LocalProvider } from './local.js';
+import { LmStudioProvider } from './lmstudio.js';
 import { OpenCodeProvider } from './opencode.js';
 import { OpenRouterProvider } from './openrouter.js';
 import { SingleKeyProvider } from './single-key.js';
@@ -23,6 +24,9 @@ export interface Providers {
   /** Local (llama-server) provider; always built, only routed when
    *  LOCAL_ENABLED=true (chain-routing gates the entry). */
   local: LocalProvider;
+  /** LM Studio (Bionic) local provider; always built, only routed when
+   *  LMSTUDIO_ENABLED=true (chain-routing gates the entry). */
+  lmstudio: LmStudioProvider;
 }
 
 /** OpenCode Zen model variants, ordered by capability (strongest first).
@@ -95,6 +99,16 @@ export function buildProviders(log: Logger): Providers {
         defaultModel: env.LOCAL_MODEL,
       },
       env.LOCAL_TIMEOUT_MS,
+      log,
+    ),
+    // LM Studio (Bionic): OpenAI-compatible local server, no API key needed.
+    // Routed when LMSTUDIO_ENABLED=true (see chain-routing.ts).
+    lmstudio: new LmStudioProvider(
+      {
+        baseUrl: env.LMSTUDIO_BASE_URL,
+        defaultModel: env.LMSTUDIO_MODEL,
+      },
+      timeoutMs,
       log,
     ),
   };

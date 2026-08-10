@@ -18,7 +18,7 @@ import { withFree } from './openrouter.js';
 /** A single flat routing entry: which provider, which model, which key slot. */
 export interface RoutingEntry {
   /** Lookup key into `Providers`. */
-  provider: 'openrouter' | 'openai' | 'zai' | 'opencode' | 'local';
+  provider: 'openrouter' | 'openai' | 'zai' | 'opencode' | 'local' | 'lmstudio';
   /** Display label for servedBy / logs. */
   label: string;
   /** Model id to send upstream (alias substitution applied at handle time). */
@@ -33,13 +33,13 @@ export type ChainProvider = RoutingEntry['provider'];
 /**
  * Build the initial flat routing-entry list from env-declared order:
  *   OpenRouter keys -> OpenAI -> ZAI -> OpenCode triples (model-major,
- *   key-minor) -> local (when LOCAL_ENABLED).
+ *   key-minor) -> local (when LOCAL_ENABLED) -> lmstudio (when LMSTUDIO_ENABLED).
  * Unavailable providers are skipped.
  *
- * The local (llama-server) entry comes LAST on purpose: remote free tiers are faster
- * for the campaign's large contexts, so they should serve when healthy.
- * Local remains the always-available fallback when every remote free tier
- * is flapping (the campaign agent's recurring outage). Demote-on-failure
+ * Local providers (llama-server, LM Studio) come LAST on purpose: remote free
+ * tiers are faster for the campaign's large contexts, so they serve when
+ * healthy. Local remains the always-available fallback when every remote free
+ * tier is flapping (the campaign agent's recurring outage). Demote-on-failure
  * still applies like any other entry.
  */
 export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
@@ -80,6 +80,9 @@ export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
   if (e.LOCAL_ENABLED) {
     list.push({ provider: 'local', label: 'local', model: e.LOCAL_MODEL, attemptIndex: 0 });
   }
+  if (e.LMSTUDIO_ENABLED) {
+    list.push({ provider: 'lmstudio', label: 'lmstudio', model: e.LMSTUDIO_MODEL, attemptIndex: 0 });
+  }
   return list;
 }
 
@@ -103,6 +106,9 @@ export function shortCircuit(model: string): { provider: ChainProvider; model: s
   }
   if (restLower.startsWith('local/')) {
     return { provider: 'local', model: rest.slice('local/'.length) };
+  }
+  if (restLower.startsWith('lmstudio/')) {
+    return { provider: 'lmstudio', model: rest.slice('lmstudio/'.length) };
   }
   return null;
 }

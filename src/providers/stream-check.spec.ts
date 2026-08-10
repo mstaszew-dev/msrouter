@@ -60,6 +60,18 @@ describe('isEmptyCompletion', () => {
     expect(isEmptyCompletion(json)).toBe(true);
   });
 
+  it('returns false when reasoning_content is present (thinking model, empty content, finish_reason=length)', () => {
+    const json = {
+      choices: [
+        {
+          message: { content: '', tool_calls: [], reasoning_content: 'Let me think about 2+2...' },
+          finish_reason: 'length',
+        },
+      ],
+    };
+    expect(isEmptyCompletion(json)).toBe(false);
+  });
+
   it('returns false when error field is present', () => {
     const json = {
       error: { message: 'rate limit' },
