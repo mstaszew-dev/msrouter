@@ -9,6 +9,12 @@
  * HTTP 200, no error, but choices[].message.content is empty/null and
  * finish_reason is not 'stop'. Models like big-pickle return this pattern when
  * they are reasoning-only models that don't generate user-facing text.
+ *
+ * "Empty" is defined by what the caller receives: NO content AND NO tool calls
+ * means the response has no deliverable, regardless of why (even if the message
+ * carries reasoning_content - thinking is not an answer). The chain treats
+ * EMPTY as "skip to the next provider", distinct from TRANSIENT (provider
+ * failure) and from BAD_REQUEST (rejected prompt).
  */
 export function isEmptyCompletion(json: unknown): boolean {
   if (!json || typeof json !== 'object') return false;
@@ -28,16 +34,10 @@ export function isEmptyCompletion(json: unknown): boolean {
     // Not empty if the message carries tool calls (function-call models like
     // local qwen3 return content="" + tool_calls with finish_reason=tool_calls).
     if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) return false;
-    // Not empty if the message carries reasoning content (thinking models like
-    // qwen3.5-2b / gemma-4-e2b return content="" + reasoning_content with
-    // finish_reason=length while thinking - a real response, not a failure).
-    if (typeof message.reasoning_content === 'string' && message.reasoning_content.length > 0) {
-      return false;
-    }
     // Not empty if finish_reason is 'stop' (model chose to say nothing)
     if (finishReason === 'stop') return false;
   }
-  // All choices have empty content and finish_reason !== 'stop'
+  // All choices have empty content, no tool calls, and finish_reason !== 'stop'
   return true;
 }
 

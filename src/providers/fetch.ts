@@ -72,15 +72,18 @@ export async function postChatCompletion(
               message: `upstream returned 200 with error: ${truncate(errMsg, 300)}`,
             };
           }
-          // Detect empty-content responses (e.g. big-pickle reasoning-only model
-          // returns HTTP 200 with empty content and finish_reason=length). Treat
-          // as transient so the chain skips to the next model instead of returning
-          // a useless response to the caller.
+          // Detect empty-content responses: HTTP 200, no error, but no content
+          // AND no tool calls (e.g. big-pickle reasoning-only model returns
+          // finish_reason=length; a thinking model truncated mid-thought also
+          // yields content="" + reasoning_content). Either way the caller gets
+          // no deliverable, so classify EMPTY - the chain skips to the next
+          // provider instead of returning a useless response OR retrying the
+          // same prompt in place (TRANSIENT semantics).
           if (isEmptyCompletion(json)) {
             return {
-              kind: 'TRANSIENT',
+              kind: 'EMPTY',
               status: res.status,
-              message: `upstream returned empty completion (model returned no content)`,
+              message: `upstream returned empty completion (no content, no tool calls)`,
             };
           }
           return {

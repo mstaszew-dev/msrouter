@@ -60,12 +60,24 @@ describe('isEmptyCompletion', () => {
     expect(isEmptyCompletion(json)).toBe(true);
   });
 
-  it('returns false when reasoning_content is present (thinking model, empty content, finish_reason=length)', () => {
+  it('returns true when only reasoning_content is present (no content, no tool calls - still no deliverable)', () => {
     const json = {
       choices: [
         {
           message: { content: '', tool_calls: [], reasoning_content: 'Let me think about 2+2...' },
           finish_reason: 'length',
+        },
+      ],
+    };
+    expect(isEmptyCompletion(json)).toBe(true);
+  });
+
+  it('returns false when reasoning_content is present AND content is present', () => {
+    const json = {
+      choices: [
+        {
+          message: { content: '4', tool_calls: [], reasoning_content: 'Let me think...' },
+          finish_reason: 'stop',
         },
       ],
     };
