@@ -37,7 +37,7 @@ const schema = z.object({
   // LM Studio (Bionic) local: OpenAI /v1/chat/completions, no API key.
   LMSTUDIO_ENABLED: z.string().default('false').transform((s) => s === 'true' || s === '1'),
   LMSTUDIO_BASE_URL: z.string().url().default('http://127.0.0.1:1234/v1'),
-  LMSTUDIO_MODEL: z.string().default('google/gemma-4-e2b'),
+  LMSTUDIO_MODEL: z.string().default('google/gemma-4-e4b'),
   OPENCODE_API_KEY: z.string().optional(),
   OPENCODE_BASE_URL: z.string().url().default('https://opencode.ai/zen/v1'),
   OPENCODE_MODEL: z.string().default('big-pickle'),

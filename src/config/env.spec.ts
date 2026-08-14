@@ -152,7 +152,7 @@ describe('loadEnv - LM Studio (Bionic) local provider', () => {
     const cfg = loadEnv({});
     expect(cfg.env.LMSTUDIO_ENABLED).toBe(false);
     expect(cfg.env.LMSTUDIO_BASE_URL).toBe('http://127.0.0.1:1234/v1');
-    expect(cfg.env.LMSTUDIO_MODEL).toBe('google/gemma-4-e2b');
+    expect(cfg.env.LMSTUDIO_MODEL).toBe('google/gemma-4-e4b');
   });
 
   it('accepts LMSTUDIO_ENABLED=true and a model override', () => {

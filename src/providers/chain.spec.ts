@@ -464,7 +464,7 @@ describe('ProviderChain - local (llama-server) entry', () => {
     LOCAL_MODEL: 'qwen3:14b-32k',
     LOCAL_BASE_URL: 'http://127.0.0.1:11434',
     LMSTUDIO_ENABLED: 'false',
-    LMSTUDIO_MODEL: 'google/gemma-4-e2b',
+    LMSTUDIO_MODEL: 'google/gemma-4-e4b',
     LMSTUDIO_BASE_URL: 'http://127.0.0.1:1234/v1',
   };
 
