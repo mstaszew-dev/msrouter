@@ -1,19 +1,36 @@
 vi.mock('node:child_process', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- importOriginal needs an inline typeof import(); a type-only namespace breaks the factory's return typing
   const actual = await importOriginal<typeof import('node:child_process')>();
-  return { ...actual, execFileSync: vi.fn() };
+  return { ...actual, execFileSync: vi.fn(), spawn: vi.fn() };
 });
 vi.mock('node:timers/promises', () => ({
   setTimeout: vi.fn(async () => undefined),
 }));
 
-import { existsSync, readFileSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import type pino from 'pino';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
-import { detectWorker, detectProcess, ensureOverrideFiles, isStartLocked, pollCdp, readStartLock, snapshot, startWorkerInIterm, startKafkaInIterm } from './restart.js';
+import {
+  checkInfrastructure,
+  detectWorker,
+  detectProcess,
+  ensureCdpRunning,
+  ensureInfrastructureHealthy,
+  ensureOverrideFiles,
+  isInIterm,
+  pollCdp,
+  snapshot,
+  startChromeCdp,
+  startWorkerInIterm,
+  startKafkaInIterm,
+  waitForStartup,
+} from './restart.js';
 
 const silent = {
   warn: vi.fn(),
@@ -105,30 +122,244 @@ describe('ensureOverrideFiles', () => {
 });
 
 describe('detectProcess', () => {
-  it('returns pids for a running process pattern (launchd)', () => {
-    const pids = detectProcess('launchd');
-    expect(pids.length).toBeGreaterThan(0);
-    expect(pids[0]).toBeGreaterThan(0);
+  it('returns pids for a matching pattern', () => {
+    vi.mocked(execFileSync).mockReturnValueOnce('4242\n4243\n');
+    const pids = detectProcess('my-process');
+    expect(pids).toEqual([4242, 4243]);
   });
 
   it('returns [] for a non-existent pattern', () => {
+    vi.mocked(execFileSync).mockReturnValueOnce('');
     const pids = detectProcess('zzz-this-does-not-exist-9999');
     expect(pids).toEqual([]);
   });
 });
 
 describe('startKafkaInIterm', () => {
+  let realHome: string;
+
   beforeEach(() => {
     vi.restoreAllMocks();
+    realHome = process.env['HOME']!;
+    process.env['HOME'] = mkdtempSync(join(tmpdir(), 'director-kafka-home-'));
+  });
+
+  afterEach(() => {
+    process.env['HOME'] = realHome;
   });
 
   it('starts Kafka in a separate iTerm tab', () => {
     startKafkaInIterm(kafkaOpts);
     const calls = vi.mocked(execFileSync).mock.calls;
     expect(calls.length).toBeGreaterThan(0);
-    const firstCall = calls[0];
+    const firstCall = calls[0]!;
     expect(firstCall[0]).toBe('osascript');
-    expect(firstCall[1][0]).toContain('kafka');
-    expect(firstCall[1][0]).toContain('scripts/kafka.sh');
+    const script = firstCall[1]![1]!;
+    expect(script).toContain('kafka');
+    expect(script).toContain('scripts/kafka.sh');
+    // Regression: scripts/kafka.sh lives in the msrouter repo, not in the
+    // campaign workspace (startKafkaInIterm used to cd into opts.workspace).
+    const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+    expect(script).toContain(`cd ${repoRoot} && bash scripts/kafka.sh start`);
+    expect(script).not.toContain('/test/workspace');
+  });
+});
+
+describe('isInIterm', () => {
+  it('returns true when pgrep finds iTerm2', () => {
+    vi.mocked(execFileSync).mockReturnValueOnce('4242\n');
+    expect(isInIterm()).toBe(true);
+  });
+
+  it('returns false when pgrep finds nothing', () => {
+    vi.mocked(execFileSync).mockReturnValueOnce('');
+    expect(isInIterm()).toBe(false);
+  });
+
+  it('returns false when pgrep is unavailable', () => {
+    vi.mocked(execFileSync).mockImplementationOnce(() => {
+      throw new Error('pgrep not found');
+    });
+    expect(isInIterm()).toBe(false);
+  });
+});
+
+describe('startChromeCdp', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('spawns Chrome with remote debugging on the cdpUrl port', () => {
+    vi.mocked(spawn).mockReturnValue({ unref: vi.fn() } as never);
+    startChromeCdp('http://127.0.0.1:9333');
+    const [file, args] = vi.mocked(spawn).mock.calls[0]!;
+    expect(file).toBe('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
+    expect(args).toContain('--remote-debugging-port=9333');
+  });
+
+  it('defaults the port to 9222 when absent', () => {
+    vi.mocked(spawn).mockReturnValue({ unref: vi.fn() } as never);
+    startChromeCdp('http://localhost');
+    const args = vi.mocked(spawn).mock.calls[0]![1];
+    expect(args).toContain('--remote-debugging-port=9222');
+  });
+});
+
+describe('ensureCdpRunning', () => {
+  it('launches Chrome when CDP is not reachable', async () => {
+    vi.mocked(spawn).mockReturnValue({ unref: vi.fn() } as never);
+    await ensureCdpRunning('http://127.0.0.1:1');
+    expect(spawn).toHaveBeenCalled();
+  });
+});
+
+describe('checkInfrastructure', () => {
+  it('flags components as alive when their processes are found', () => {
+    vi.mocked(execFileSync).mockReturnValue('4242\n');
+    const status = checkInfrastructure();
+    expect(status).toEqual({
+      cdpAlive: true,
+      playwrightMcpAlive: true,
+      openclawGatewayAlive: true,
+    });
+  });
+
+  it('flags all as down when no processes are found', () => {
+    vi.mocked(execFileSync).mockReturnValue('');
+    const status = checkInfrastructure();
+    expect(status).toEqual({
+      cdpAlive: false,
+      playwrightMcpAlive: false,
+      openclawGatewayAlive: false,
+    });
+  });
+});
+
+describe('waitForStartup', () => {
+  let realHome: string;
+
+  beforeEach(() => {
+    realHome = process.env['HOME']!;
+    process.env['HOME'] = mkdtempSync(join(tmpdir(), 'director-waitstart-home-'));
+  });
+
+  afterEach(() => {
+    process.env['HOME'] = realHome;
+  });
+
+  it('resolves true when the worker registers and clears the lock', async () => {
+    const lockPath = join(process.env['HOME']!, '.campaign-agent', 'agent-start.lock');
+    mkdirSync(dirname(lockPath), { recursive: true });
+    writeFileSync(lockPath, '123\n456\n');
+    vi.mocked(execFileSync).mockReturnValue('4242\n');
+    const up = await waitForStartup(kafkaOpts, 1000);
+    expect(up).toBe(true);
+    expect(readFileSync(lockPath, 'utf8')).toBe('');
+  });
+
+  it('resolves false when the worker never registers', async () => {
+    vi.mocked(execFileSync).mockReturnValue('');
+    const up = await waitForStartup(kafkaOpts, 1);
+    expect(up).toBe(false);
+  });
+});
+
+describe('startWorkerInIterm', () => {
+  let realHome: string;
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    realHome = process.env['HOME']!;
+    process.env['HOME'] = mkdtempSync(join(tmpdir(), 'director-worker-home-'));
+  });
+
+  afterEach(() => {
+    process.env['HOME'] = realHome;
+  });
+
+  it('starts the worker and then Kafka in iTerm tabs', () => {
+    startWorkerInIterm(kafkaOpts);
+    const calls = vi.mocked(execFileSync).mock.calls;
+    expect(calls.length).toBe(2);
+    expect(calls[0]![0]).toBe('osascript');
+    expect(calls[1]![0]).toBe('osascript');
+    const workerScript = calls[0]![1]![1]!;
+    expect(workerScript).toContain('job-search-agent');
+    const kafkaScript = calls[1]![1]![1]!;
+    expect(kafkaScript).toContain('scripts/kafka.sh');
+    expect(kafkaScript).toContain('start');
+    expect(kafkaScript).toContain('monitor');
+    // Kafka runs from the msrouter repo, not the campaign workspace.
+    const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+    expect(kafkaScript).toContain(`cd ${repoRoot}`);
+    expect(kafkaScript).not.toContain('/test/workspace');
+  });
+
+  it('skips when the startup lock is held', () => {
+    const lockPath = join(process.env['HOME']!, '.campaign-agent', 'agent-start.lock');
+    mkdirSync(dirname(lockPath), { recursive: true });
+    writeFileSync(lockPath, `${process.pid}\n${Date.now()}\n`);
+    startWorkerInIterm(kafkaOpts);
+    expect(execFileSync).not.toHaveBeenCalled();
+  });
+
+  it('rethrows when osascript fails', () => {
+    vi.mocked(execFileSync).mockImplementationOnce(() => {
+      throw new Error('osascript failed');
+    });
+    expect(() => startWorkerInIterm(kafkaOpts)).toThrow('iTerm2 launch failed');
+  });
+});
+
+describe('ensureInfrastructureHealthy', () => {
+  let realHome: string;
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    realHome = process.env['HOME']!;
+    process.env['HOME'] = mkdtempSync(join(tmpdir(), 'director-infra-home-'));
+  });
+
+  afterEach(() => {
+    process.env['HOME'] = realHome;
+  });
+
+  it('returns false without restart when playwright-mcp is alive', async () => {
+    vi.mocked(execFileSync).mockReturnValue('4242\n');
+    const restarted = await ensureInfrastructureHealthy({ ...kafkaOpts, cdpTimeoutMs: 1 });
+    expect(restarted).toBe(false);
+    expect(silent.warn).not.toHaveBeenCalledWith(
+      { missing: ['playwright-mcp'] },
+      'Campaign infrastructure unhealthy; restarting campaign',
+    );
+  });
+
+  it('skips restart when the campaign target is already met', async () => {
+    const campaignDir = mkdtempSync(join(tmpdir(), 'director-done-campaign-'));
+    writeFileSync(
+      join(campaignDir, 'tracker.json'),
+      JSON.stringify({ stats: { submitted: 5 }, targetApplications: 5 }),
+    );
+    vi.mocked(execFileSync).mockReturnValue('');
+    const restarted = await ensureInfrastructureHealthy({
+      ...kafkaOpts,
+      cdpTimeoutMs: 1,
+      campaignDir,
+    });
+    expect(restarted).toBe(false);
+    expect(silent.info).toHaveBeenCalledWith(
+      'Campaign target met; skipping infrastructure health restart',
+    );
+    expect(execFileSync).not.toHaveBeenCalled();
+  });
+
+  it('restarts the campaign when playwright-mcp is missing', async () => {
+    vi.mocked(execFileSync).mockReturnValue('');
+    const restarted = await ensureInfrastructureHealthy({ ...kafkaOpts, cdpTimeoutMs: 1 });
+    expect(restarted).toBe(true);
+    expect(silent.warn).toHaveBeenCalledWith(
+      { missing: ['playwright-mcp'] },
+      'Campaign infrastructure unhealthy; restarting campaign',
+    );
   });
 });

@@ -9,6 +9,7 @@
 #   scripts/kafka.sh topics   # create/verify the director topics
 #   scripts/kafka.sh tail <topic>  # stream a topic to stdout (real-time)
 #   scripts/kafka.sh produce <topic> <key> <value>  # one-shot produce
+#   scripts/kafka.sh monitor  # show the first 5 messages of every topic
 #
 set -euo pipefail
 
@@ -133,7 +134,7 @@ monitor() {
   local topics="$KAFKA_HOME/bin/kafka-topics.sh --bootstrap-server $KAFKA_BOOTSTRAP --list 2>/dev/null"
   for topic in $(eval "$topics"); do
     if [ -n "$topic" ]; then
-      log "last 5 messages for ${topic}:"
+      log "first 5 messages for ${topic}:"
       "$KAFKA_HOME/bin/kafka-console-consumer.sh" \
         --topic "$topic" --from-beginning \
         --bootstrap-server "$KAFKA_BOOTSTRAP" \
@@ -153,5 +154,5 @@ case "${1:-status}" in
   monitor) monitor ;;
   tail)    shift; tail_topic "$@" ;;
   produce) shift; produce_one "$@" ;;
-  *) die "unknown: $1 (use: start | stop | restart | status | topics | tail <topic> | produce <topic> <key> <value> | monitor)" ;;
+  *) die "unknown: $1 (use: start | stop | restart | status | topics | monitor | tail <topic> | produce <topic> <key> <value>)" ;;
 esac

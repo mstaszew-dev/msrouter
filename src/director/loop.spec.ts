@@ -6,7 +6,7 @@ import type pino from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 
 import { DirectorLoop } from './loop.js';
-import { rotateVpnIp, snapshotWorker, startWorkerInIterm } from './restart.js';
+import { rotateVpnIp, snapshot as snapshotWorker, startWorkerInIterm } from './restart.js';
 import type { DirectorSurface } from './types.js';
 
 // Mock the supervision/infra helpers to no-ops so runOnce is hermetic and
@@ -14,12 +14,13 @@ import type { DirectorSurface } from './types.js';
 // always FAILS: the regression test below asserts that a failed rotation
 // still persists lastVpnRotation (no per-tick retry).
 vi.mock('./restart.js', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- importOriginal needs an inline typeof import(); a type-only namespace breaks the factory's return typing
   const mod = await importOriginal<typeof import('./restart.js')>();
   return {
     ...mod,
     ensureCdpRunning: vi.fn(async () => {}),
     ensureInfrastructureHealthy: vi.fn(async () => false),
-    snapshotWorker: vi.fn(() => ({ pids: [], running: true })),
+    snapshot: vi.fn(() => ({ pids: [], running: true })),
     startWorkerInIterm: vi.fn(),
     restartWorker: vi.fn(async () => ({ iterm: true, state: { pids: [], running: true } })),
     rotateVpnIp: vi.fn(async () => false),
@@ -81,7 +82,14 @@ function makeCompletedCampaign(): string {
       target: 1200,
       applyQueue: [],
       updatedAt: '2026-08-09T14:00:00Z',
-      stats: { submitted: 1215, skippedDuplicate: 0, skippedSalary: 0, skippedFilter: 0, blockedManual: 0, errors: 0 },
+      stats: {
+        submitted: 1215,
+        skippedDuplicate: 0,
+        skippedSalary: 0,
+        skippedFilter: 0,
+        blockedManual: 0,
+        errors: 0,
+      },
     }),
   );
   writeFileSync(join(dir, 'events.jsonl'), '');
