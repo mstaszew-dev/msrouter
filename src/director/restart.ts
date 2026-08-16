@@ -109,7 +109,9 @@ export function startKafkaInIterm(opts: SuperviseOpts): void {
     writeFileSync(lockPath, `${process.pid}\n${Date.now()}\n`);
   } catch { /* best-effort */ }
 
-  const cmd = `cd ${opts.workspace} && bash scripts/kafka.sh start`;
+  const startCmd = `cd ${opts.workspace} && bash scripts/kafka.sh start`;
+  const monitorCmd = `cd ${opts.workspace} && bash scripts/kafka.sh monitor`;
+
   const script = `
 tell application "iTerm2"
   if (count of windows) = 0 then
@@ -122,7 +124,10 @@ tell application "iTerm2"
     end tell
   end if
   tell newSess
-    write text "${cmd}"
+    write text "${startCmd}"
+  end tell
+  tell current session of (create tab with default profile)
+    write text "${monitorCmd}"
   end tell
 end tell`;
   try {
