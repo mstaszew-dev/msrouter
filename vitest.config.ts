@@ -21,7 +21,11 @@ export default defineConfig({
       exclude: [
         'node_modules/',
         'dist/',
+        'coverage/',
         '**/*.spec.ts',
+        // Tool configs and python-venv artifacts, not app code.
+        '**/*.cjs',
+        '**/.venv/**',
         'src/main.ts',
         'src/worker.ts',
         // One-shot diagnostic script, not app code.
@@ -47,11 +51,13 @@ export default defineConfig({
       // Honest floor for unit-tested domain logic (chain/retry/env/errors/
       // goal/http-router/validation/tools-allowlist). The HTTP/fetch/provider
       // wiring is exercised by integration tests (see README "Out of scope").
+      // Raised from 65/70/60 after the director/kafka/orchestrator suites were
+      // added; keep them honest relative to the per-file report.
       thresholds: {
-        statements: 65,
-        branches: 70,
-        functions: 60,
-        lines: 65,
+        statements: 85,
+        branches: 78,
+        functions: 85,
+        lines: 85,
       },
     },
   },
