@@ -3,12 +3,15 @@
  * Focuses on message building, poller parsing, and NullSurface ledger behavior.
  * SlackSurface.fetch calls are NOT tested here (requires network mocking).
  */
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdtempSync, existsSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import type pino from 'pino';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+
 import { appendLedger } from './ledger.js';
+import type { SlackPoller } from './slack-poller.js';
 import {
   NullSurface,
   SlackSurface,
@@ -33,18 +36,20 @@ const mockLog = {
 function makeOpts(overrides: Partial<SurfaceOpts> = {}): SurfaceOpts {
   return {
     ledgerPath: '/tmp/ledger.jsonl',
-    log: mockLog as any,
+    log: mockLog as unknown as pino.Logger,
     slackBotToken: 'xoxb-test',
     slackChannel: 'C12345',
     ...overrides,
   };
 }
 
-const samplePatch: any = {
+const samplePatch: Patch = {
   id: 'patch-123',
+  createdAt: '2026-01-01T00:00:00Z',
   risk: 'low',
   rationale: 'test rationale',
   overrides: { MAX_STEPS: '200', TIMEOUT_SECONDS: '300' },
+  classifications: ['class-1'],
 };
 
 describe('NullSurface', () => {
@@ -62,17 +67,17 @@ describe('NullSurface', () => {
         kind: 'proposed',
         patchId: 'patch-123',
         patch: samplePatch,
-      })
+      }),
     );
     expect(mockLog.info).toHaveBeenCalledWith(
       { patchId: 'patch-123', risk: 'low' },
-      'proposal posted (null surface)'
+      'proposal posted (null surface)',
     );
   });
 
   it('postDecision writes to ledger and logs', async () => {
     const surface = new NullSurface(makeOpts());
-    const decision = {
+    const decision: PatchDecision = {
       patchId: 'patch-123',
       decision: 'approved',
       decidedAt: '2026-01-01T00:00:00Z',
@@ -86,11 +91,11 @@ describe('NullSurface', () => {
         kind: 'decided',
         patchId: 'patch-123',
         decision,
-      })
+      }),
     );
     expect(mockLog.info).toHaveBeenCalledWith(
       { patchId: 'patch-123', decision: 'approved' },
-      'decision recorded'
+      'decision recorded',
     );
   });
 
@@ -103,7 +108,7 @@ describe('NullSurface', () => {
       expect.objectContaining({
         kind: 'applied',
         patchId: 'patch-123',
-      })
+      }),
     );
   });
 
@@ -116,7 +121,7 @@ describe('NullSurface', () => {
       expect.objectContaining({
         kind: 'restart',
         detail: 'pid=12345 log=/tmp/log.txt',
-      })
+      }),
     );
   });
 
@@ -129,7 +134,7 @@ describe('NullSurface', () => {
       expect.objectContaining({
         kind: 'observation',
         detail: 'submitted=5 target=10 queue=2',
-      })
+      }),
     );
   });
 
@@ -143,15 +148,31 @@ describe('NullSurface', () => {
 describe('SlackSurface message builders (pure functions)', () => {
   const opts = makeOpts({ slackBotToken: 'xoxb-test', slackChannel: 'C12345' });
   const surface = new SlackSurface(opts);
-  const patch = {
+  // The builders are private; this block's whole purpose is unit-testing their
+  // exact output. Expose them via a typed projection (they are pure, so the
+  // cast is sound) instead of weakening to `any`.
+  const builders = surface as unknown as {
+    buildProposalMessage(patch: Patch): string;
+    buildDecisionMessage(decision: PatchDecision): string;
+    buildAppliedMessage(patch: Patch): string;
+    buildRestartMessage(detail: { pid: number; logPath: string }): string;
+    buildObservationMessage(snapshot: {
+      submitted: number;
+      target: number;
+      queueLength: number;
+    }): string;
+  };
+  const patch: Patch = {
     id: 'patch-456',
+    createdAt: '2026-01-01T00:00:00Z',
     risk: 'high',
     rationale: 'increase steps',
     overrides: { MAX_STEPS: '300', TIMEOUT_SECONDS: '600' },
+    classifications: ['class-1'],
   };
 
   it('buildProposalMessage formats correctly', () => {
-    const msg = surface.buildProposalMessage(patch);
+    const msg = builders.buildProposalMessage(patch);
     expect(msg).toContain('*Director Proposal* (risk: high)');
     expect(msg).toContain('Rationale: increase steps');
     expect(msg).toContain('MAX_STEPS=300');
@@ -161,7 +182,7 @@ describe('SlackSurface message builders (pure functions)', () => {
   });
 
   it('buildDecisionMessage includes reason', () => {
-    const msg = surface.buildDecisionMessage({
+    const msg = builders.buildDecisionMessage({
       patchId: 'patch-789',
       decision: 'rejected',
       decidedAt: '2026-01-01T00:00:00Z',
@@ -173,7 +194,7 @@ describe('SlackSurface message builders (pure functions)', () => {
   });
 
   it('buildDecisionMessage works without reason', () => {
-    const msg = surface.buildDecisionMessage({
+    const msg = builders.buildDecisionMessage({
       patchId: 'patch-789',
       decision: 'approved',
       decidedAt: '2026-01-01T00:00:00Z',
@@ -184,20 +205,20 @@ describe('SlackSurface message builders (pure functions)', () => {
   });
 
   it('buildAppliedMessage', () => {
-    const msg = surface.buildAppliedMessage(patch);
+    const msg = builders.buildAppliedMessage(patch);
     expect(msg).toContain('*Director Applied*');
     expect(msg).toContain('patch-456');
   });
 
   it('buildRestartMessage', () => {
-    const msg = surface.buildRestartMessage({ pid: 999, logPath: '/var/log/agent.log' });
+    const msg = builders.buildRestartMessage({ pid: 999, logPath: '/var/log/agent.log' });
     expect(msg).toContain('*Director Restart*');
     expect(msg).toContain('PID: 999');
     expect(msg).toContain('/var/log/agent.log');
   });
 
   it('buildObservationMessage', () => {
-    const msg = surface.buildObservationMessage({ submitted: 99, target: 1200, queueLength: 5 });
+    const msg = builders.buildObservationMessage({ submitted: 99, target: 1200, queueLength: 5 });
     expect(msg).toContain('99/1200');
     expect(msg).toContain('1101 to go');
     expect(msg).toContain('Queue: 5');
@@ -206,6 +227,8 @@ describe('SlackSurface message builders (pure functions)', () => {
 
 describe('SlackSurface pollSlackMessages with in-process poller', () => {
   it('drains poller and parses approve/reject', async () => {
+    // Duck-typed poller stand-in: pollSlackMessages only calls drain() and
+    // reads latestTs; the rest of SlackPoller is private state.
     const mockPoller = {
       drain: vi.fn().mockReturnValue([
         { text: 'approve patch-111', ts: '1700000001.001' },
@@ -213,24 +236,21 @@ describe('SlackSurface pollSlackMessages with in-process poller', () => {
         { text: 'irrelevant message', ts: '1700000003.003' },
       ]),
       latestTs: '1700000003.003',
-    };
-    const surface = new SlackSurface(makeOpts({ slackPoller: mockPoller as any }));
+    } as unknown as SlackPoller;
+    const surface = new SlackSurface(makeOpts({ slackPoller: mockPoller }));
 
     const result = await surface.pollSlackMessages('1700000000.000');
 
     expect(result.decisions).toHaveLength(2);
-    expect(result.decisions[0]).toEqual({
-      patchId: 'patch-111',
-      decision: 'approved',
-      decidedAt: expect.any(String),
-      decidedBy: 'slack',
-    });
-    expect(result.decisions[1]).toEqual({
+    const first = result.decisions[0]!;
+    const second = result.decisions[1]!;
+    expect(first).toMatchObject({ patchId: 'patch-111', decision: 'approved', decidedBy: 'slack' });
+    expect(second).toMatchObject({
       patchId: 'patch-222',
       decision: 'rejected',
-      decidedAt: expect.any(String),
       decidedBy: 'slack',
     });
+    expect(typeof first.decidedAt).toBe('string');
     expect(result.latestTs).toBe('1700000003.003');
   });
 
@@ -241,8 +261,8 @@ describe('SlackSurface pollSlackMessages with in-process poller', () => {
         { text: 'approve', ts: '1700000002.002' }, // no patch id
       ]),
       latestTs: '1700000002.002',
-    };
-    const surface = new SlackSurface(makeOpts({ slackPoller: mockPoller as any }));
+    } as unknown as SlackPoller;
+    const surface = new SlackSurface(makeOpts({ slackPoller: mockPoller }));
 
     const result = await surface.pollSlackMessages();
     expect(result.decisions).toHaveLength(0);
@@ -258,8 +278,10 @@ describe('SlackSurface pollSlackMessages with in-process poller', () => {
 describe('SlackSurface Slack API fallback (pollSlackMessages direct API)', () => {
   const surface = new SlackSurface(makeOpts());
 
+  let fetchMock: ReturnType<typeof vi.fn>;
   beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn());
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
   });
 
   afterEach(() => {
@@ -267,7 +289,7 @@ describe('SlackSurface Slack API fallback (pollSlackMessages direct API)', () =>
   });
 
   it('returns empty when Slack API returns ok:false', async () => {
-    (fetch as any).mockResolvedValueOnce({
+    fetchMock.mockResolvedValueOnce({
       json: async () => ({ ok: false, error: 'channel_not_found' }),
     });
 
@@ -276,7 +298,7 @@ describe('SlackSurface Slack API fallback (pollSlackMessages direct API)', () =>
   });
 
   it('parses approve/reject from conversations.history', async () => {
-    (fetch as any).mockResolvedValueOnce({
+    fetchMock.mockResolvedValueOnce({
       json: async () => ({
         ok: true,
         messages: [
@@ -288,10 +310,10 @@ describe('SlackSurface Slack API fallback (pollSlackMessages direct API)', () =>
 
     const result = await surface.pollSlackMessages();
     expect(result.decisions).toHaveLength(2);
-    expect(result.decisions[0].decision).toBe('approved');
-    expect(result.decisions[0].patchId).toBe('patch-abc');
-    expect(result.decisions[1].decision).toBe('rejected');
-    expect(result.decisions[1].patchId).toBe('patch-xyz');
+    expect(result.decisions[0]!.decision).toBe('approved');
+    expect(result.decisions[0]!.patchId).toBe('patch-abc');
+    expect(result.decisions[1]!.decision).toBe('rejected');
+    expect(result.decisions[1]!.patchId).toBe('patch-xyz');
     expect(result.latestTs).toBe('1700000011.002');
   });
 
@@ -332,7 +354,13 @@ describe('Slack outbox I/O helpers', () => {
     const path = join(dir, 'ob.json');
     const entries: SlackOutboxEntry[] = [
       { id: 'a', message: 'msg-a', attempts: 0 },
-      { id: 'b', message: 'msg-b', attempts: 2, lastErrorAt: '2026-01-01T00:00:00Z', lastError: 'boom' },
+      {
+        id: 'b',
+        message: 'msg-b',
+        attempts: 2,
+        lastErrorAt: '2026-01-01T00:00:00Z',
+        lastError: 'boom',
+      },
     ];
     await writeOutbox(path, entries);
     expect(await readOutbox(path)).toEqual(entries);
@@ -354,11 +382,13 @@ describe('Slack outbox I/O helpers', () => {
 describe('SlackSurface outbox durability', () => {
   let dir: string;
   let outboxPath: string;
+  let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'outbox-surface-'));
     outboxPath = join(dir, 'slack-outbox.json');
-    vi.stubGlobal('fetch', vi.fn());
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
   });
 
   afterEach(() => {
@@ -368,17 +398,17 @@ describe('SlackSurface outbox durability', () => {
 
   /** Make fetch succeed (Slack chat.postMessage ok:true). */
   function mockFetchOk() {
-    (fetch as any).mockResolvedValueOnce({ json: async () => ({ ok: true }) });
+    fetchMock.mockResolvedValueOnce({ json: async () => ({ ok: true }) });
   }
 
   /** Make fetch look like a network throw. */
   function mockFetchThrow(msg = 'network down') {
-    (fetch as any).mockRejectedValueOnce(new Error(msg));
+    fetchMock.mockRejectedValueOnce(new Error(msg));
   }
 
   /** Make Slack return ok:false (treated as delivery failure). */
   function mockFetchSlackError(error = 'rate_limited') {
-    (fetch as any).mockResolvedValueOnce({ json: async () => ({ ok: false, error }) });
+    fetchMock.mockResolvedValueOnce({ json: async () => ({ ok: false, error }) });
   }
 
   it('does NOT enqueue when delivery succeeds', async () => {
@@ -398,8 +428,8 @@ describe('SlackSurface outbox durability', () => {
 
     const entries = await readOutbox(outboxPath);
     expect(entries).toHaveLength(1);
-    expect(entries[0].message).toContain('1200/1200');
-    expect(entries[0].attempts).toBe(0);
+    expect(entries[0]!.message).toContain('1200/1200');
+    expect(entries[0]!.attempts).toBe(0);
     // flushOutbox should have been called implicitly nowhere yet; the entry persists.
     expect(mockLog.warn).toHaveBeenCalledWith(
       expect.objectContaining({ outboxSize: 1 }),
@@ -433,8 +463,8 @@ describe('SlackSurface outbox durability', () => {
     }
     const entries = await readOutbox(outboxPath);
     expect(entries).toHaveLength(1);
-    expect(entries[0].attempts).toBe(3);
-    expect(entries[0].lastErrorAt).toBeTruthy();
+    expect(entries[0]!.attempts).toBe(3);
+    expect(entries[0]!.lastErrorAt).toBeTruthy();
   });
 
   it('drops an entry after MAX_OUTBOX_ATTEMPTS failed attempts', async () => {
@@ -480,7 +510,7 @@ describe('SlackSurface outbox durability', () => {
     expect(remaining).toBe(1);
     const left = await readOutbox(outboxPath);
     expect(left).toHaveLength(1);
-    expect(left[0].id).toBe('fail-1');
+    expect(left[0]!.id).toBe('fail-1');
   });
 
   it('outboxPath defaults to ledgerPath + .slack-outbox.json when not given', async () => {
@@ -496,7 +526,12 @@ describe('SlackSurface outbox durability', () => {
 
   it('deliverToSlack treats missing credentials as success (no enqueue)', async () => {
     const surface = new SlackSurface(
-      makeOpts({ outboxPath, slackBotToken: undefined, slackChannel: undefined, slackWebhook: undefined }),
+      makeOpts({
+        outboxPath,
+        slackBotToken: undefined,
+        slackChannel: undefined,
+        slackWebhook: undefined,
+      }),
     );
     await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
     expect(existsSync(outboxPath)).toBe(false);
@@ -511,7 +546,7 @@ describe('SlackSurface outbox durability', () => {
     await surface.postProposal(samplePatch);
     const entries = await readOutbox(outboxPath);
     expect(entries).toHaveLength(1);
-    expect(entries[0].message).toContain('Director Proposal');
+    expect(entries[0]!.message).toContain('Director Proposal');
   });
 
   it('postDecision enqueues to outbox when delivery fails', async () => {
@@ -525,7 +560,7 @@ describe('SlackSurface outbox durability', () => {
     });
     const entries = await readOutbox(outboxPath);
     expect(entries).toHaveLength(1);
-    expect(entries[0].message).toContain('Director Decision');
+    expect(entries[0]!.message).toContain('Director Decision');
   });
 
   it('postApplied enqueues to outbox when delivery fails', async () => {
@@ -534,7 +569,7 @@ describe('SlackSurface outbox durability', () => {
     await surface.postApplied(samplePatch);
     const entries = await readOutbox(outboxPath);
     expect(entries).toHaveLength(1);
-    expect(entries[0].message).toContain('Director Applied');
+    expect(entries[0]!.message).toContain('Director Applied');
   });
 
   it('postRestart enqueues to outbox when delivery fails', async () => {
@@ -543,7 +578,7 @@ describe('SlackSurface outbox durability', () => {
     await surface.postRestart({ pid: 12345, logPath: '/tmp/log' });
     const entries = await readOutbox(outboxPath);
     expect(entries).toHaveLength(1);
-    expect(entries[0].message).toContain('Director Restart');
+    expect(entries[0]!.message).toContain('Director Restart');
   });
 
   it('all post* methods deliver (no enqueue) when Slack accepts', async () => {
@@ -552,8 +587,10 @@ describe('SlackSurface outbox durability', () => {
     await surface.postProposal(samplePatch);
     mockFetchOk();
     await surface.postDecision({
-      patchId: 'p1', decision: 'approved',
-      decidedAt: '2026-01-01T00:00:00Z', decidedBy: 'slack',
+      patchId: 'p1',
+      decision: 'approved',
+      decidedAt: '2026-01-01T00:00:00Z',
+      decidedBy: 'slack',
     });
     mockFetchOk();
     await surface.postApplied(samplePatch);
@@ -584,11 +621,13 @@ describe('SlackSurface outbox durability', () => {
 describe('SlackSurface webhook delivery + outbox', () => {
   let dir: string;
   let outboxPath: string;
+  let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'outbox-webhook-'));
     outboxPath = join(dir, 'slack-outbox.json');
-    vi.stubGlobal('fetch', vi.fn());
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
   });
 
   afterEach(() => {
@@ -597,9 +636,14 @@ describe('SlackSurface webhook delivery + outbox', () => {
   });
 
   it('delivers via webhook when botToken is absent and does not enqueue', async () => {
-    (fetch as any).mockResolvedValueOnce({ ok: true });
+    fetchMock.mockResolvedValueOnce({ ok: true });
     const surface = new SlackSurface(
-      makeOpts({ outboxPath, slackBotToken: undefined, slackChannel: undefined, slackWebhook: 'https://hooks.slack.test/x' }),
+      makeOpts({
+        outboxPath,
+        slackBotToken: undefined,
+        slackChannel: undefined,
+        slackWebhook: 'https://hooks.slack.test/x',
+      }),
     );
     await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
     expect(existsSync(outboxPath)).toBe(false);
@@ -610,16 +654,21 @@ describe('SlackSurface webhook delivery + outbox', () => {
   });
 
   it('enqueues to outbox when the webhook returns a non-ok HTTP status', async () => {
-    (fetch as any).mockResolvedValueOnce({ ok: false, status: 503 });
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 503 });
     const surface = new SlackSurface(
-      makeOpts({ outboxPath, slackBotToken: undefined, slackChannel: undefined, slackWebhook: 'https://hooks.slack.test/x' }),
+      makeOpts({
+        outboxPath,
+        slackBotToken: undefined,
+        slackChannel: undefined,
+        slackWebhook: 'https://hooks.slack.test/x',
+      }),
     );
     await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
     expect(await readOutbox(outboxPath)).toHaveLength(1);
   });
 
   it('falls back to webhook when botToken is set but channel is missing', async () => {
-    (fetch as any).mockResolvedValueOnce({ ok: true });
+    fetchMock.mockResolvedValueOnce({ ok: true });
     const surface = new SlackSurface(
       makeOpts({ outboxPath, slackChannel: undefined, slackWebhook: 'https://hooks.slack.test/x' }),
     );
@@ -649,30 +698,32 @@ describe('SlackSurface webhook delivery + outbox', () => {
 // ---------------------------------------------------------------------------
 
 describe('SlackSurface pollSlackMessages error handling', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
   beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn());
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
   });
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
   it('returns empty on a network error during conversations.history', async () => {
-    (fetch as any).mockRejectedValueOnce(new Error('ETIMEDOUT'));
+    fetchMock.mockRejectedValueOnce(new Error('ETIMEDOUT'));
     const surface = new SlackSurface(makeOpts());
     const result = await surface.pollSlackMessages();
     expect(result).toEqual({ decisions: [], latestTs: undefined });
   });
 
   it('passes lastTs as oldest param when provided', async () => {
-    (fetch as any).mockResolvedValueOnce({ json: async () => ({ ok: true, messages: [] }) });
+    fetchMock.mockResolvedValueOnce({ json: async () => ({ ok: true, messages: [] }) });
     const surface = new SlackSurface(makeOpts());
     await surface.pollSlackMessages('1700000000.000');
-    const calledUrl = (fetch as any).mock.calls[0][0] as string;
+    const calledUrl = fetchMock.mock.calls[0]?.[0] as string;
     expect(calledUrl).toContain('oldest=1700000000.000');
   });
 
   it('skips messages missing text or ts, but still parses the valid ones', async () => {
-    (fetch as any).mockResolvedValueOnce({
+    fetchMock.mockResolvedValueOnce({
       json: async () => ({
         ok: true,
         messages: [
@@ -690,7 +741,7 @@ describe('SlackSurface pollSlackMessages error handling', () => {
   });
 
   it('handles a non-Error throw in poll gracefully', async () => {
-    (fetch as any).mockRejectedValueOnce('string error, not an Error');
+    fetchMock.mockRejectedValueOnce('string error, not an Error');
     const surface = new SlackSurface(makeOpts());
     const result = await surface.pollSlackMessages('ts-1');
     expect(result).toEqual({ decisions: [], latestTs: 'ts-1' });
@@ -704,11 +755,13 @@ describe('SlackSurface pollSlackMessages error handling', () => {
 describe('SlackSurface deliverToSlack non-Error throws', () => {
   let dir: string;
   let outboxPath: string;
+  let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'outbox-nonerr-'));
     outboxPath = join(dir, 'slack-outbox.json');
-    vi.stubGlobal('fetch', vi.fn());
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -716,7 +769,7 @@ describe('SlackSurface deliverToSlack non-Error throws', () => {
   });
 
   it('enqueues to outbox when fetch throws a non-Error value', async () => {
-    (fetch as any).mockRejectedValueOnce('a string, not an Error');
+    fetchMock.mockRejectedValueOnce('a string, not an Error');
     const surface = new SlackSurface(makeOpts({ outboxPath }));
     await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
     expect(await readOutbox(outboxPath)).toHaveLength(1);

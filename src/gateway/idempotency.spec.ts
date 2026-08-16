@@ -2,6 +2,8 @@
  * Tests for idempotency cache — value caching, in-flight deduplication,
  * TTL expiry, and bounded eviction.
  */
+import type { ServerResponse } from 'node:http';
+
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 import {
@@ -13,12 +15,12 @@ import {
   idemCache,
 } from './idempotency.js';
 
-function createMockResponse() {
+function createMockResponse(): ServerResponse {
   return {
     writeHead: vi.fn(),
     end: vi.fn(),
     headers: {},
-  } as any;
+  } as unknown as ServerResponse;
 }
 
 describe('idempotency cache', () => {
@@ -35,7 +37,7 @@ describe('idempotency cache', () => {
 
   describe('idempotencyHit', () => {
     it('returns false for unknown key', async () => {
-      const hit = await idempotencyHit('unknown-key', {} as any);
+      const hit = await idempotencyHit('unknown-key', createMockResponse());
       expect(hit).toBe(false);
     });
 
@@ -49,7 +51,7 @@ describe('idempotency cache', () => {
         exp: now - 1000,
       });
 
-      const hit = await idempotencyHit(idemKey, {} as any);
+      const hit = await idempotencyHit(idemKey, createMockResponse());
       expect(hit).toBe(false);
     });
 
@@ -66,9 +68,12 @@ describe('idempotency cache', () => {
       const res = createMockResponse();
       const hit = await idempotencyHit(idemKey, res);
       expect(hit).toBe(true);
-      expect(res.writeHead).toHaveBeenCalledWith(201, expect.objectContaining({
-        'content-type': 'application/json; charset=utf-8',
-      }));
+      expect(res.writeHead).toHaveBeenCalledWith(
+        201,
+        expect.objectContaining({
+          'content-type': 'application/json; charset=utf-8',
+        }),
+      );
     });
 
     it('awaits in-flight promise and returns true', async () => {
@@ -83,9 +88,12 @@ describe('idempotency cache', () => {
       const res = createMockResponse();
       const hit = await idempotencyHit(idemKey, res);
       expect(hit).toBe(true);
-      expect(res.writeHead).toHaveBeenCalledWith(200, expect.objectContaining({
-        'content-type': 'application/json; charset=utf-8',
-      }));
+      expect(res.writeHead).toHaveBeenCalledWith(
+        200,
+        expect.objectContaining({
+          'content-type': 'application/json; charset=utf-8',
+        }),
+      );
     });
 
     it('returns false when in-flight promise rejects', async () => {
@@ -97,7 +105,7 @@ describe('idempotency cache', () => {
         exp: Date.now() + 60_000,
       });
 
-      const hit = await idempotencyHit(idemKey, {} as any);
+      const hit = await idempotencyHit(idemKey, createMockResponse());
       expect(hit).toBe(false);
     });
   });
@@ -131,9 +139,10 @@ describe('idempotency cache', () => {
 
       const cached = idemCache.get('store-key');
       expect(cached).toBeDefined();
-      expect(cached?.kind).toBe('value');
-      expect(cached?.status).toBe(201);
-      expect(cached?.body).toEqual({ created: true });
+      if (cached?.kind !== 'value') throw new Error('expected a cached value entry');
+      expect(cached.kind).toBe('value');
+      expect(cached.status).toBe(201);
+      expect(cached.body).toEqual({ created: true });
 
       const result = await handle!.promise;
       expect(result).toEqual({ status: 201, body: { created: true } });
