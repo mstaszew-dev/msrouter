@@ -105,6 +105,42 @@ export async function kafkaConsume(
   }
 }
 
+/** Stream the last N messages from a Kafka topic. Uses kafka-console-consumer.sh
+ *  with --from-beginning and a timeout. Returns up to maxMessages messages.
+ */
+export async function kafkaMonitor(
+  topic: string,
+  opts: KafkaOpts & { maxMessages?: number; timeoutMs?: number },
+): Promise<KafkaMessage[]> {
+  const consumerScript = join(opts.kafkaHome, 'bin', 'kafka-console-consumer.sh');
+  const args = [
+    '--topic', topic,
+    '--bootstrap-server', opts.bootstrap,
+    '--property', 'print.key=true',
+    '--property', 'key.separator=\t',
+    '--from-beginning',
+    '--max-messages', String(opts.maxMessages ?? 5),
+    '--timeout-ms', String(opts.timeoutMs ?? 3000),
+  ];
+
+  try {
+    const { stdout } = await execFileP(consumerScript, args, {
+      timeout: (opts.timeoutMs ?? 3000) + 10_000,
+      maxBuffer: 1024 * 1024,
+    });
+    return parseConsumeOutput(stdout);
+  } catch (e) {
+    // kafka-console-consumer exits non-zero on timeout even if messages were read.
+    // Check if stdout was captured in the error.
+    const err = e as { stdout?: string };
+    if (err.stdout) {
+      return parseConsumeOutput(err.stdout);
+    }
+    opts.log.debug({ err: e instanceof Error ? e.message : String(e), topic }, 'kafka monitor failed');
+    return [];
+  }
+}
+
 /** Parse kafka-console-consumer --property print.key=true output. */
 export function parseConsumeOutput(raw: string): KafkaMessage[] {
   const lines = raw.split('\n').filter((l) => l.trim());
@@ -134,9 +170,8 @@ export async function kafkaTopics(opts: KafkaOpts): Promise<string[]> {
   }
 }
 
-/**
- * Streaming tail of a Kafka topic. Returns a child process whose stdout streams
- * messages in real-time. Call .kill() on the returned process to stop.
+/** Streaming tail of a Kafka topic. Returns a child process whose stdout streams
+ *  messages in real-time. Call .kill() on the returned process to stop.
  */
 export function kafkaTail(topic: string, opts: KafkaOpts): ReturnType<typeof spawn> {
   const script = join(opts.kafkaHome, 'bin', 'kafka-console-consumer.sh');

@@ -129,13 +129,29 @@ Kafka broker is up on ${KAFKA_BOOTSTRAP}
 EOF
 }
 
+monitor() {
+  local topics="$KAFKA_HOME/bin/kafka-topics.sh --bootstrap-server $KAFKA_BOOTSTRAP --list 2>/dev/null"
+  for topic in $(eval "$topics"); do
+    if [ -n "$topic" ]; then
+      log "last 5 messages for ${topic}:"
+      "$KAFKA_HOME/bin/kafka-console-consumer.sh" \
+        --topic "$topic" --from-beginning \
+        --bootstrap-server "$KAFKA_BOOTSTRAP" \
+        --property print.key=true --property key.separator=$'\t' \
+        --max-messages 5 --timeout-ms 3000 2>/dev/null || log "  (no messages or error)"
+    fi
+  done
+  ok "monitor complete"
+}
+
 case "${1:-status}" in
   start)   start; create_topics; report ;;
   stop)    stop ;;
   restart) stop; sleep 2; start; create_topics; report ;;
   status)  status ;;
   topics)  create_topics ;;
+  monitor) monitor ;;
   tail)    shift; tail_topic "$@" ;;
   produce) shift; produce_one "$@" ;;
-  *) die "unknown: $1 (use: start | stop | restart | status | topics | tail <topic> | produce <topic> <key> <value>)" ;;
+  *) die "unknown: $1 (use: start | stop | restart | status | topics | tail <topic> | produce <topic> <key> <value> | monitor)" ;;
 esac

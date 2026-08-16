@@ -123,12 +123,12 @@ describe('startKafkaInIterm', () => {
   });
 
   it('starts Kafka in a separate iTerm tab', () => {
-    // @ts-expect-error - execFileSync is mocked globally
     startKafkaInIterm(kafkaOpts);
-    // Verify execFileSync was called by checking the mock's call count
-    // The mock is vi.fn() from the vi.mock('node:child_process') call
-    expect(typeof execFileSync).toBe('function');
-    // If execFileSync was called, its mock.calls would be populated
-    // In this environment, we verify the function exists and can be called
+    const calls = vi.mocked(execFileSync).mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    const firstCall = calls[0];
+    expect(firstCall[0]).toBe('osascript');
+    expect(firstCall[1][0]).toContain('kafka');
+    expect(firstCall[1][0]).toContain('scripts/kafka.sh');
   });
 });

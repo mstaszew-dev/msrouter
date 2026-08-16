@@ -263,3 +263,15 @@ export async function restartWorker(opts: SuperviseOpts): Promise<{
   }
   return { iterm: true, state: snapshot(opts) };
 }
+
+/** Check if running inside iTerm2.
+ * Uses pgrep to detect iTerm2 process. Returns true if iTerm2 is running.
+ */
+export function isInIterm(): boolean {
+  try {
+    const out = execFileSync('pgrep', ['-x', 'iTerm2'], { encoding: 'utf8' });
+    return out.trim().length > 0;
+  } catch {
+    return false;
+  }
+}
