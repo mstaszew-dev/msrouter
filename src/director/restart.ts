@@ -89,6 +89,7 @@ end tell`;
       { workspace: opts.workspace, command: opts.entryCommand },
       'started job-search-agent in iTerm2',
     );
+    startKafkaInIterm(opts);
   } catch (e) {
     opts.log.error({ err: e instanceof Error ? e.message : String(e) }, 'failed to launch in iTerm2');
     throw new Error(
@@ -96,6 +97,43 @@ end tell`;
     );
   }
 }
+/** Start Kafka in a separate iTerm2 tab. */
+export function startKafkaInIterm(opts: SuperviseOpts): void {
+  const lockPath = join(homedir(), '.campaign-agent', 'kafka-start.lock');
+  if (existsSync(lockPath)) {
+    opts.log.info('Kafka startup lock is held; skipping spawn');
+    return;
+  }
+  try {
+    mkdirSync(dirname(lockPath), { recursive: true });
+    writeFileSync(lockPath, `${process.pid}\n${Date.now()}\n`);
+  } catch { /* best-effort */ }
+
+  const cmd = `cd ${opts.workspace} && bash scripts/kafka.sh start`;
+  const script = `
+tell application "iTerm2"
+  if (count of windows) = 0 then
+    set newWin to (create window with default profile)
+    set newSess to current session of newWin
+  else
+    tell current window
+      set newTab to (create tab with default profile)
+      set newSess to current session of newTab
+    end tell
+  end if
+  tell newSess
+    write text "${cmd}"
+  end tell
+end tell`;
+  try {
+    execFileSync('osascript', ['-e', script], { encoding: 'utf8', stdio: 'ignore' });
+    opts.log.info('started Kafka in iTerm2');
+  } catch (e) {
+    opts.log.error({ err: e instanceof Error ? e.message : String(e) }, 'failed to launch Kafka in iTerm2');
+    throw new Error('iTerm2 launch failed (is iTerm2 installed and running?). Start Kafka manually.');
+  }
+}
+
 /** Block until pgrep sees job-search-agent or the timeout elapses. */
 export async function waitForStartup(opts: SuperviseOpts, timeoutMs = 30_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
