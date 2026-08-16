@@ -10,8 +10,8 @@ import type { Logger } from 'pino';
 
 import { config } from '../config/env.js';
 
-import { LocalProvider } from './local.js';
 import { LmStudioProvider } from './lmstudio.js';
+import { LocalProvider } from './local.js';
 import { OpenCodeProvider } from './opencode.js';
 import { OpenRouterProvider } from './openrouter.js';
 import { SingleKeyProvider } from './single-key.js';
@@ -44,11 +44,11 @@ const OPENCODE_MODELS = (e: {
   OPENCODE_LAGUNA_MODEL: string;
   OPENCODE_LING_MODEL: string;
 }): readonly string[] => [
-  e.OPENCODE_MODEL,           // big-pickle (fast default, demoted if empty)
-  e.OPENCODE_MINIMAX_MODEL,   // strongest all-rounder
-  e.OPENCODE_QWEN_MODEL,      // good coding + technical reasoning
-  e.OPENCODE_NEMOTRON_MODEL,  // good coding + technical reasoning
-  e.OPENCODE_MIMO_MODEL,      // decent for large-codebase/refactoring
+  e.OPENCODE_MODEL, // big-pickle (fast default, demoted if empty)
+  e.OPENCODE_MINIMAX_MODEL, // strongest all-rounder
+  e.OPENCODE_QWEN_MODEL, // good coding + technical reasoning
+  e.OPENCODE_NEMOTRON_MODEL, // good coding + technical reasoning
+  e.OPENCODE_MIMO_MODEL, // decent for large-codebase/refactoring
   // Fallback: weaker free-tier models, only reached if all above are demoted
   e.OPENCODE_DEEPSEEK_FLASH_MODEL,
   e.OPENCODE_NORTH_MINI_CODE_MODEL,
@@ -102,13 +102,14 @@ export function buildProviders(log: Logger): Providers {
       log,
     ),
     // LM Studio (Bionic): OpenAI-compatible local server, no API key needed.
-    // Routed when LMSTUDIO_ENABLED=true (see chain-routing.ts).
+    // Routed when LMSTUDIO_ENABLED=true (see chain-routing.ts). Uses its own
+    // timeout: local single-slot prefills can exceed UPSTREAM_TIMEOUT_MS.
     lmstudio: new LmStudioProvider(
       {
         baseUrl: env.LMSTUDIO_BASE_URL,
         defaultModel: env.LMSTUDIO_MODEL,
       },
-      timeoutMs,
+      env.LMSTUDIO_TIMEOUT_MS,
       log,
     ),
   };

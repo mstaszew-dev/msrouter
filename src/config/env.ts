@@ -10,9 +10,22 @@
 
 import { z } from 'zod';
 
-const csv = z.string().default('').transform((s) =>
-  s.split(',').map((x) => x.trim()).filter(Boolean),
-);
+const csv = z
+  .string()
+  .default('')
+  .transform((s) =>
+    s
+      .split(',')
+      .map((x) => x.trim())
+      .filter(Boolean),
+  );
+
+/** Boolean env flag: true when 'true' or '1' (case matters), else the default. */
+const flag = (def: string) =>
+  z
+    .string()
+    .default(def)
+    .transform((s) => s === 'true' || s === '1');
 
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -28,16 +41,21 @@ const schema = z.object({
   ZAI_MODEL: z.string().default('glm-4.6'),
 
   // Local llama-server: OpenAI /v1/chat/completions on a patched 128K GGUF.
-  LOCAL_ENABLED: z.string().default('false').transform((s) => s === 'true' || s === '1'),
+  LOCAL_ENABLED: flag('false'),
   LOCAL_BASE_URL: z.string().url().default('http://127.0.0.1:11434/v1'),
   LOCAL_MODEL: z.string().default('qwen3.5:2b'),
   // Local prefills are slow (~220-370 tok/s), so local gets its own timeout
   // instead of UPSTREAM_TIMEOUT_MS (matches the campaign agent's 300s cap).
   LOCAL_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
   // LM Studio (Bionic) local: OpenAI /v1/chat/completions, no API key.
-  LMSTUDIO_ENABLED: z.string().default('false').transform((s) => s === 'true' || s === '1'),
+  // LMSTUDIO_MODEL is a preferred ALIAS: the provider discovers the models
+  // actually loaded (GET {base}/models) and falls back to whatever is up.
+  LMSTUDIO_ENABLED: flag('false'),
   LMSTUDIO_BASE_URL: z.string().url().default('http://127.0.0.1:1234/v1'),
-  LMSTUDIO_MODEL: z.string().default('google/gemma-4-e4b'),
+  LMSTUDIO_MODEL: z.string().default('qwen3.5-9b'),
+  // Local prefills are slow (a 20k-token prompt takes minutes on the shared
+  // single-slot llama-server), so LM Studio gets its own timeout (cf. LOCAL_TIMEOUT_MS).
+  LMSTUDIO_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
   OPENCODE_API_KEY: z.string().optional(),
   OPENCODE_BASE_URL: z.string().url().default('https://opencode.ai/zen/v1'),
   OPENCODE_MODEL: z.string().default('big-pickle'),
@@ -64,20 +82,9 @@ const schema = z.object({
   OPENROUTER_MODEL: z.string().default('openrouter/free'),
   // The alias(es) that mean "walk every provider with its own default model".
   // Comma-separated; canonical ones are "mst/free" and "free".
-  WALK_ALIAS: z
-    .string()
-    .default('mst/free,free')
-    .transform((s) =>
-      s
-        .split(',')
-        .map((x) => x.trim())
-        .filter(Boolean),
-    ),
+  WALK_ALIAS: csv.default('mst/free,free'),
 
-  FORCE_FREE: z
-    .string()
-    .default('true')
-    .transform((s) => s === 'true' || s === '1'),
+  FORCE_FREE: flag('true'),
 
   UPSTREAM_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
   MAX_TRANSIENT_RETRIES: z.coerce.number().int().min(0).default(2),
@@ -89,10 +96,7 @@ const schema = z.object({
   AGENT_PROMPT: z.string().default(''),
   AGENT_GOAL: z.string().default(''),
   AGENT_MAX_STEPS: z.coerce.number().int().positive().default(20),
-  AGENT_LLM_JUDGE: z
-    .string()
-    .default('false')
-    .transform((s) => s === 'true' || s === '1'),
+  AGENT_LLM_JUDGE: flag('false'),
 
   // Director agent (separate worker: `npm run director-worker`)
   // Minutes between Director observation cycles. -1 disables.
@@ -119,10 +123,7 @@ const schema = z.object({
   VPN_ROTATION_INTERVAL_MINUTES: z.coerce.number().int().default(30),
 
   // Kafka (Director event streaming). Disabled by default.
-  KAFKA_ENABLED: z
-    .string()
-    .default('true')
-    .transform((s) => s === 'true' || s === '1'),
+  KAFKA_ENABLED: flag('true'),
   KAFKA_HOME: z.string().default('~/kafka/kafka_2.13-3.7.0'),
   KAFKA_BOOTSTRAP: z.string().default('localhost:9092'),
   KAFKA_POLL_INTERVAL_SECONDS: z.coerce.number().int().positive().default(30),

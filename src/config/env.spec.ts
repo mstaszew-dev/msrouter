@@ -152,12 +152,20 @@ describe('loadEnv - LM Studio (Bionic) local provider', () => {
     const cfg = loadEnv({});
     expect(cfg.env.LMSTUDIO_ENABLED).toBe(false);
     expect(cfg.env.LMSTUDIO_BASE_URL).toBe('http://127.0.0.1:1234/v1');
-    expect(cfg.env.LMSTUDIO_MODEL).toBe('google/gemma-4-e4b');
+    // Alias only: the provider resolves it against discovered loaded models.
+    expect(cfg.env.LMSTUDIO_MODEL).toBe('qwen3.5-9b');
   });
 
   it('accepts LMSTUDIO_ENABLED=true and a model override', () => {
-    const cfg = loadEnv({ LMSTUDIO_ENABLED: 'true', LMSTUDIO_MODEL: 'google/gemma-4-12b' });
+    const cfg = loadEnv({ LMSTUDIO_ENABLED: 'true', LMSTUDIO_MODEL: 'qwen3.5-4b' });
     expect(cfg.env.LMSTUDIO_ENABLED).toBe(true);
-    expect(cfg.env.LMSTUDIO_MODEL).toBe('google/gemma-4-12b');
+    expect(cfg.env.LMSTUDIO_MODEL).toBe('qwen3.5-4b');
+  });
+
+  it('gives LM Studio its own slow-local timeout (default 300s, overridable)', () => {
+    const cfg = loadEnv({});
+    expect(cfg.env.LMSTUDIO_TIMEOUT_MS).toBe(300_000);
+    const over = loadEnv({ LMSTUDIO_TIMEOUT_MS: '600000' });
+    expect(over.env.LMSTUDIO_TIMEOUT_MS).toBe(600_000);
   });
 });

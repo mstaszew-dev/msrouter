@@ -1,17 +1,22 @@
 /**
  * CONSTRAINT tests: local-model consolidation (zcode + opencode + msrouter).
  *
- * `google/gemma-4-e4b` (served by LM Studio / Bionic on 127.0.0.1:1234) is the
- * single local model. These tests pin that invariant across every config that
- * references local inference, and pin the five remote custom providers that
- * must survive in the zcode models config (the Aug 2026 corruption wiped them).
+ * The local fleet is Qwen3.5 (LM Studio / llama.cpp): the 9B GGUF is served on
+ * 127.0.0.1:1234 and the 4B on 127.0.0.1:1235. msrouter does NOT pin a single
+ * model: LMSTUDIO_MODEL is a preferred alias and the provider discovers the
+ * loaded models at call time (see src/providers/lmstudio.spec.ts), so swapping
+ * which GGUF is loaded needs no msrouter restart. These tests pin that
+ * invariant across every config that references local inference, and pin the
+ * five remote custom providers that must survive in the zcode models config
+ * (the Aug 2026 corruption wiped them).
  */
 
 import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-const LOCAL_MODEL = 'google/gemma-4-e4b';
+const QWEN_9B = 'qwen/qwen3.5-9b';
+const QWEN_4B = 'qwen/qwen3.5-4b';
 
 const HOME = process.env['HOME'] ?? '/Users/mst';
 
@@ -28,41 +33,45 @@ function providerIds(json: Record<string, unknown>): string[] {
   if (provider === null || typeof provider !== 'object') {
     return [];
   }
-  return Object.keys(provider as Record<string, unknown>);
+  return Object.keys(provider);
 }
 
-describe('constraint: local model is google/gemma-4-e4b everywhere', () => {
-  it('msrouter .env pins LMSTUDIO_MODEL=google/gemma-4-e4b', () => {
+describe('constraint: local models are Qwen3.5 (9B + 4B) everywhere', () => {
+  it('msrouter .env prefers the 9b alias and points at the live llama-server port', () => {
     const env = readFileSync(MSROUTER_ENV, 'utf8');
-    expect(env).toMatch(new RegExp(`^LMSTUDIO_MODEL=${LOCAL_MODEL}$`, 'm'));
-    expect(env).not.toMatch(/^LMSTUDIO_MODEL=qwen/i);
-    expect(env).not.toMatch(/^LMSTUDIO_MODEL=google\/gemma-4-e2b$/m);
+    expect(env).toMatch(/^LMSTUDIO_ENABLED=true$/m);
+    expect(env).toMatch(/^LMSTUDIO_BASE_URL=http:\/\/127\.0\.0\.1:1235\/v1$/m);
+    expect(env).toMatch(/^LMSTUDIO_MODEL=qwen3\.5-9b$/m);
+    // The retired gemma consolidation must not come back.
+    expect(env).not.toMatch(/gemma-4-e4b/i);
   });
 
-  it('opencode llama.cpp provider exposes only google/gemma-4-e4b locally', () => {
+  it('opencode llama.cpp provider exposes only the Qwen3.5 9B locally', () => {
     const cfg = readJson(OPENCODE_CONFIG);
     const llama = (cfg['provider'] as Record<string, unknown>)['llama.cpp'] as {
       models?: Record<string, unknown>;
     };
     const models = Object.keys(llama.models ?? {});
-    expect(models).toEqual([LOCAL_MODEL]);
+    expect(models).toEqual([QWEN_9B]);
   });
 
-  it('opencode local model exposes the native 128k context limit', () => {
+  it('opencode local model exposes a 64k context limit (9B server cap)', () => {
     const cfg = readJson(OPENCODE_CONFIG);
     const llama = (cfg['provider'] as Record<string, unknown>)['llama.cpp'] as {
       models?: Record<string, { limit?: { context?: number } }>;
     };
-    const limit = llama.models?.[LOCAL_MODEL]?.limit;
-    expect(limit?.context).toBe(131072);
+    const limit = llama.models?.[QWEN_9B]?.limit;
+    expect(limit?.context).toBe(65536);
   });
 });
 
-describe('constraint: zcode models config keeps all remote custom providers', () => {
+describe('constraint: zcode models config keeps the remote custom providers', () => {
+  // The Aug 2026 corruption wiped custom providers; these are the load-bearing
+  // ones present in the live config. (The OpenAI gpt-5.5 and Gemini provider
+  // ids from the earlier revision were removed from the config later and are
+  // no longer pinned.)
   const REQUIRED_PROVIDERS = [
-    'ccd49314-1523-4c98-9dd0-47b5072db752', // OpenAI (gpt-5.5)
     'ab7e04f9-8a56-4473-b5bb-996b1a17df85', // OpenRouter
-    '5140f00b-3e52-4115-b865-b6358a046235', // Gemini
     '68c67047-dc84-4e0f-80c8-b0743d2150ef', // OpenCode
     '8757853b-86fa-4d49-a17f-883d147d7891', // MSRouter (mst/free)
   ];
@@ -75,16 +84,16 @@ describe('constraint: zcode models config keeps all remote custom providers', ()
     }
   });
 
-  it('ships the OpenAI (gpt-5.5) provider with its base URL', () => {
+  it('ships the OpenCode provider with its base URL and model pool', () => {
     const cfg = readJson(ZCODE_CONFIG);
     const p = (cfg['provider'] as Record<string, unknown>)[
-      'ccd49314-1523-4c98-9dd0-47b5072db752'
+      '68c67047-dc84-4e0f-80c8-b0743d2150ef'
     ] as {
       options?: { baseURL?: string };
       models?: Record<string, unknown>;
     };
-    expect(p.options?.baseURL).toBe('https://api.openai.com/v1');
-    expect(Object.keys(p.models ?? {})).toContain('gpt-5.5');
+    expect(p.options?.baseURL).toBe('https://opencode.ai/zen/v1');
+    expect(Object.keys(p.models ?? {})).toContain('big-pickle');
   });
 
   it('ships the MSRouter provider pointing at the local gateway (mst/free)', () => {
@@ -100,39 +109,43 @@ describe('constraint: zcode models config keeps all remote custom providers', ()
   });
 });
 
-describe('constraint: zcode local model is LM Studio serving gemma-4-e4b', () => {
-  it('has an LM Studio local provider on 127.0.0.1:1234 with the e4b model', () => {
+describe('constraint: zcode local models are LM Studio serving Qwen3.5 9B + 4B', () => {
+  function localProviderByBase(baseURL: string): { models?: Record<string, unknown> } {
     const cfg = readJson(ZCODE_CONFIG);
     const providers = cfg['provider'] as Record<string, unknown>;
     const local = Object.values(providers).find(
-      (p) =>
-        (p as { options?: { baseURL?: string } }).options?.baseURL === 'http://127.0.0.1:1234/v1',
-    ) as {
-      models?: Record<string, unknown>;
-    };
+      (p) => (p as { options?: { baseURL?: string } }).options?.baseURL === baseURL,
+    ) as { models?: Record<string, unknown> } | undefined;
     expect(local).toBeDefined();
-    expect(Object.keys(local.models ?? {})).toEqual([LOCAL_MODEL]);
+    return local as { models?: Record<string, unknown> };
+  }
+
+  it('serves the 9B on 127.0.0.1:1234 with a 64k context', () => {
+    const local = localProviderByBase('http://127.0.0.1:1234/v1');
+    expect(Object.keys(local.models ?? {})).toEqual([QWEN_9B]);
+    const model = (local.models ?? {})[QWEN_9B] as { limit?: { context?: number } };
+    expect(model.limit?.context).toBe(65536);
   });
 
-  it('zcode local model exposes the native 128k context limit', () => {
-    const cfg = readJson(ZCODE_CONFIG);
-    const providers = cfg['provider'] as Record<string, unknown>;
-    const local = Object.values(providers).find(
-      (p) =>
-        (p as { options?: { baseURL?: string } }).options?.baseURL === 'http://127.0.0.1:1234/v1',
-    ) as {
-      models?: Record<string, { limit?: { context?: number } }>;
-    };
-    const limit = local.models?.[LOCAL_MODEL]?.limit;
-    expect(limit?.context).toBe(131072);
+  it('serves the 4B on 127.0.0.1:1235 with a 128k context', () => {
+    const local = localProviderByBase('http://127.0.0.1:1235/v1');
+    expect(Object.keys(local.models ?? {})).toEqual([QWEN_4B]);
+    const model = (local.models ?? {})[QWEN_4B] as { limit?: { context?: number } };
+    expect(model.limit?.context).toBe(131072);
   });
 
-  it('no longer references ollama/qwen local models anywhere', () => {
+  it('no longer references ollama anywhere, and no local gemma models', () => {
     const cfg = readJson(ZCODE_CONFIG);
     const raw = JSON.stringify(cfg);
     expect(raw).not.toContain('localhost:11434');
     expect(raw).not.toContain('qwen3:8b');
-    expect(raw).not.toContain('qwen3.5-9b');
-    expect(raw).not.toContain('gemma-4-e2b');
+    // Local providers must expose only Qwen3.5 (a gemma id may legally remain
+    // in zcode.deletedModels tombstones or as a remote OpenRouter model).
+    for (const base of ['http://127.0.0.1:1234/v1', 'http://127.0.0.1:1235/v1']) {
+      const local = localProviderByBase(base);
+      for (const modelId of Object.keys(local.models ?? {})) {
+        expect(modelId).toMatch(/^qwen\/qwen3\.5-(9b|4b)$/);
+      }
+    }
   });
 });
