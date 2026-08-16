@@ -78,7 +78,7 @@ export class OpenCodeProvider implements Provider {
   async attempt(
     body: ChatRequestBody,
     signal: AbortSignal,
-    opts: AttemptOptions & { tripleIndex?: number },
+    opts: Partial<AttemptOptions> & { tripleIndex?: number },
   ): Promise<ProviderCallResult> {
     if (!this.available) {
       return { kind: 'KEY_FAILURE', status: 0, message: 'opencode: no keys configured' };

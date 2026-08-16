@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -65,6 +65,66 @@ describe('callTool: web_search', () => {
     const res = await callTool('web_search', {}, silent);
     expect(res.isError).toBe(true);
   });
+
+  it('parses DuckDuckGo HTML results into title/url/snippet', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      text: async () =>
+        '<a class="result__snippet" href="https://example.com/jobs">Example Jobs</a>' +
+        '<a class="result__url">example.com</a>',
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const res = await callTool('web_search', { query: 'java jobs' }, silent);
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining('duckduckgo.com/html/?q=java%20jobs'),
+        expect.any(Object),
+      );
+      expect(res.isError).not.toBe(true);
+      const content = String(res.content);
+      expect(content).toContain('Example Jobs');
+      expect(content).toContain('https://example.com/jobs');
+      expect(content).toContain('example.com');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('returns an HTTP error message on a non-ok response', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce({ ok: false, status: 429 }));
+    try {
+      const res = await callTool('web_search', { query: 'x' }, silent);
+      expect(res.isError).toBe(true);
+      expect(String(res.content)).toContain('HTTP 429');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('reports a failure on a network error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('ECONNRESET')));
+    try {
+      const res = await callTool('web_search', { query: 'x' }, silent);
+      expect(res.isError).toBe(true);
+      expect(String(res.content)).toContain('web_search failed');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('reports no results when the HTML contains none', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValueOnce({ ok: true, text: async () => '<html>nothing</html>' }),
+    );
+    try {
+      const res = await callTool('web_search', { query: 'x' }, silent);
+      expect(res.isError).not.toBe(true);
+      expect(String(res.content)).toContain('no results found');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe('callTool: write_prompt_override', () => {
@@ -103,5 +163,15 @@ describe('callTool: write_prompt_override', () => {
     const content = readFileSync(mdPath, 'utf8');
     expect(content).toContain('first note');
     expect(content).toContain('second note');
+  });
+
+  it('reports failure when the override file cannot be written', async () => {
+    const mdDir = join(process.env['HOME']!, '.campaign-agent');
+    mkdirSync(mdDir, { recursive: true });
+    // A directory where the override file should live makes appendFileSync fail.
+    mkdirSync(join(mdDir, 'director-prompt-overrides.md'));
+    const res = await callTool('write_prompt_override', { text: 'x' }, silent);
+    expect(res.isError).toBe(true);
+    expect(String(res.content)).toContain('write_prompt_override failed');
   });
 });

@@ -1,6 +1,163 @@
-import { describe, expect, it } from 'vitest';
+import type pino from 'pino';
 
-import { parseAgentPatches } from './agent-loop.js';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
+
+import { parseAgentPatches, runDirectorAgent } from './agent-loop.js';
+import { callTool } from './agent-tools.js';
+
+vi.mock('./agent-tools.js', () => ({
+  callTool: vi.fn(),
+  toolDefinitions: vi.fn(() => []),
+}));
+vi.mock('../common/retry.js', () => ({ sleep: vi.fn(async () => undefined) }));
+
+const silent = {
+  warn: vi.fn(),
+  info: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+} as unknown as pino.Logger;
+
+function assistantMessage(message: unknown): unknown {
+  return { response: { json: async () => ({ choices: [{ message }] }) }, servedBy: {} };
+}
+
+function patchMessage(): unknown {
+  return assistantMessage({
+    role: 'assistant',
+    content: '{"patches":[{"overrides":{"MAX_STEPS":"200"},"rationale":"slow down","risk":"low"}]}',
+  });
+}
+
+describe('runDirectorAgent', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(callTool).mockResolvedValue({ content: 'ok' });
+  });
+
+  it('returns early when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const chain = { handle: vi.fn() } as never;
+    const result = await runDirectorAgent(chain, 'sys', 'goal', 'm', silent, controller.signal);
+    expect(result).toEqual({ steps: 0, patches: [], transcript: '' });
+  });
+
+  it('executes tool calls and returns extracted patches', async () => {
+    const chain = {
+      handle: vi
+        .fn()
+        .mockResolvedValueOnce(
+          assistantMessage({
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'c1',
+                type: 'function',
+                function: { name: 'terminal', arguments: '{"command":"ls"}' },
+              },
+            ],
+          }),
+        )
+        .mockResolvedValueOnce(patchMessage()),
+    } as never;
+
+    const result = await runDirectorAgent(
+      chain,
+      'sys',
+      'goal',
+      'm',
+      silent,
+      new AbortController().signal,
+    );
+    expect(result.steps).toBe(2);
+    expect(result.patches).toHaveLength(1);
+    expect(result.patches[0]!.overrides).toEqual({ MAX_STEPS: '200' });
+    expect(result.transcript).toContain('[tool terminal]');
+    expect(vi.mocked(callTool)).toHaveBeenCalledWith('terminal', { command: 'ls' }, silent);
+  });
+
+  it('handles non-object and malformed tool arguments', async () => {
+    const chain = {
+      handle: vi
+        .fn()
+        .mockResolvedValueOnce(
+          assistantMessage({
+            role: 'assistant',
+            content: null,
+            tool_calls: [
+              {
+                id: 'a',
+                type: 'function',
+                function: { name: 'write_prompt_override', arguments: '"just-a-string"' },
+              },
+              {
+                id: 'b',
+                type: 'function',
+                function: { name: 'write_prompt_override', arguments: 'not-json' },
+              },
+            ],
+          }),
+        )
+        .mockResolvedValueOnce(patchMessage()),
+    } as never;
+
+    const result = await runDirectorAgent(
+      chain,
+      'sys',
+      '',
+      'm',
+      silent,
+      new AbortController().signal,
+    );
+    expect(result.patches).toHaveLength(1);
+    const argCalls = vi.mocked(callTool).mock.calls.map((c) => c[1]);
+    expect(argCalls).toEqual([{ _value: 'just-a-string' }, { _raw: 'not-json' }]);
+  });
+
+  it('logs and retries when the chain call fails', async () => {
+    const chain = {
+      handle: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('boom'))
+        .mockResolvedValueOnce(patchMessage()),
+    } as never;
+
+    const result = await runDirectorAgent(
+      chain,
+      'sys',
+      'goal',
+      'm',
+      silent,
+      new AbortController().signal,
+    );
+    expect(silent.error).toHaveBeenCalledWith(
+      expect.objectContaining({ step: 1 }),
+      'director agent call failed',
+    );
+    expect(result.steps).toBe(2);
+    expect(result.patches).toHaveLength(1);
+  });
+
+  it('breaks when the model returns no message', async () => {
+    const chain = {
+      handle: vi.fn().mockResolvedValueOnce(assistantMessage(undefined)),
+    } as never;
+
+    const result = await runDirectorAgent(
+      chain,
+      'sys',
+      'goal',
+      'm',
+      silent,
+      new AbortController().signal,
+    );
+    expect(silent.warn).toHaveBeenCalledWith({ step: 1 }, 'director agent: no message returned');
+    expect(result.steps).toBe(1);
+    expect(result.patches).toEqual([]);
+  });
+});
 
 describe('parseAgentPatches', () => {
   it('extracts patches from a JSON block in the text', () => {
@@ -49,7 +206,8 @@ And some trailing text.`;
   });
 
   it('handles json wrapped in markdown code fences', () => {
-    const text = 'Some reasoning\n\n```json\n{"patches":[{"overrides":{"X":"1"},"rationale":"r","risk":"low"}]}\n```\n';
+    const text =
+      'Some reasoning\n\n```json\n{"patches":[{"overrides":{"X":"1"},"rationale":"r","risk":"low"}]}\n```\n';
     const patches = parseAgentPatches(text);
     expect(patches).toHaveLength(1);
     expect(patches[0]!.overrides).toEqual({ X: '1' });
