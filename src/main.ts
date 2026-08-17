@@ -8,12 +8,17 @@ import 'dotenv/config';
 
 import { config, loadEnv } from './config/env.js';
 import { createLogger } from './config/logger.js';
+import { assertInIterm } from './director/iterm.js';
 import { createGatewayServer } from './gateway/server.js';
 import { startOrchestrator } from './orchestrator.js';
 import { ProviderChain } from './providers/chain.js';
 import { buildProviders } from './providers/instances.js';
 
 function main(): void {
+  // Guard: msrouter must be launched from iTerm2. Prevents accidental starts
+  // from Terminal.app / VSCode where iTerm2 tab spawning would fail silently.
+  assertInIterm();
+
   const { env } = loadEnv();
   const log = createLogger(env, 'msrouter');
 

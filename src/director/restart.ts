@@ -1,18 +1,14 @@
-import { execFileSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { fileURLToPath } from 'node:url';
 
 import type { Logger } from 'pino';
 
+import { startWorkerInIterm } from './iterm.js';
 import { isCampaignComplete } from './observe.js';
-import { detectProcess, detectWorker, isStartLocked, snapshot, stopWorker } from './process.js';
-
-/** Repo root (scripts/kafka.sh lives here). Derived from this module's own
- *  path so the Kafka wrapper never depends on the campaign workspace. */
-const MSROUTER_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+import { detectProcess, detectWorker, snapshot, stopWorker } from './process.js';
 
 export interface SuperviseOpts {
   entryCommand: string;
@@ -36,6 +32,13 @@ export {
   stopWorker,
   snapshot,
 } from './process.js';
+export {
+  assertInIterm,
+  isInIterm,
+  isRunningInIterm,
+  startKafkaInIterm,
+  startWorkerInIterm,
+} from './iterm.js';
 
 export function ensureOverrideFiles(): void {
   const dir = join(homedir(), '.campaign-agent');
@@ -46,91 +49,9 @@ export function ensureOverrideFiles(): void {
   }
 }
 
-function startLockPath(): string {
-  return join(homedir(), '.campaign-agent', 'agent-start.lock');
-}
-
-function itermScript(first: string, second?: string): string {
-  const body = second
-    ? `  tell newSess\n    write text "${first}"\n  end tell\n  tell current session of (create tab with default profile)\n    write text "${second}"\n  end tell`
-    : `  tell newSess\n    write text "${first}"\n  end tell`;
-  return `tell application "iTerm2"
-  if (count of windows) = 0 then
-    set newWin to (create window with default profile)
-    set newSess to current session of newWin
-  else
-    tell current window
-      set newTab to (create tab with default profile)
-      set newSess to current session of newTab
-    end tell
-  end if
-${body}
-end tell`;
-}
-
-export function startWorkerInIterm(opts: SuperviseOpts): void {
-  const lockPath = startLockPath();
-  if (isStartLocked(lockPath)) {
-    opts.log.info('startup lock is held; skipping spawn (another instance is coming up)');
-    return;
-  }
-  try {
-    mkdirSync(dirname(lockPath), { recursive: true });
-    writeFileSync(lockPath, `${process.pid}\n${Date.now()}\n`);
-  } catch {
-    /* best-effort */
-  }
-  const script = itermScript(`cd ${opts.workspace} && ${opts.entryCommand}`);
-  try {
-    execFileSync('osascript', ['-e', script], { encoding: 'utf8', stdio: 'ignore' });
-    opts.log.info(
-      { workspace: opts.workspace, command: opts.entryCommand },
-      'started job-search-agent in iTerm2',
-    );
-    startKafkaInIterm(opts);
-  } catch (e) {
-    opts.log.error(
-      { err: e instanceof Error ? e.message : String(e) },
-      'failed to launch in iTerm2',
-    );
-    throw new Error(
-      'iTerm2 launch failed (is iTerm2 installed and running?). Launch job-search-agent manually.',
-    );
-  }
-}
-
-export function startKafkaInIterm(opts: SuperviseOpts): void {
-  const lockPath = join(homedir(), '.campaign-agent', 'kafka-start.lock');
-  if (existsSync(lockPath)) {
-    opts.log.info('Kafka startup lock is held; skipping spawn');
-    return;
-  }
-  try {
-    mkdirSync(dirname(lockPath), { recursive: true });
-    writeFileSync(lockPath, `${process.pid}\n${Date.now()}\n`);
-  } catch {
-    /* best-effort */
-  }
-  const startCmd = `cd ${MSROUTER_ROOT} && bash scripts/kafka.sh start`;
-  const monitorCmd = `cd ${MSROUTER_ROOT} && bash scripts/kafka.sh monitor`;
-  const script = itermScript(startCmd, monitorCmd);
-  try {
-    execFileSync('osascript', ['-e', script], { encoding: 'utf8', stdio: 'ignore' });
-    opts.log.info('started Kafka in iTerm2');
-  } catch (e) {
-    opts.log.error(
-      { err: e instanceof Error ? e.message : String(e) },
-      'failed to launch Kafka in iTerm2',
-    );
-    throw new Error(
-      'iTerm2 launch failed (is iTerm2 installed and running?). Start Kafka manually.',
-    );
-  }
-}
-
 export async function waitForStartup(opts: SuperviseOpts, timeoutMs = 30_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
-  const lockPath = startLockPath();
+  const lockPath = join(homedir(), '.campaign-agent', 'agent-start.lock');
   while (Date.now() < deadline) {
     if (detectWorker(opts.entryCommand).length > 0) {
       try {
@@ -237,13 +158,4 @@ export async function restartWorker(
     );
   }
   return { iterm: true, state: snapshot(opts) };
-}
-
-export function isInIterm(): boolean {
-  try {
-    const out = execFileSync('pgrep', ['-x', 'iTerm2'], { encoding: 'utf8' });
-    return out.trim().length > 0;
-  } catch {
-    return false;
-  }
 }

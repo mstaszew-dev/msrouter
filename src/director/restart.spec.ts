@@ -17,6 +17,7 @@ import type pino from 'pino';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 import {
+  assertInIterm,
   checkInfrastructure,
   detectWorker,
   detectProcess,
@@ -24,6 +25,7 @@ import {
   ensureInfrastructureHealthy,
   ensureOverrideFiles,
   isInIterm,
+  isRunningInIterm,
   pollCdp,
   snapshot,
   startChromeCdp,
@@ -159,7 +161,7 @@ describe('startKafkaInIterm', () => {
     expect(script).toContain('scripts/kafka.sh');
     // Regression: scripts/kafka.sh lives in the msrouter repo, not in the
     // campaign workspace (startKafkaInIterm used to cd into opts.workspace).
-    const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+    const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
     expect(script).toContain(`cd ${repoRoot} && bash scripts/kafka.sh start`);
     expect(script).not.toContain('/test/workspace');
   });
@@ -181,6 +183,89 @@ describe('isInIterm', () => {
       throw new Error('pgrep not found');
     });
     expect(isInIterm()).toBe(false);
+  });
+});
+
+describe('isRunningInIterm', () => {
+  let savedTermProgram: string | undefined;
+
+  beforeEach(() => {
+    savedTermProgram = process.env['TERM_PROGRAM'];
+  });
+
+  afterEach(() => {
+    if (savedTermProgram === undefined) {
+      delete process.env['TERM_PROGRAM'];
+    } else {
+      process.env['TERM_PROGRAM'] = savedTermProgram;
+    }
+  });
+
+  it('returns true when TERM_PROGRAM is iTerm.app', () => {
+    process.env['TERM_PROGRAM'] = 'iTerm.app';
+    expect(isRunningInIterm()).toBe(true);
+  });
+
+  it('returns false when TERM_PROGRAM is Apple_Terminal', () => {
+    process.env['TERM_PROGRAM'] = 'Apple_Terminal';
+    expect(isRunningInIterm()).toBe(false);
+  });
+
+  it('returns false when TERM_PROGRAM is undefined', () => {
+    delete process.env['TERM_PROGRAM'];
+    expect(isRunningInIterm()).toBe(false);
+  });
+
+  it('returns false when TERM_PROGRAM is vscode', () => {
+    process.env['TERM_PROGRAM'] = 'vscode';
+    expect(isRunningInIterm()).toBe(false);
+  });
+});
+
+describe('assertInIterm', () => {
+  let savedTermProgram: string | undefined;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let exitSpy: ReturnType<typeof vi.spyOn<any, 'exit'>>;
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    savedTermProgram = process.env['TERM_PROGRAM'];
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    if (savedTermProgram === undefined) {
+      delete process.env['TERM_PROGRAM'];
+    } else {
+      process.env['TERM_PROGRAM'] = savedTermProgram;
+    }
+    exitSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('does not exit when running inside iTerm2', () => {
+    process.env['TERM_PROGRAM'] = 'iTerm.app';
+    assertInIterm();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it('exits with code 1 when TERM_PROGRAM is Apple_Terminal', () => {
+    process.env['TERM_PROGRAM'] = 'Apple_Terminal';
+    assertInIterm();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('must be launched from iTerm2'),
+    );
+  });
+
+  it('exits with code 1 when TERM_PROGRAM is unset', () => {
+    delete process.env['TERM_PROGRAM'];
+    assertInIterm();
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('TERM_PROGRAM=(unset)'),
+    );
   });
 });
 
@@ -290,7 +375,7 @@ describe('startWorkerInIterm', () => {
     expect(kafkaScript).toContain('start');
     expect(kafkaScript).toContain('monitor');
     // Kafka runs from the msrouter repo, not the campaign workspace.
-    const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+    const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
     expect(kafkaScript).toContain(`cd ${repoRoot}`);
     expect(kafkaScript).not.toContain('/test/workspace');
   });
