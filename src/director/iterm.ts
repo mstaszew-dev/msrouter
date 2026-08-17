@@ -16,14 +16,20 @@ function findRoot(): string {
     if (existsSync(join(dir, 'scripts', 'kafka.sh'))) return dir;
     dir = dirname(dir);
   }
-  return dirname(dirname(fileURLToPath(import.meta.url)));
+  // Fallback: validate the path contains the marker before returning it.
+  const fallback = dirname(dirname(fileURLToPath(import.meta.url)));
+  if (!existsSync(join(fallback, 'scripts', 'kafka.sh'))) {
+    throw new Error(
+      `findRoot() failed: could not locate scripts/kafka.sh from ${fileURLToPath(import.meta.url)}`,
+    );
+  }
+  return fallback;
 }
 export const MSROUTER_ROOT = findRoot();
 
 export interface iTermOpts {
   entryCommand: string;
   workspace: string;
-  cdpUrl: string;
   log: Logger;
 }
 
@@ -115,17 +121,6 @@ export function startKafkaInIterm(opts: iTermOpts): void {
   if (isKafkaRunning()) {
     opts.log.info('Kafka broker already running; skipping spawn');
     return;
-  }
-  const lockPath = join(homedir(), '.campaign-agent', 'kafka-start.lock');
-  if (isStartLocked(lockPath)) {
-    opts.log.info('Kafka startup lock is held; skipping spawn');
-    return;
-  }
-  try {
-    mkdirSync(dirname(lockPath), { recursive: true });
-    writeFileSync(lockPath, `${process.pid}\n${Date.now()}\n`);
-  } catch {
-    /* best-effort */
   }
   // Both start and monitor run in the SAME tab/session (start, then monitor).
   const script = itermScript(

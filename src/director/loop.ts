@@ -185,7 +185,6 @@ export class DirectorLoop {
         startWorkerInIterm({
           entryCommand: this.opts.env.DIRECTOR_RUNNER || 'job-search-agent',
           workspace: this.opts.env.DIRECTOR_OPENCLAW_WORKSPACE,
-          cdpUrl: this.opts.env.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
           log: this.opts.log,
         });
       } catch {
@@ -200,7 +199,6 @@ export class DirectorLoop {
         startKafkaInIterm({
           entryCommand: this.opts.env.DIRECTOR_RUNNER || 'job-search-agent',
           workspace: this.opts.env.DIRECTOR_OPENCLAW_WORKSPACE,
-          cdpUrl: this.opts.env.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
           log: this.opts.log,
         });
       } catch {

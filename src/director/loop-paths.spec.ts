@@ -406,7 +406,6 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
     expect(vi.mocked(startWorkerInIterm)).toHaveBeenCalledWith(
       expect.objectContaining({
         entryCommand: 'job-search-agent',
-        cdpUrl: 'http://127.0.0.1:9222',
       }),
     );
   });
