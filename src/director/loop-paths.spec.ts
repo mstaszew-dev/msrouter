@@ -56,6 +56,7 @@ vi.mock('./restart.js', () => ({
   shouldRotateVpn: vi.fn(() => false),
   snapshot: vi.fn(() => ({ pids: [1], running: true })),
   startWorkerInIterm: vi.fn(),
+  startKafkaInIterm: vi.fn(),
 }));
 
 vi.mock('./classify.js', () => ({ classify: vi.fn() }));

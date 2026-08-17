@@ -181,17 +181,21 @@ export class DirectorLoop {
     });
     if (!state.running) {
       this.opts.log.info('Campaign not running; starting via iTerm');
-      startWorkerInIterm({
-        entryCommand: this.opts.env.DIRECTOR_RUNNER || 'job-search-agent',
-        workspace: this.opts.env.DIRECTOR_OPENCLAW_WORKSPACE,
-        cdpUrl: this.opts.env.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
-        log: this.opts.log,
-      });
-    } else if (this.opts.env.KAFKA_ENABLED) {
-      // Ensure Kafka is running even if the worker was already up (Kafka is
-      // normally started as a side-effect of startWorkerInIterm, so it may
-      // never have been launched if the director started while the worker
-      // was already running).
+      try {
+        startWorkerInIterm({
+          entryCommand: this.opts.env.DIRECTOR_RUNNER || 'job-search-agent',
+          workspace: this.opts.env.DIRECTOR_OPENCLAW_WORKSPACE,
+          cdpUrl: this.opts.env.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
+          log: this.opts.log,
+        });
+      } catch {
+        // best-effort: agent startup failure should not block the director tick
+      }
+    }
+    // Always ensure Kafka is running (idempotent: skips if already up).
+    // Separated from worker startup so Kafka is started even when the agent
+    // was already running on a previous tick.
+    if (this.opts.env.KAFKA_ENABLED) {
       try {
         startKafkaInIterm({
           entryCommand: this.opts.env.DIRECTOR_RUNNER || 'job-search-agent',

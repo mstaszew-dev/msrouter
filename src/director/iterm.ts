@@ -33,7 +33,7 @@ function startLockPath(): string {
 
 function itermScript(first: string, second?: string): string {
   const body = second
-    ? `  tell newSess\n    write text "${first}"\n  end tell\n  tell current window\n    set newTab to (create tab with default profile)\n    tell current session of newTab\n      write text "${second}"\n    end tell\n  end tell`
+    ? `  tell newSess\n    write text "${first}"\n    delay 1\n    write text "${second}"\n  end tell`
     : `  tell newSess\n    write text "${first}"\n  end tell`;
   return `tell application "iTerm2"
   if (count of windows) = 0 then
@@ -47,6 +47,38 @@ function itermScript(first: string, second?: string): string {
   end if
 ${body}
 end tell`;
+}
+
+/**
+ * Check if the Kafka broker is already running.
+ * The pidfile is unreliable (kafka.sh uses nohup, bash exits immediately).
+ * Instead: (1) check if port 9092 is in use, (2) check for a live kafka
+ * Java process. Either signal means "do not spawn a new tab".
+ */
+function isKafkaRunning(): boolean {
+  // Fast check: is anything listening on the Kafka port?
+  try {
+    const out = execFileSync('lsof', ['-i', ':9092', '-sTCP:LISTEN'], {
+      encoding: 'utf8',
+      timeout: 3_000,
+      stdio: 'pipe',
+    });
+    if (out.trim().length > 0) return true;
+  } catch {
+    /* lsof failed or nothing on 9092 */
+  }
+  // Fallback: look for a live kafka-server-start Java process
+  try {
+    const out = execFileSync('pgrep', ['-f', 'kafka.server.KafkaServer'], {
+      encoding: 'utf8',
+      timeout: 3_000,
+      stdio: 'pipe',
+    });
+    if (out.trim().length > 0) return true;
+  } catch {
+    /* no kafka process found */
+  }
+  return false;
 }
 
 export function startWorkerInIterm(opts: iTermOpts): void {
@@ -68,11 +100,6 @@ export function startWorkerInIterm(opts: iTermOpts): void {
       { workspace: opts.workspace, command: opts.entryCommand },
       'started job-search-agent in iTerm2',
     );
-    try {
-      startKafkaInIterm(opts);
-    } catch {
-      // best-effort: Kafka startup failure should not prevent agent launch
-    }
   } catch (e) {
     opts.log.error(
       { err: e instanceof Error ? e.message : String(e) },
@@ -85,6 +112,10 @@ export function startWorkerInIterm(opts: iTermOpts): void {
 }
 
 export function startKafkaInIterm(opts: iTermOpts): void {
+  if (isKafkaRunning()) {
+    opts.log.info('Kafka broker already running; skipping spawn');
+    return;
+  }
   const lockPath = join(homedir(), '.campaign-agent', 'kafka-start.lock');
   if (isStartLocked(lockPath)) {
     opts.log.info('Kafka startup lock is held; skipping spawn');
@@ -96,9 +127,11 @@ export function startKafkaInIterm(opts: iTermOpts): void {
   } catch {
     /* best-effort */
   }
-  const startCmd = `cd ${MSROUTER_ROOT} && bash scripts/kafka.sh start`;
-  const monitorCmd = `cd ${MSROUTER_ROOT} && bash scripts/kafka.sh monitor`;
-  const script = itermScript(startCmd, monitorCmd);
+  // Both start and monitor run in the SAME tab/session (start, then monitor).
+  const script = itermScript(
+    `cd ${MSROUTER_ROOT} && bash scripts/kafka.sh start`,
+    `cd ${MSROUTER_ROOT} && bash scripts/kafka.sh monitor`,
+  );
   try {
     execFileSync('osascript', ['-e', script], { encoding: 'utf8', stdio: 'ignore' });
     opts.log.info('started Kafka in iTerm2');

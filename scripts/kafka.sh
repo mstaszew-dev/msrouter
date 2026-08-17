@@ -131,17 +131,25 @@ EOF
 }
 
 monitor() {
-  local topics="$KAFKA_HOME/bin/kafka-topics.sh --bootstrap-server $KAFKA_BOOTSTRAP --list 2>/dev/null"
-  for topic in $(eval "$topics"); do
-    if [ -n "$topic" ]; then
-      log "first 5 messages for ${topic}:"
-      "$KAFKA_HOME/bin/kafka-console-consumer.sh" \
-        --topic "$topic" --from-beginning \
-        --bootstrap-server "$KAFKA_BOOTSTRAP" \
-        --property print.key=true --property key.separator=$'\t' \
-        --max-messages 5 --timeout-ms 3000 2>/dev/null || log "  (no messages or error)"
-    fi
-  done
+  if ! is_running; then
+    log "kafka not running; skipping monitor"
+    return 0
+  fi
+  local topic_list
+  topic_list="$("$KAFKA_HOME/bin/kafka-topics.sh" --bootstrap-server "$KAFKA_BOOTSTRAP" --list 2>/dev/null)" || true
+  if [ -z "$topic_list" ]; then
+    log "no topics found"
+    return 0
+  fi
+  while IFS= read -r topic; do
+    [ -z "$topic" ] && continue
+    log "first 5 messages for ${topic}:"
+    "$KAFKA_HOME/bin/kafka-console-consumer.sh" \
+      --topic "$topic" --from-beginning \
+      --bootstrap-server "$KAFKA_BOOTSTRAP" \
+      --property print.key=true --property key.separator=$'\t' \
+      --max-messages 5 --timeout-ms 3000 2>/dev/null || log "  (no messages or error)"
+  done <<< "$topic_list"
   ok "monitor complete"
 }
 
