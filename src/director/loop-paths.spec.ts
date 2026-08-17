@@ -167,7 +167,12 @@ function makeSurface() {
     postApplied: vi.fn(async () => undefined),
     postObservation: vi.fn(async () => undefined),
     postRestart: vi.fn(async () => undefined),
-    pollSlackMessages: vi.fn(async () => ({ decisions: [], latestTs: undefined })),
+    pollSlackMessages: vi.fn(
+      async (): Promise<{ decisions: PatchDecision[]; latestTs?: string }> => ({
+        decisions: [],
+        latestTs: undefined,
+      }),
+    ),
     flushOutbox: vi.fn(async () => 0),
   };
 }

@@ -152,7 +152,7 @@ export class LmStudioProvider extends SingleKeyProvider {
       };
     }
     const resolved = loaded ? (resolveLmStudioModel(loaded, opts.model) ?? opts.model) : opts.model;
-    return postChatCompletion(
+    const result = await postChatCompletion(
       { ...body, model: resolved },
       {
         baseUrl: this.#baseUrl,
@@ -162,5 +162,9 @@ export class LmStudioProvider extends SingleKeyProvider {
         keyTag: 'lmstudio',
       },
     );
+    if (result.kind === 'OK' && resolved !== opts.model) {
+      return { ...result, resolvedModel: resolved };
+    }
+    return result;
   }
 }

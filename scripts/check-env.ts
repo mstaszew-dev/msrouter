@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { loadEnv } from '../src/config/env.js';
 
 const c = loadEnv();
+// eslint-disable-next-line no-console
 console.log(
   JSON.stringify(
     {

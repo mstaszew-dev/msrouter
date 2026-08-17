@@ -13,11 +13,12 @@
 
 import 'dotenv/config';
 
+import pino from 'pino';
+
 import { loadEnv } from '../src/config/env.js';
+import { scrubSecrets } from '../src/providers/fetch.js';
 import { OpenRouterProvider, withFree } from '../src/providers/openrouter.js';
 import type { ChatRequestBody } from '../src/providers/types.js';
-import { scrubSecrets } from '../src/providers/fetch.js';
-import pino from 'pino';
 
 const env = loadEnv(process.env).env;
 const log = pino({ level: 'warn', name: 'probe' });
@@ -36,6 +37,7 @@ const body: ChatRequestBody = {
   max_tokens: 512,
 };
 
+// eslint-disable-next-line no-console
 console.log(`\nProbing ${provider.keyCount} OpenRouter keys with model "${model}"...\n`);
 
 let okAt = -1;
@@ -49,14 +51,17 @@ for (let i = 0; i < provider.keyCount; i++) {
     const text = scrubSecrets(await res.response.clone().text());
     const parsed = JSON.parse(text) as { choices?: Array<{ message?: { content?: string } }> };
     const content = parsed.choices?.[0]?.message?.content;
+    // eslint-disable-next-line no-console
     console.log(`${tag} OK     (200) content=${JSON.stringify(content)}`);
     okAt = i;
     break;
   }
   // KEY_FAILURE / TRANSIENT / BAD_REQUEST all surface status + message.
+  // eslint-disable-next-line no-console
   console.log(`${tag} ${res.kind.padEnd(12)} (${res.status}) ${scrubSecrets((res.message ?? '').slice(0, 70))}`);
 }
 
+// eslint-disable-next-line no-console
 console.log(
   okAt >= 0
     ? `\nResult: rotated through keys, FIRST SUCCESS at key${okAt + 1}.`

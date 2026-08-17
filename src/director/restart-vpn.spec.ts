@@ -1,15 +1,16 @@
+import { execFileSync } from 'node:child_process';
+
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 // Mock execFileSync; keep spawn real. Fast-forward timers.
 vi.mock('node:child_process', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- importOriginal needs an inline typeof import(); a type-only namespace breaks the factory's return typing
   const actual = await importOriginal<typeof import('node:child_process')>();
   return { ...actual, execFileSync: vi.fn() };
 });
 vi.mock('node:timers/promises', () => ({
   setTimeout: vi.fn(async () => undefined),
 }));
-
-import { execFileSync } from 'node:child_process';
 
 import {
   protonVpnConnected,
@@ -20,7 +21,9 @@ import {
 
 const mockedExec = vi.mocked(execFileSync);
 
-function stubExec(calls: Record<string, unknown | unknown[]>) {
+type ExecCalls = Record<string, string | string[] | undefined>;
+
+function stubExec(calls: ExecCalls) {
   mockedExec.mockReset();
   mockedExec.mockImplementation(((cmd: string) => {
     if (!(cmd in calls)) throw new Error(`unexpected command: ${cmd}`);
@@ -29,9 +32,9 @@ function stubExec(calls: Record<string, unknown | unknown[]>) {
     if (Array.isArray(v)) {
       const next = v.shift();
       if (next === undefined) throw new Error(`no more values for ${cmd}`);
-      return next as never;
+      return next;
     }
-    return v as never;
+    return v;
   }));
 }
 

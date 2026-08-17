@@ -1,5 +1,4 @@
 import type pino from 'pino';
-
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 import type { Env } from './config/env.js';
@@ -57,7 +56,8 @@ function mockPoller(): { start: ReturnType<typeof vi.fn>; stop: ReturnType<typeo
 }
 
 describe('startOrchestrator', () => {
-  let exitSpy: ReturnType<typeof vi.spyOn>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let exitSpy: ReturnType<typeof vi.spyOn<any, 'exit'>>;
 
   beforeEach(() => {
     vi.clearAllMocks();

@@ -34,6 +34,7 @@ import {
   rotateVpnIp,
   shouldRotateVpn,
   snapshot as snapshotWorker,
+  startKafkaInIterm,
   startWorkerInIterm,
 } from './restart.js';
 import type { Checkpoint, DirectorRunResult, DirectorSurface } from './types.js';
@@ -186,6 +187,21 @@ export class DirectorLoop {
         cdpUrl: this.opts.env.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
         log: this.opts.log,
       });
+    } else if (this.opts.env.KAFKA_ENABLED) {
+      // Ensure Kafka is running even if the worker was already up (Kafka is
+      // normally started as a side-effect of startWorkerInIterm, so it may
+      // never have been launched if the director started while the worker
+      // was already running).
+      try {
+        startKafkaInIterm({
+          entryCommand: this.opts.env.DIRECTOR_RUNNER || 'job-search-agent',
+          workspace: this.opts.env.DIRECTOR_OPENCLAW_WORKSPACE,
+          cdpUrl: this.opts.env.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
+          log: this.opts.log,
+        });
+      } catch {
+        // best-effort: Kafka startup failure should not block the director tick
+      }
     }
   }
 

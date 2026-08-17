@@ -153,7 +153,7 @@ function parseUpstreamJson(text: string): unknown {
 function constantTimeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) {
     // Still compare to keep the timing roughly constant; the result is false.
-    timingSafeEqual(Buffer.from(b), Buffer.from(b));
+    timingSafeEqual(Buffer.from(a), Buffer.from(b));
     return false;
   }
   return timingSafeEqual(Buffer.from(a), Buffer.from(b));

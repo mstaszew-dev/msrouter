@@ -2,8 +2,6 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import type { Logger } from 'pino';
-
 import type { SuperviseOpts, SuperviseState } from './restart.js';
 
 /**

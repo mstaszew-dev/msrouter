@@ -77,7 +77,7 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
     expect(res.kind).toBe('OK');
     const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
     expect(url).toBe('http://127.0.0.1:11434/v1/chat/completions');
-    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
     // model is rewritten to the chain-resolved id; everything else passes through.
     expect(body.model).toBe('qwen3.5:2b');
     // No ollama-native fields: the body is plain OpenAI shape.
@@ -140,7 +140,7 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
     expect(res.kind).toBe('OK');
     const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
     expect(url).toBe('http://127.0.0.1:11434/v1/chat/completions');
-    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
     expect(body.stream).toBe(true);
   });
 

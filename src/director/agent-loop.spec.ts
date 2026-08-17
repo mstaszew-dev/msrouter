@@ -1,5 +1,4 @@
 import type pino from 'pino';
-
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import { parseAgentPatches, runDirectorAgent } from './agent-loop.js';

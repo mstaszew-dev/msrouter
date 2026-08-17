@@ -33,7 +33,7 @@ export type AttemptOutcome =
 
 /** Outcome of a single upstream attempt (OK carries the Response to stream). */
 export type ProviderCallResult =
-  | { kind: 'OK'; response: Response }
+  | { kind: 'OK'; response: Response; resolvedModel?: string }
   | ({ kind: 'KEY_FAILURE' | 'TRANSIENT' | 'BAD_REQUEST' } & AttemptOutcome);
 
 /**

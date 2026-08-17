@@ -59,7 +59,7 @@ export function isEmptyCompletion(json: unknown): boolean {
 export async function checkStreamContent(
   res: Response,
 ): Promise<{ ok: true; response: Response } | { ok: false; reason: string }> {
-  const reader = res.body?.getReader();
+  const reader = res.body?.getReader() as ReadableStreamDefaultReader<Uint8Array> | undefined;
   if (!reader) {
     return { ok: false, reason: 'no response body' };
   }
@@ -158,7 +158,7 @@ export async function checkStreamContent(
   const restStream = new ReadableStream({
     start(controller) {
       controller.enqueue(allData);
-      (async () => {
+      void (async () => {
           try {
             while (true) {
               const r = await reader.read();

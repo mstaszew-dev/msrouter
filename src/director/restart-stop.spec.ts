@@ -1,4 +1,7 @@
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn as realSpawn } from 'node:child_process';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import type pino from 'pino';
@@ -7,22 +10,20 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 // execFileSync defaults to the real implementation (needed by the
 // real-process stopTree/childrenOf tests); detectWorker tests override it.
 const realExec = vi.hoisted(() => ({
-  execFileSync: null as unknown as typeof import('node:child_process')['execFileSync'],
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+  execFileSync: null as unknown as typeof execFileSync,
 }));
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
 vi.mock('node:child_process', async (importOriginal) => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports
   const actual = await importOriginal<typeof import('node:child_process')>();
   realExec.execFileSync = actual.execFileSync;
   return {
     ...actual,
-    execFileSync: vi.fn(((file: string, ...args: any[]) =>
-      realExec.execFileSync(file, ...args)) as never),
+    execFileSync: vi.fn((realExec.execFileSync as (...a: unknown[]) => unknown).bind(realExec)),
   };
 });
-
-import { execFileSync, spawn as realSpawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+/* eslint-enable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
 
 import { childrenOf, detectWorker, ensureInfrastructureHealthy, stopTree } from './restart.js';
 
@@ -38,8 +39,9 @@ function alive(pid: number): boolean {
 
 beforeEach(() => {
   // Reset to the real pass-through implementation between tests.
-  mockedExec.mockImplementation(((file: string, ...args: any[]) =>
-    realExec.execFileSync(file, ...args)) as never);
+  mockedExec.mockImplementation(
+    (realExec.execFileSync as (...a: unknown[]) => unknown).bind(realExec) as never,
+  );
 });
 
 describe('detectWorker', () => {

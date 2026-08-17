@@ -156,7 +156,6 @@ describe('checkStreamContent', () => {
   });
 
   it('returns ok=false for empty stream (no data)', async () => {
-    const encoder = new TextEncoder();
     const stream = new ReadableStream({
       start(controller) {
         controller.close();
