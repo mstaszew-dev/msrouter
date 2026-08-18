@@ -37,7 +37,32 @@ export function detectProcess(pattern: string): number[] {
 /** Snapshot the supervise state. */
 export function snapshot(opts: SuperviseOpts): SuperviseState {
   const pids = detectWorker(opts.entryCommand);
-  return { pids, running: pids.length > 0 };
+  const running = pids.length > 0;
+  // A process is orphaned when its parent is PID 1 (init). This means the
+  // terminal tab that launched it was closed but the process survived. An
+  // orphaned agent can't be supervised (no terminal for logs, no signal
+  // forwarding) and should be killed and restarted in a fresh iTerm tab.
+  const orphaned = running && pids.every((p) => isOrphaned(p));
+  return { pids, running, orphaned };
+}
+
+/**
+ * Check if a process is orphaned (parent PID is 1 / init).
+ * Orphaned processes survived their terminal tab closing and can't be
+ * supervised — the director should kill and restart them in a fresh iTerm tab.
+ */
+export function isOrphaned(pid: number): boolean {
+  try {
+    const out = execFileSync('ps', ['-o', 'ppid=', '-p', String(pid)], {
+      encoding: 'utf8',
+      timeout: 3_000,
+      stdio: 'pipe',
+    });
+    const ppid = Number.parseInt(out.trim(), 10);
+    return ppid === 1;
+  } catch {
+    return false;
+  }
 }
 
 /** Direct children of a pid via pgrep -P. */

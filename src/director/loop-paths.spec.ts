@@ -51,10 +51,11 @@ vi.mock('node:child_process', () => ({
 vi.mock('./restart.js', () => ({
   ensureCdpRunning: vi.fn(async () => undefined),
   ensureInfrastructureHealthy: vi.fn(async () => false),
-  restartWorker: vi.fn(async () => ({ iterm: true, state: { pids: [1], running: true } })),
+  restartWorker: vi.fn(async () => ({ iterm: true, state: { pids: [1], running: true, orphaned: false } })),
   rotateVpnIp: vi.fn(async () => true),
   shouldRotateVpn: vi.fn(() => false),
-  snapshot: vi.fn(() => ({ pids: [1], running: true })),
+  snapshot: vi.fn(() => ({ pids: [1], running: true, orphaned: false })),
+  stopWorker: vi.fn(async () => ({ killed: [] })),
   startWorkerInIterm: vi.fn(),
   startKafkaInIterm: vi.fn(),
 }));
@@ -88,6 +89,7 @@ import {
   rotateVpnIp,
   shouldRotateVpn,
   snapshot as snapshotWorker,
+  stopWorker,
   startWorkerInIterm,
 } from './restart.js';
 import type {
@@ -232,7 +234,7 @@ beforeEach(() => {
   vi.mocked(rotateVpnIp).mockReset().mockResolvedValue(true);
   vi.mocked(restartWorker)
     .mockReset()
-    .mockResolvedValue({ iterm: true, state: { pids: [1], running: true } });
+    .mockResolvedValue({ iterm: true, state: { pids: [1], running: true, orphaned: false } });
   vi.mocked(ensureInfrastructureHealthy).mockReset().mockResolvedValue(false);
 });
 
@@ -398,7 +400,7 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
 
   it('uses env fallbacks and spawns the worker when it is not running', async () => {
     const { loop } = buildLoop({ DIRECTOR_RUNNER: undefined, DIRECTOR_CDP_URL: undefined });
-    vi.mocked(snapshotWorker).mockReturnValue({ pids: [], running: false });
+    vi.mocked(snapshotWorker).mockReturnValue({ pids: [], running: false, orphaned: false });
 
     const result = await loop.runOnce(freshSignal());
 
@@ -503,5 +505,18 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
     const result = await loop.runOnce(freshSignal());
 
     expect(result.reason).toBe('ok');
+  });
+
+  it('kills orphaned processes and restarts the worker in iTerm', async () => {
+    const { loop } = buildLoop();
+    vi.mocked(snapshotWorker).mockReturnValue({ pids: [999], running: true, orphaned: true });
+
+    const result = await loop.runOnce(freshSignal());
+
+    expect(result.reason).toBe('ok');
+    expect(vi.mocked(stopWorker)).toHaveBeenCalledWith(
+      expect.objectContaining({ entryCommand: '/tmp/launch' }),
+    );
+    expect(vi.mocked(startWorkerInIterm)).toHaveBeenCalled();
   });
 });

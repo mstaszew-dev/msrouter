@@ -25,7 +25,14 @@ vi.mock('node:child_process', async (importOriginal) => {
 });
 /* eslint-enable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
 
-import { childrenOf, detectWorker, ensureInfrastructureHealthy, stopTree } from './restart.js';
+import {
+  childrenOf,
+  detectWorker,
+  ensureInfrastructureHealthy,
+  isOrphaned,
+  snapshot,
+  stopTree,
+} from './restart.js';
 
 const mockedExec = vi.mocked(execFileSync);
 
@@ -42,6 +49,64 @@ beforeEach(() => {
   mockedExec.mockImplementation(
     (realExec.execFileSync as (...a: unknown[]) => unknown).bind(realExec) as never,
   );
+});
+
+describe('snapshot', () => {
+  it('marks orphaned as true when all detected processes have PPID 1', () => {
+    mockedExec.mockImplementation(((file: string, args: string[]) => {
+      if (file === 'pgrep') return '100\n';
+      if (file === 'ps' && args.includes('-o')) return '  1\n';
+      throw new Error('unexpected');
+    }) as never);
+    const state = snapshot({ entryCommand: 'x', workspace: '/tmp', cdpUrl: '', log: silent });
+    expect(state.running).toBe(true);
+    expect(state.orphaned).toBe(true);
+  });
+
+  it('marks orphaned as false when process has a real parent', () => {
+    mockedExec.mockImplementation(((file: string, args: string[]) => {
+      if (file === 'pgrep') return '100\n';
+      if (file === 'ps' && args.includes('-o')) return '  90090\n';
+      throw new Error('unexpected');
+    }) as never);
+    const state = snapshot({ entryCommand: 'x', workspace: '/tmp', cdpUrl: '', log: silent });
+    expect(state.running).toBe(true);
+    expect(state.orphaned).toBe(false);
+  });
+
+  it('marks orphaned as false when no processes are running', () => {
+    mockedExec.mockImplementation(() => {
+      throw new Error('no match');
+    });
+    const state = snapshot({ entryCommand: 'x', workspace: '/tmp', cdpUrl: '', log: silent });
+    expect(state.running).toBe(false);
+    expect(state.orphaned).toBe(false);
+  });
+});
+
+describe('isOrphaned', () => {
+  it('returns true when process parent is PID 1 (init)', () => {
+    mockedExec.mockImplementation(((file: string, args: string[]) => {
+      if (file === 'ps' && args.includes('-o')) return '  1\n';
+      throw new Error('unexpected call');
+    }) as never);
+    expect(isOrphaned(12345)).toBe(true);
+  });
+
+  it('returns false when process has a real parent', () => {
+    mockedExec.mockImplementation(((file: string, args: string[]) => {
+      if (file === 'ps' && args.includes('-o')) return '  90090\n';
+      throw new Error('unexpected call');
+    }) as never);
+    expect(isOrphaned(12345)).toBe(false);
+  });
+
+  it('returns false when ps fails (process dead or unknown)', () => {
+    mockedExec.mockImplementation(() => {
+      throw new Error('ps: no such process');
+    });
+    expect(isOrphaned(12345)).toBe(false);
+  });
 });
 
 describe('detectWorker', () => {

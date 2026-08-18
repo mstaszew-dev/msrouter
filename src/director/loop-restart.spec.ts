@@ -9,7 +9,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 vi.mock('./restart.js', () => ({
   ensureCdpRunning: vi.fn(async () => undefined),
   ensureInfrastructureHealthy: vi.fn(async () => false),
-  restartWorker: vi.fn(async () => ({ iterm: true, state: { pids: [1], running: true } })),
+  restartWorker: vi.fn(async () => ({ iterm: true, state: { pids: [1], running: true, orphaned: false } })),
   rotateVpnIp: vi.fn(async () => true),
   shouldRotateVpn: vi.fn(() => true),
   snapshot: vi.fn(() => ({ pids: [], running: false })),

@@ -20,9 +20,9 @@ vi.mock('./restart.js', async (importOriginal) => {
     ...mod,
     ensureCdpRunning: vi.fn(async () => {}),
     ensureInfrastructureHealthy: vi.fn(async () => false),
-    snapshot: vi.fn(() => ({ pids: [], running: true })),
+    snapshot: vi.fn(() => ({ pids: [], running: true, orphaned: false })),
     startWorkerInIterm: vi.fn(),
-    restartWorker: vi.fn(async () => ({ iterm: true, state: { pids: [], running: true } })),
+    restartWorker: vi.fn(async () => ({ iterm: true, state: { pids: [], running: true, orphaned: false } })),
     rotateVpnIp: vi.fn(async () => false),
   };
 });
@@ -273,7 +273,7 @@ describe('DirectorLoop.runOnce', () => {
     });
     // Force the supervisor to observe the worker as NOT running (this is the
     // state that previously triggered the infinite-respawn loop).
-    vi.mocked(snapshotWorker).mockReturnValueOnce({ pids: [], running: false });
+    vi.mocked(snapshotWorker).mockReturnValueOnce({ pids: [], running: false, orphaned: false });
     vi.mocked(startWorkerInIterm).mockClear();
 
     const chain = { handle: vi.fn() };

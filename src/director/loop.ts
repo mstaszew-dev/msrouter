@@ -36,6 +36,7 @@ import {
   snapshot as snapshotWorker,
   startKafkaInIterm,
   startWorkerInIterm,
+  stopWorker,
 } from './restart.js';
 import type { Checkpoint, DirectorRunResult, DirectorSurface } from './types.js';
 import type { DecisionClassification } from './types.js';
@@ -179,7 +180,20 @@ export class DirectorLoop {
       log: this.opts.log,
       cdpTimeoutMs: this.opts.env.DIRECTOR_CDP_URL ? 30_000 : 5000,
     });
-    if (!state.running) {
+    if (state.orphaned) {
+      this.opts.log.warn(
+        { pids: state.pids },
+        'Agent is orphaned (PPID 1); killing and restarting in iTerm',
+      );
+      await stopWorker({
+        entryCommand: this.opts.env.DIRECTOR_RUNNER || 'job-search-agent',
+        workspace: this.opts.env.DIRECTOR_OPENCLAW_WORKSPACE,
+        cdpUrl: this.opts.env.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
+        log: this.opts.log,
+      });
+      // Fall through to start a fresh iTerm tab below.
+    }
+    if (!state.running || state.orphaned) {
       this.opts.log.info('Campaign not running; starting via iTerm');
       try {
         startWorkerInIterm({

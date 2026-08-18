@@ -21,12 +21,14 @@ export interface SuperviseOpts {
 export interface SuperviseState {
   pids: number[];
   running: boolean;
+  orphaned: boolean;
 }
 export {
   detectProcess,
   detectWorker,
   childrenOf,
   isStartLocked,
+  isOrphaned,
   readStartLock,
   stopTree,
   stopWorker,
