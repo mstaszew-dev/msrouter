@@ -1,8 +1,8 @@
 /**
  * Local provider (llama-server, OpenAI-compatible).
  *
- * The local model is served by a direct `llama-server` process (build b10333)
- * exposing the Qwen3.5-2B GGUF (native 256K context, DeltaNet hybrid arch)
+ * The local model is served by a direct `lama-server` process (build b10333)
+ * exposing the Qwen3.5-2B GGUF (native 128K context, DeltaNet hybrid arch)
  * via its OpenAI-compatible /v1/chat/completions endpoint, NOT by the ollama
  * daemon. (The ollama daemon is not running on this machine; llama-server does
  * not implement ollama's native /api/chat or /api/tags, so any /api/chat call
@@ -20,7 +20,7 @@
  * timeout. Local is routed LAST in the chain (the fallback when every remote
  * provider is flapping), so a guard rejection lets the chain answer from the
  * remote providers it already tried - it never burns the slot on a prompt
- * that cannot fit the attempt window.
+ * that cannot fit the model's 128K context window.
  */
 import type { Logger } from 'pino';
 
@@ -33,16 +33,12 @@ import type {
 } from './types.js';
 
 /**
- * Prompt-token ceiling for local. Sized to the local attempt window: msrouter
- * allows local up to 300s (LOCAL_TIMEOUT_MS, matched by the campaign agent's
- * 300s client cap), so the guard admits only prompts that fit that window.
- * The chars/4 heuristic overestimates real tokens ~1.6x, so a 50k estimate is
- * ~31k real tokens: prefill at the slowest observed 220 tok/s is ~142s, plus
- * a full 4096-token generation at ~38 tok/s decode is ~108s - about 250s,
- * inside 300s. Larger prompts fast-fail so the chain answers from the remote
- * providers it already tried, instead of burning the slot.
+ * Prompt-token ceiling for local. The Qwen3.5-2B GGUF supports up to 128K
+ * context natively. The guard admits prompts that fit the model's window;
+ * larger prompts fast-fail so the chain answers from remote providers instead
+ * of burning the slow single-slot llama-server on a prompt that cannot fit.
  */
-const LOCAL_MAX_PROMPT_TOKENS = 50_000;
+const LOCAL_MAX_PROMPT_TOKENS = 128_000;
 
 /** Rough prompt-token estimate (chars/4 + per-message overhead), matching the
  *  campaign agent's own estimate so the guard is consistent with what the

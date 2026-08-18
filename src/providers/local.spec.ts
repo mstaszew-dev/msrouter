@@ -144,10 +144,10 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
     expect(body.stream).toBe(true);
   });
 
-  it('fast-fails oversized prompts (would clog the single llama-server slot)', async () => {
+  it('fast-fails oversized prompts beyond 128K tokens', async () => {
     const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
-    // ~150k tokens by the chars/4 heuristic: well past the 50000 guard.
+    // ~150k tokens by the chars/4 heuristic: well past the 128K guard.
     const big = 'x'.repeat(600_000);
     const res = await makeProvider().attempt(
       { ...baseBody, messages: [{ role: 'user', content: big }] },
@@ -158,6 +158,21 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
     // No fetch: the guard returns before any network call, so a huge prompt
     // cannot block the single llama-server slot for the whole timeout.
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('accepts prompts within the 128K token budget', async () => {
+    const fetchMock = stubFetchOnce({
+      choices: [{ message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
+    });
+    // ~100k tokens by chars/4 heuristic: under the 128K guard, should pass.
+    const medium = 'x'.repeat(400_000);
+    const res = await makeProvider().attempt(
+      { ...baseBody, messages: [{ role: 'user', content: medium }] },
+      new AbortController().signal,
+      { model: 'qwen3.5:2b' },
+    );
+    expect(res.kind).toBe('OK');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('returns TRANSIENT on network failure (never throws)', async () => {
