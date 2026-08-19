@@ -78,7 +78,7 @@ describe('withFree', () => {
   });
 
   it('preserves existing variant suffix like :2024-08-06', () => {
-    // includes(':') prevents double-sufficking — any colon variant is preserved
+    // includes(':') prevents double-suffixing — any colon variant is preserved
     const result = withFree('openai/gpt-4o:2024-08-06', true);
     expect(result).toBe('openai/gpt-4o:2024-08-06');
   });
