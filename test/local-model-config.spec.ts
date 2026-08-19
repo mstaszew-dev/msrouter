@@ -37,11 +37,11 @@ function providerIds(json: Record<string, unknown>): string[] {
 }
 
 describe('constraint: local models are Qwen3.5 (9B + 4B) everywhere', () => {
-  it('msrouter .env prefers the 9b alias and points at the live llama-server port', () => {
+  it('msrouter .env prefers the 4b alias and points at the live llama-server port', () => {
     const env = readFileSync(MSROUTER_ENV, 'utf8');
     expect(env).toMatch(/^LMSTUDIO_ENABLED=true$/m);
     expect(env).toMatch(/^LMSTUDIO_BASE_URL=http:\/\/127\.0\.0\.1:1235\/v1$/m);
-    expect(env).toMatch(/^LMSTUDIO_MODEL=qwen3\.5-9b$/m);
+    expect(env).toMatch(/^LMSTUDIO_MODEL=qwen3\.5-4b$/m);
     // The retired gemma consolidation must not come back.
     expect(env).not.toMatch(/gemma-4-e4b/i);
   });

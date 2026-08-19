@@ -153,7 +153,7 @@ describe('loadEnv - LM Studio (Bionic) local provider', () => {
     expect(cfg.env.LMSTUDIO_ENABLED).toBe(false);
     expect(cfg.env.LMSTUDIO_BASE_URL).toBe('http://127.0.0.1:1234/v1');
     // Alias only: the provider resolves it against discovered loaded models.
-    expect(cfg.env.LMSTUDIO_MODEL).toBe('qwen3.5-9b');
+    expect(cfg.env.LMSTUDIO_MODEL).toBe('qwen3.5-4b');
   });
 
   it('accepts LMSTUDIO_ENABLED=true and a model override', () => {

@@ -52,7 +52,7 @@ const schema = z.object({
   // actually loaded (GET {base}/models) and falls back to whatever is up.
   LMSTUDIO_ENABLED: flag('false'),
   LMSTUDIO_BASE_URL: z.string().url().default('http://127.0.0.1:1234/v1'),
-  LMSTUDIO_MODEL: z.string().default('qwen3.5-9b'),
+  LMSTUDIO_MODEL: z.string().default('qwen3.5-4b'),
   // Local prefills are slow (a 20k-token prompt takes minutes on the shared
   // single-slot llama-server), so LM Studio gets its own timeout (cf. LOCAL_TIMEOUT_MS).
   LMSTUDIO_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
