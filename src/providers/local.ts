@@ -42,15 +42,29 @@ const LOCAL_MAX_PROMPT_TOKENS = 128_000;
 
 /** Rough prompt-token estimate (chars/4 + per-message overhead), matching the
  *  campaign agent's own estimate so the guard is consistent with what the
- *  client believes it is sending. */
-function estimatePromptTokens(messages: unknown[]): number {
+ *  client believes it is sending. Includes tool definitions which can add
+ *  2-5K tokens for function-calling setups. */
+function estimatePromptTokens(messages: unknown[], tools?: unknown[]): number {
   let chars = 0;
   for (const m of messages) {
     if (!m || typeof m !== 'object') continue;
     const msg = m as Record<string, unknown>;
     const content = msg.content;
-    chars += typeof content === 'string' ? content.length : 0;
+    if (typeof content === 'string') {
+      chars += content.length;
+    } else if (Array.isArray(content)) {
+      for (const part of content) {
+        if (part && typeof part === 'object' && typeof (part as Record<string, unknown>).text === 'string') {
+          chars += ((part as Record<string, unknown>).text as string).length;
+        }
+      }
+    }
     chars += 10;
+  }
+  if (Array.isArray(tools)) {
+    for (const t of tools) {
+      chars += JSON.stringify(t).length;
+    }
   }
   return Math.floor(chars / 4);
 }
@@ -90,12 +104,15 @@ export class LocalProvider implements Provider {
     signal: AbortSignal,
     opts: AttemptOptions,
   ): Promise<ProviderCallResult> {
-    const promptTokens = estimatePromptTokens(Array.isArray(body.messages) ? body.messages : []);
+    const promptTokens = estimatePromptTokens(
+      Array.isArray(body.messages) ? body.messages : [],
+      Array.isArray(body.tools) ? body.tools : undefined,
+    );
     if (promptTokens > LOCAL_MAX_PROMPT_TOKENS) {
       return {
         kind: 'BAD_REQUEST',
         status: 400,
-        message: `local: prompt ~${promptTokens} tokens exceeds the 300s local budget (max ${LOCAL_MAX_PROMPT_TOKENS}); use a remote provider`,
+        message: `local: prompt ~${promptTokens} tokens exceeds model context window (max ${LOCAL_MAX_PROMPT_TOKENS}); use a remote provider`,
       };
     }
     // Verbatim passthrough: only rewrite model to the chain-resolved id. The

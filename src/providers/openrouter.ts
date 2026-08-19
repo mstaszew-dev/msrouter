@@ -132,7 +132,7 @@ export class OpenRouterProvider implements Provider {
  */
 export function withFree(model: string, force: boolean): string {
   if (!force) return model;
-  if (model.endsWith(':free') || model.includes(':')) return model;
+  if (model.includes(':')) return model;
   if (model === 'openrouter/free' || model === 'openrouter/auto') return model;
   return `${model}:free`;
 }

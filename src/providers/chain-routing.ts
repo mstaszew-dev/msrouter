@@ -102,7 +102,8 @@ export function shortCircuit(model: string): { provider: ChainProvider; model: s
     return { provider: 'zai', model: rest };
   }
   if (restLower.startsWith('openrouter/')) {
-    return { provider: 'openrouter', model: rest.slice('openrouter/'.length) };
+    const model = rest.slice('openrouter/'.length);
+    return { provider: 'openrouter', model: withFree(model, env().FORCE_FREE) };
   }
   if (restLower.startsWith('local/')) {
     return { provider: 'local', model: rest.slice('local/'.length) };

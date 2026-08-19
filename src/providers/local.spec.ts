@@ -196,4 +196,77 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
     expect(res.kind).toBe('TRANSIENT');
     expect((res as { message: string }).message).not.toContain('abc123456');
   });
+
+  it('includes tool definitions in prompt token estimate', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    // Messages under limit, but tools push over
+    const tools = Array.from({ length: 200 }, (_, i) => ({
+      type: 'function',
+      function: { name: `tool_${i}`, description: 'x'.repeat(200), parameters: {} },
+    }));
+    const res = await makeProvider().attempt(
+      { ...baseBody, messages: [{ role: 'user', content: 'hello' }], tools },
+      new AbortController().signal,
+      { model: 'qwen3.5:2b' },
+    );
+    // 200 tools * ~250 chars each = ~50K chars = ~12.5K tokens from tools alone
+    // Should still be under 128K limit, so this passes
+    expect(res.kind).toBe('OK');
+  });
+
+  it('rejects when tools push prompt over 128K', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    // Messages near limit + large tool definitions = over limit
+    const big = 'x'.repeat(490_000); // ~122.5K tokens from messages alone
+    const tools = Array.from({ length: 50 }, (_, i) => ({
+      type: 'function',
+      function: { name: `tool_${i}`, description: 'x'.repeat(1000), parameters: {} },
+    }));
+    const res = await makeProvider().attempt(
+      { ...baseBody, messages: [{ role: 'user', content: big }], tools },
+      new AbortController().signal,
+      { model: 'qwen3.5:2b' },
+    );
+    expect(res.kind).toBe('BAD_REQUEST');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('handles array-typed content in token estimate', async () => {
+    const fetchMock = stubFetchOnce({
+      choices: [{ message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
+    });
+    const res = await makeProvider().attempt(
+      {
+        ...baseBody,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: 'hello world' },
+            { type: 'text', text: 'second part' },
+          ],
+        }],
+      },
+      new AbortController().signal,
+      { model: 'qwen3.5:2b' },
+    );
+    expect(res.kind).toBe('OK');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('error message says "context window" not "300s budget"', async () => {
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const big = 'x'.repeat(600_000);
+    const res = await makeProvider().attempt(
+      { ...baseBody, messages: [{ role: 'user', content: big }] },
+      new AbortController().signal,
+      { model: 'qwen3.5:2b' },
+    );
+    expect(res.kind).toBe('BAD_REQUEST');
+    const msg = (res as { message: string }).message;
+    expect(msg).toContain('context window');
+    expect(msg).not.toContain('300s');
+  });
 });
