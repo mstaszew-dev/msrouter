@@ -28,9 +28,6 @@ log()  { printf '\033[1;34m[kafka]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m[ok]\033[0m  %s\n' "$*"; }
 die()  { printf '\033[1;31m[err]\033[0m %s\n' "$*" >&2; exit 1; }
 
-[[ -d "$KAFKA_HOME" ]] || die "KAFKA_HOME not found: $KAFKA_HOME. Download Kafka first."
-[[ -f "$KAFKA_HOME/bin/kafka-server-start.sh" ]] || die "Kafka scripts not found in $KAFKA_HOME/bin"
-
 is_running() {
   [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
 }
@@ -140,32 +137,26 @@ monitor() {
     log "kafka not running; skipping monitor"
     return 0
   fi
-  local topic_list
-  topic_list="$("$KAFKA_HOME/bin/kafka-topics.sh" --bootstrap-server "$KAFKA_BOOTSTRAP" --list 2>/dev/null)" || true
-  if [ -z "$topic_list" ]; then
-    log "no topics found"
-    return 0
-  fi
-  while IFS= read -r topic; do
-    [ -z "$topic" ] && continue
-    log "first 5 messages for ${topic}:"
-    "$KAFKA_HOME/bin/kafka-console-consumer.sh" \
-      --topic "$topic" --from-beginning \
-      --bootstrap-server "$KAFKA_BOOTSTRAP" \
-      --property print.key=true --property key.separator=$'\t' \
-      --max-messages 5 --timeout-ms 3000 2>/dev/null || log "  (no messages or error)"
-  done <<< "$topic_list"
-  ok "monitor complete"
+  log "tailing director-events (Ctrl-C to stop)"
+  exec "$KAFKA_HOME/bin/kafka-console-consumer.sh" \
+    --topic director-events --from-beginning \
+    --bootstrap-server "$KAFKA_BOOTSTRAP" \
+    --property print.key=true --property key.separator=$'\t'
 }
 
-case "${1:-status}" in
-  start)   start; create_topics; report ;;
-  stop)    stop ;;
-  restart) stop; sleep 2; start; create_topics; report ;;
-  status)  status ;;
-  topics)  create_topics ;;
-  monitor) monitor ;;
-  tail)    shift; tail_topic "$@" ;;
-  produce) shift; produce_one "$@" ;;
-  *) die "unknown: $1 (use: start | stop | restart | status | topics | monitor | tail <topic> | produce <topic> <key> <value>)" ;;
-esac
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  [[ -d "$KAFKA_HOME" ]] || die "KAFKA_HOME not found: $KAFKA_HOME. Download Kafka first."
+  [[ -f "$KAFKA_HOME/bin/kafka-server-start.sh" ]] || die "Kafka scripts not found in $KAFKA_HOME/bin"
+
+  case "${1:-status}" in
+    start)   start; create_topics; report ;;
+    stop)    stop ;;
+    restart) stop; sleep 2; start; create_topics; report ;;
+    status)  status ;;
+    topics)  create_topics ;;
+    monitor) monitor ;;
+    tail)    shift; tail_topic "$@" ;;
+    produce) shift; produce_one "$@" ;;
+    *) die "unknown: $1 (use: start | stop | restart | status | topics | monitor | tail <topic> | produce <topic> <key> <value>)" ;;
+  esac
+fi
