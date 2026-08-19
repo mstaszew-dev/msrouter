@@ -28,7 +28,7 @@ const silent = {
 
 const kafkaOpts: KafkaOpts = {
   kafkaHome: '/opt/kafka',
-  bootstrap: 'localhost:9092',
+  bootstrap: 'localhost:19092',
   log: silent,
 };
 

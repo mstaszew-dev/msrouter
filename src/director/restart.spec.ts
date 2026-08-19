@@ -17,6 +17,7 @@ import type pino from 'pino';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 import {
+  __resetKafkaSpawnCooldown,
   assertInIterm,
   checkInfrastructure,
   detectWorker,
@@ -151,9 +152,8 @@ describe('startKafkaInIterm', () => {
   });
 
   it('starts Kafka in an iTerm tab when broker is not running', () => {
-    // Mock lsof to return nothing (port 9092 not in use) and pgrep to fail
     vi.mocked(execFileSync).mockImplementation((cmd: string) => {
-      if (cmd === 'lsof' || cmd === 'pgrep') throw new Error('not found');
+      if (cmd === 'lsof') throw new Error('not found');
       return '';
     });
     startKafkaInIterm(kafkaOpts);
@@ -163,19 +163,15 @@ describe('startKafkaInIterm', () => {
     const script = osaCalls[0]![1]![1]!;
     expect(script).toContain('kafka');
     expect(script).toContain('scripts/kafka.sh');
-    // Both start and monitor run in the SAME session (no separate tab for monitor)
     expect(script).toContain('bash scripts/kafka.sh start');
     expect(script).toContain('bash scripts/kafka.sh monitor');
-    // Monitor should NOT spawn its own separate tab — it runs in the same session
     expect(script).not.toContain('tell current session of newTab');
-    // Regression: scripts/kafka.sh lives in the msrouter repo, not in the
-    // campaign workspace (startKafkaInIterm used to cd into opts.workspace).
     const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
     expect(script).toContain(`cd ${repoRoot}`);
     expect(script).not.toContain('/test/workspace');
   });
 
-  it('skips spawn when Kafka port 9092 is already listening', () => {
+  it('skips spawn when Kafka port 19092 is already listening', () => {
     vi.mocked(execFileSync).mockImplementation((cmd: string) => {
       if (cmd === 'lsof') return 'node  12345  mst  5u  IPv4  ...\n';
       throw new Error('not found');
@@ -184,14 +180,19 @@ describe('startKafkaInIterm', () => {
     expect(execFileSync).not.toHaveBeenCalledWith('osascript', expect.anything());
   });
 
-  it('skips spawn when a Kafka Java process is found', () => {
-    vi.mocked(execFileSync).mockImplementation((cmd: string, args?: readonly string[]) => {
+  it('does not spam tabs when Kafka repeatedly fails to start (cooldown)', () => {
+    __resetKafkaSpawnCooldown();
+    vi.mocked(execFileSync).mockImplementation((cmd: string) => {
       if (cmd === 'lsof') throw new Error('not found');
-      if (cmd === 'pgrep' && args?.includes('kafka.server.KafkaServer')) return '12345\n';
-      throw new Error('not found');
+      return '';
     });
     startKafkaInIterm(kafkaOpts);
-    expect(execFileSync).not.toHaveBeenCalledWith('osascript', expect.anything());
+    let osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
+    expect(osaCalls.length).toBe(1);
+    vi.mocked(execFileSync).mockClear();
+    startKafkaInIterm(kafkaOpts);
+    osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
+    expect(osaCalls.length).toBe(0);
   });
 });
 

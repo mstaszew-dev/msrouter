@@ -56,35 +56,29 @@ end tell`;
 }
 
 /**
- * Check if the Kafka broker is already running.
+ * Check if the Kafka broker is already running by testing the fixed port.
  * The pidfile is unreliable (kafka.sh uses nohup, bash exits immediately).
- * Instead: (1) check if port 9092 is in use, (2) check for a live kafka
- * Java process. Either signal means "do not spawn a new tab".
  */
 function isKafkaRunning(): boolean {
-  // Fast check: is anything listening on the Kafka port?
   try {
-    const out = execFileSync('lsof', ['-i', ':9092', '-sTCP:LISTEN'], {
+    const out = execFileSync('lsof', ['-i', ':19092', '-sTCP:LISTEN'], {
       encoding: 'utf8',
       timeout: 3_000,
       stdio: 'pipe',
     });
-    if (out.trim().length > 0) return true;
+    return out.trim().length > 0;
   } catch {
-    /* lsof failed or nothing on 9092 */
+    return false;
   }
-  // Fallback: look for a live kafka-server-start Java process
-  try {
-    const out = execFileSync('pgrep', ['-f', 'kafka.server.KafkaServer'], {
-      encoding: 'utf8',
-      timeout: 3_000,
-      stdio: 'pipe',
-    });
-    if (out.trim().length > 0) return true;
-  } catch {
-    /* no kafka process found */
-  }
-  return false;
+}
+
+/** Timestamp of last Kafka spawn attempt (module-level cooldown). */
+let lastKafkaSpawnAt = 0;
+const KAFKA_SPAWN_COOLDOWN_MS = 60_000;
+
+/** Reset the spawn cooldown (for testing only). */
+export function __resetKafkaSpawnCooldown(): void {
+  lastKafkaSpawnAt = 0;
 }
 
 export function startWorkerInIterm(opts: iTermOpts): void {
@@ -122,6 +116,15 @@ export function startKafkaInIterm(opts: iTermOpts): void {
     opts.log.info('Kafka broker already running; skipping spawn');
     return;
   }
+  // Cooldown: don't spam iTerm tabs when Kafka fails to start (e.g. missing
+  // KRaft meta.properties). The director tick calls this every minute; a
+  // failed spawn would otherwise open a new tab every tick.
+  const now = Date.now();
+  if (now - lastKafkaSpawnAt < KAFKA_SPAWN_COOLDOWN_MS) {
+    opts.log.info('Kafka spawn cooldown active; skipping');
+    return;
+  }
+  lastKafkaSpawnAt = now;
   // Both start and monitor run in the SAME tab/session (start, then monitor).
   const script = itermScript(
     `cd ${MSROUTER_ROOT} && bash scripts/kafka.sh start`,

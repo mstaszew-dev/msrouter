@@ -125,7 +125,7 @@ const schema = z.object({
   // Kafka (Director event streaming). Disabled by default.
   KAFKA_ENABLED: flag('true'),
   KAFKA_HOME: z.string().default('~/kafka/kafka_2.13-3.7.0'),
-  KAFKA_BOOTSTRAP: z.string().default('localhost:9092'),
+  KAFKA_BOOTSTRAP: z.string().default('localhost:19092'),
   KAFKA_POLL_INTERVAL_SECONDS: z.coerce.number().int().positive().default(30),
 
   CDP_URL: z.string().url().default('http://127.0.0.1:9222'),

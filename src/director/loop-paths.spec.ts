@@ -243,7 +243,7 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
     const { loop, surface, cpPath } = buildLoop({
       KAFKA_ENABLED: 'true',
       KAFKA_HOME: '~/kafka-home',
-      KAFKA_BOOTSTRAP: 'localhost:9092',
+      KAFKA_BOOTSTRAP: 'localhost:19092',
     });
     const ac = new AbortController();
     vi.mocked(classify).mockReturnValue(actionableWarn);
@@ -267,7 +267,7 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
       'director-events',
       expect.any(String),
       expect.any(String),
-      expect.objectContaining({ bootstrap: 'localhost:9092' }),
+      expect.objectContaining({ bootstrap: 'localhost:19092' }),
     );
     const values = vi
       .mocked(kafkaProduce)
@@ -283,7 +283,7 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
     const { loop, surface } = buildLoop({
       KAFKA_ENABLED: 'true',
       KAFKA_HOME: '/plain/kafka',
-      KAFKA_BOOTSTRAP: 'localhost:9092',
+      KAFKA_BOOTSTRAP: 'localhost:19092',
     });
     vi.mocked(readApprovedPatches).mockResolvedValue([PATCH1]);
 
@@ -387,7 +387,7 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
     const { loop } = buildLoop({
       KAFKA_ENABLED: 'true',
       KAFKA_HOME: '~',
-      KAFKA_BOOTSTRAP: 'localhost:9092',
+      KAFKA_BOOTSTRAP: 'localhost:19092',
     });
     vi.mocked(classify).mockReturnValue(actionableWarn);
     vi.mocked(runDirectorAgent).mockResolvedValue({ steps: 1, patches: [PATCH1], transcript: '' });

@@ -35,6 +35,7 @@ export {
   snapshot,
 } from './process.js';
 export {
+  __resetKafkaSpawnCooldown,
   assertInIterm,
   isInIterm,
   isRunningInIterm,

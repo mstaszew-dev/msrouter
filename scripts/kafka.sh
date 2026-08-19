@@ -18,7 +18,8 @@ ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${ROOT}"
 
 KAFKA_HOME="${KAFKA_HOME:-$HOME/kafka/kafka_2.13-3.7.0}"
-KAFKA_BOOTSTRAP="${KAFKA_BOOTSTRAP:-localhost:9092}"
+KAFKA_PORT="${KAFKA_PORT:-19092}"
+KAFKA_BOOTSTRAP="${KAFKA_BOOTSTRAP:-localhost:${KAFKA_PORT}}"
 PIDFILE=".run/kafka.pid"
 
 mkdir -p .run
@@ -36,9 +37,13 @@ is_running() {
 
 start() {
   if is_running; then die "Kafka already running (pid $(cat "$PIDFILE"))"; fi
-  log "starting Kafka broker in KRaft mode"
+  # Override ports in KRaft config so the broker listens on KAFKA_PORT.
+  local props=".run/kafka-server.properties"
+  sed -e "s/:9092/:${KAFKA_PORT}/g" \
+      "$KAFKA_HOME/config/kraft/server.properties" > "$props"
+  log "starting Kafka broker in KRaft mode on port ${KAFKA_PORT}"
   nohup "$KAFKA_HOME/bin/kafka-server-start.sh" \
-    "$KAFKA_HOME/config/kraft/server.properties" \
+    "$props" \
     > .run/kafka.log 2>&1 &
   echo $! > "$PIDFILE"
   ok "kafka pid $(cat "$PIDFILE")"
@@ -62,7 +67,7 @@ stop() {
   else
     log "kafka not running"
   fi
-  rm -f "$PIDFILE"
+  rm -f "$PIDFILE" .run/kafka-server.properties
 }
 
 status() {
