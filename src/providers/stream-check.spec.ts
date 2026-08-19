@@ -171,4 +171,20 @@ describe('checkStreamContent', () => {
     const result = await checkStreamContent(res);
     expect(result.ok).toBe(false);
   });
+
+  it('skips unparseable SSE event lines (JSON.parse throws)', async () => {
+    // Line 128: catch block when JSON.parse fails on a data: line
+    const encoder = new TextEncoder();
+    const sseText = 'data: {not valid json}\n\n' +
+      'data: ' + JSON.stringify({ choices: [{ delta: { content: 'real content' } }] }) + '\n\n';
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(sseText));
+        controller.close();
+      },
+    });
+    const res = new Response(stream, { status: 200 });
+    const result = await checkStreamContent(res);
+    expect(result.ok).toBe(true);
+  });
 });

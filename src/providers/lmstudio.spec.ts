@@ -118,6 +118,10 @@ describe('normalizeModelToken', () => {
     expect(normalizeModelToken('qwen3.5-4b')).toBe('qwen354b');
     expect(normalizeModelToken('qwen3.5-9b-q8_0')).toBe('qwen359b');
   });
+
+  it('returns empty string for empty input (?? id fallback path)', () => {
+    expect(normalizeModelToken('')).toBe('');
+  });
 });
 
 describe('resolveLmStudioModel', () => {
@@ -141,6 +145,55 @@ describe('resolveLmStudioModel', () => {
 
   it('returns undefined when no models are loaded', () => {
     expect(resolveLmStudioModel([], 'qwen3.5-9b')).toBeUndefined();
+  });
+});
+
+describe('extractModelIds (via listLoadedModels)', () => {
+  it('returns undefined when /models returns non-array data field', async () => {
+    stubLmStudio([], {});
+    // Override the fetch stub to return { object: 'list', data: 'not-an-array' }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL) => {
+        const u = String(url);
+        if (u.endsWith('/models')) {
+          return new Response(JSON.stringify({ object: 'list', data: 'not-an-array' }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }] }), { status: 200 });
+      }),
+    );
+    const p = makeProvider();
+    // Discovery returns undefined ids; the provider falls back to opts.model
+    const res = await p.attempt(baseBody, new AbortController().signal, { model: 'qwen3.5-9b' });
+    expect(res.kind).toBe('OK');
+  });
+
+  it('filters out non-object items in the data array', async () => {
+    // data contains a mix: valid object, string, number, null
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL) => {
+        const u = String(url);
+        if (u.endsWith('/models')) {
+          return new Response(
+            JSON.stringify({
+              object: 'list',
+              data: [{ id: 'valid-model' }, 'string-item', 42, null],
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response(
+          JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }] }),
+          { status: 200 },
+        );
+      }),
+    );
+    const p = makeProvider();
+    const res = await p.attempt(baseBody, new AbortController().signal, { model: 'valid-model' });
+    expect(res.kind).toBe('OK');
+    const loaded = await p.listLoadedModels();
+    expect(loaded).toEqual(['valid-model']);
   });
 });
 
@@ -200,5 +253,35 @@ describe('LmStudioProvider model discovery', () => {
     expect(res.kind).toBe('OK');
     const post = calls.find((c) => c.method === 'POST');
     expect(post?.body).toMatchObject({ model: 'qwen3.5-9b' });
+  });
+
+  it('uses requested model as-is when discovery returns unparseable data (loaded undefined)', async () => {
+    // /models returns 200 but data is not parseable into model ids (extractModelIds returns undefined)
+    // loaded becomes undefined => line 154 fallback: resolved = opts.model
+    const calls: Array<{ url: string; method: string; body?: unknown }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        const u = String(url);
+        const method = init?.method ?? 'GET';
+        const rawBody = typeof init?.body === 'string' ? init.body : '';
+        calls.push({ url: u, method, body: rawBody ? JSON.parse(rawBody) : undefined });
+        if (u.endsWith('/models')) {
+          return new Response(
+            JSON.stringify({ object: 'list', data: 'not-an-array' }),
+            { status: 200 },
+          );
+        }
+        return new Response(
+          JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }] }),
+          { status: 200 },
+        );
+      }),
+    );
+    const p = makeProvider();
+    const res = await p.attempt(baseBody, new AbortController().signal, { model: 'my-custom-model' });
+    expect(res.kind).toBe('OK');
+    const post = calls.find((c) => c.method === 'POST');
+    expect(post?.body).toMatchObject({ model: 'my-custom-model' });
   });
 });

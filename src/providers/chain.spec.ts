@@ -271,6 +271,56 @@ describe('ProviderChain - adaptive demotion', () => {
 });
 
 describe('ProviderChain - direct: short-circuit', () => {
+  it('throws NoProviderAvailableError when direct: provider is not available', async () => {
+    const p = makeProviders({ openrouterKeys: 0 });
+    // Mark openrouter unavailable
+    (p.openrouter as unknown as { available: boolean }).available = false;
+    const chain = new ProviderChain(p, silentLogger);
+    await expect(
+      chain.handle({ ...baseBody, model: 'direct:openrouter/mst/free' }, new AbortController().signal),
+    ).rejects.toBeInstanceOf(NoProviderAvailableError);
+  });
+
+  it('iterates all openrouter keys in runSingle (keyCount loop)', async () => {
+    const p = makeProviders({
+      openrouterKeys: 3,
+      openrouterResults: [
+        { kind: 'KEY_FAILURE', status: 429, message: 'k1 rl' },
+        { kind: 'KEY_FAILURE', status: 429, message: 'k2 rl' },
+        { kind: 'KEY_FAILURE', status: 429, message: 'k3 rl' },
+      ],
+    });
+    // Disable openai/zai/local so runSingle exhausts all OR keys and throws
+    (p.openai as unknown as { available: boolean }).available = false;
+    (p.zai as unknown as { available: boolean }).available = false;
+    const chain = new ProviderChain(p, silentLogger);
+    await expect(
+      chain.handle({ ...baseBody, model: 'direct:openrouter/mst/free' }, new AbortController().signal),
+    ).rejects.toBeInstanceOf(NoProviderAvailableError);
+    expect(p.openrouter.attempt).toHaveBeenCalledTimes(3);
+  });
+
+  it('aggregates failures when all direct: attempts fail', async () => {
+    const p = makeProviders({
+      openrouterKeys: 2,
+      openrouterResults: [
+        { kind: 'KEY_FAILURE', status: 429, message: 'k1' },
+        { kind: 'KEY_FAILURE', status: 429, message: 'k2' },
+      ],
+    });
+    (p.openai as unknown as { available: boolean }).available = false;
+    const chain = new ProviderChain(p, silentLogger);
+    await expect(
+      chain.handle({ ...baseBody, model: 'direct:openrouter/mst/free' }, new AbortController().signal),
+    ).rejects.toSatisfy((err: Error) => {
+      expect(err).toBeInstanceOf(NoProviderAvailableError);
+      // runSingle uses entry.label = p.id ('openrouter'), not the queue label
+      expect(err.message).toContain('openrouter');
+      expect(err.message).toContain('KEY_FAILURE');
+      return true;
+    });
+  });
+
   it('direct:openai/ routes only to OpenAI with no fallback', async () => {
     const p = makeProviders({
       openrouterKeys: 1,
@@ -517,5 +567,39 @@ describe('ProviderChain - local (llama-server) entry', () => {
     const p = makeProviders({ openrouterKeys: 1 });
     const chain = new ProviderChain(p, silentLogger);
     expect(chain.queueSnapshot().some((e) => e.provider === 'lmstudio')).toBe(false);
+  });
+});
+
+describe('ProviderChain - tryEntry demoteOnKeyFailure=false path', () => {
+  it('does not demote entry when called with demoteOnKeyFailure=false (runSingle path)', async () => {
+    const p = makeProviders({
+      openrouterKeys: 1,
+      openrouterResults: [{ kind: 'KEY_FAILURE', status: 429, message: 'rl' }],
+    });
+    // Disable openai/zai so runSingle exhausts OR and throws
+    (p.openai as unknown as { available: boolean }).available = false;
+    (p.zai as unknown as { available: boolean }).available = false;
+    const chain = new ProviderChain(p, silentLogger);
+    await expect(
+      chain.handle({ ...baseBody, model: 'direct:openrouter/mst/free' }, new AbortController().signal),
+    ).rejects.toBeInstanceOf(NoProviderAvailableError);
+    // The entry should NOT be demoted (demoteOnKeyFailure=false in runSingle)
+    const labels = chain.queueSnapshot().map((c) => c.label);
+    expect(labels[0]).toBe('openrouter[key1/openrouter/free]');
+  });
+});
+
+describe('ProviderChain - demoteEntry white-box', () => {
+  it('demoteEntry moves the entry to the back of the queue', () => {
+    const p = makeProviders({ openrouterKeys: 1 });
+    const chain = new ProviderChain(p, silentLogger);
+    const entry = chain.queueSnapshot()[0]!;
+    expect(entry.label).toBe('openrouter[key1/openrouter/free]');
+    const before = chain.queueSnapshot().map((c) => c.label);
+    expect(before[0]).toBe('openrouter[key1/openrouter/free]');
+    chain.demoteEntry(entry);
+    const after = chain.queueSnapshot().map((c) => c.label);
+    expect(after[after.length - 1]).toBe('openrouter[key1/openrouter/free]');
+    expect(after[0]).not.toBe('openrouter[key1/openrouter/free]');
   });
 });
