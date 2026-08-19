@@ -194,6 +194,17 @@ describe('startKafkaInIterm', () => {
     osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
     expect(osaCalls.length).toBe(0);
   });
+
+  it('rethrows when osascript fails in startKafkaInIterm', () => {
+    __resetKafkaSpawnCooldown();
+    vi.mocked(execFileSync).mockImplementation((cmd: string) => {
+      if (cmd === 'lsof') throw new Error('not found');
+      throw new Error('osascript failed');
+    });
+    expect(() => startKafkaInIterm(kafkaOpts)).toThrow(
+      'iTerm2 launch failed (is iTerm2 installed and running?). Start Kafka manually.',
+    );
+  });
 });
 
 describe('isInIterm', () => {

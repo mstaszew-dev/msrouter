@@ -163,6 +163,21 @@ describe('stopTree', () => {
     const killed = await stopTree([999_999_999], silent);
     expect(Array.isArray(killed)).toBe(true);
   });
+
+  it('SIGKILL survivors that ignore SIGTERM', async () => {
+    const child = realSpawn('node', [
+      '-e',
+      'process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);',
+    ], { stdio: 'ignore' });
+    await sleep(300);
+    const childPid = child.pid!;
+    expect(alive(childPid)).toBe(true);
+
+    const killed = await stopTree([childPid], silent, 500);
+    expect(killed).toContain(childPid);
+    await sleep(100);
+    expect(alive(childPid)).toBe(false);
+  }, 15000);
 });
 
 describe('ensureInfrastructureHealthy completion guard', () => {
