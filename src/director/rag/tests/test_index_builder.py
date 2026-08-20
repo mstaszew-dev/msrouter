@@ -1,5 +1,7 @@
 import json
+import os
 import sqlite3
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -114,6 +116,22 @@ class TestCollectCorpus:
         with pytest.raises(OSError):
             index_builder.collect_corpus(tmp_path)
 
+    def test_malformed_tracker_json_raises_valueerror(self, tmp_path):
+        """SHOULD #6: Malformed tracker.json must raise a clear error, not raw traceback."""
+        (tmp_path / "tracker.json").write_text("{not valid json")
+        with pytest.raises(json.JSONDecodeError):
+            index_builder.collect_corpus(tmp_path)
+
+    def test_campaign_path_from_env(self, tmp_path, monkeypatch):
+        """SHOULD #9: CAMPAIGN path configurable via RAG_CAMPAIGN env var."""
+        (tmp_path / "tracker.json").write_text(json.dumps({"applications": []}))
+        monkeypatch.setenv("RAG_CAMPAIGN", str(tmp_path))
+        # Re-evaluate the module constant from the env var
+        import index_builder as ib
+        ib.CAMPAIGN = Path(os.environ.get("RAG_CAMPAIGN", str(ib.CAMPAIGN)))
+        rows = ib.collect_corpus(ib.CAMPAIGN)
+        assert rows == []
+
 
 class TestWriteIndex:
     def test_writes_and_recreates_idempotently(self, tmp_path):
@@ -151,6 +169,24 @@ class TestWriteIndex:
         finally:
             conn.close()
         assert json.loads(vector) == [0.5, -0.5]
+
+    def test_uses_explicit_timeout(self, tmp_path, monkeypatch):
+        """SHOULD #7: sqlite3.connect must receive an explicit timeout."""
+        db = tmp_path / "index.db"
+        rows = [{"collection": "apps", "source": "t", "chunk": "c", "meta": {"id": 1}}]
+        vectors = np.array([[1.0, 0.0, 0.0]], dtype=np.float32)
+
+        import sqlite3 as _sqlite3
+        original_connect = _sqlite3.connect
+        connect_calls = []
+
+        def tracking_connect(path, **kwargs):
+            connect_calls.append(kwargs)
+            return original_connect(path, **kwargs)
+
+        monkeypatch.setattr(_sqlite3, "connect", tracking_connect)
+        index_builder.write_index(rows, vectors, db)
+        assert any("timeout" in kw for kw in connect_calls)
 
 
 class TestBuild:

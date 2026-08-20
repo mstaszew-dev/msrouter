@@ -22,8 +22,9 @@ import os
 import sqlite3
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from mcp.server import Server
@@ -63,7 +64,7 @@ def _log(msg: str) -> None:
     try:
         if _SINK_FH is None:
             _SINK_FH, _SINK_LABEL = _log_sink()
-        ts = datetime.now().isoformat(timespec="seconds")
+        ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
         _SINK_FH.write(f"[rag] {ts} {msg}\n")
         _SINK_FH.flush()
     except Exception:
@@ -119,7 +120,7 @@ def cosine_search(
 
 def load_index(db_path: Path) -> tuple[np.ndarray, list[dict]]:
     """Load the matrix + rows from a built index.db. Returns (matrix, rows)."""
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=10.0)
     try:
         cur = conn.execute(
             "SELECT collection, source, chunk, meta_json, vector_json FROM chunks ORDER BY id"
@@ -320,7 +321,7 @@ async def list_tools() -> list[Tool]:
 
 
 @server.call_tool()
-async def call_tool(name: str, arguments: dict) -> list[TextContent]:
+async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
     query = arguments.get("query", "")
     k = int(arguments.get("k", 5))
     if not query.strip():
@@ -354,6 +355,7 @@ def _log_call(name: str, query: str, k: int, hits: list[dict], t0: float) -> Non
 
 
 async def main() -> None:
+    _ensure_loaded()  # blocking but runs once before the async event loop starts
     async with stdio_server() as (read, write):
         await server.run(read, write, server.create_initialization_options())
 

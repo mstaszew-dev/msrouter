@@ -130,6 +130,30 @@ class TestLoadIndex:
         assert rows == []
         assert matrix.size == 0
 
+    def test_uses_explicit_timeout(self, tmp_path, monkeypatch):
+        """SHOULD #7: sqlite3.connect must receive an explicit timeout."""
+        db = tmp_path / "index.db"
+        conn = sqlite3.connect(db)
+        conn.execute(
+            "CREATE TABLE chunks (id INTEGER PRIMARY KEY, collection TEXT NOT NULL, "
+            "source TEXT NOT NULL, chunk TEXT NOT NULL, meta_json TEXT NOT NULL, "
+            "vector_json TEXT NOT NULL)"
+        )
+        conn.commit()
+        conn.close()
+
+        import sqlite3 as _sqlite3
+        original_connect = _sqlite3.connect
+        connect_calls = []
+
+        def tracking_connect(path, **kwargs):
+            connect_calls.append(kwargs)
+            return original_connect(path, **kwargs)
+
+        monkeypatch.setattr(_sqlite3, "connect", tracking_connect)
+        rag_server.load_index(db)
+        assert any("timeout" in kw for kw in connect_calls)
+
 
 class TestFormatters:
     def test_format_apps_no_hits(self):
@@ -317,6 +341,30 @@ class TestCallTool:
         assert "embedding failed" in out[0].text
 
 
+class TestMainPreloads:
+    def test_ensure_loaded_called_before_server_run(self, monkeypatch):
+        """BLOCKER #2: _ensure_loaded must run before the async event loop."""
+        loaded = []
+        monkeypatch.setattr(rag_server, "_ensure_loaded", lambda: loaded.append(True))
+
+        async def fake_run(read, write, opts):
+            # If _ensure_loaded was called before server.run, it's already in the list
+            pass
+
+        monkeypatch.setattr(rag_server.server, "run", fake_run)
+        # Mock stdio_server to yield fake read/write
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def fake_stdio():
+            yield None, None
+
+        monkeypatch.setattr(rag_server, "stdio_server", fake_stdio)
+        import asyncio
+        asyncio.run(rag_server.main())
+        assert loaded == [True]
+
+
 class TestLogCall:
     def test_emits_hit_summary(self, monkeypatch):
         recorded = []
@@ -347,6 +395,16 @@ class TestLogSink:
 
 
 class TestLogging:
+    def test_log_uses_utc_timestamp(self, tmp_path, monkeypatch):
+        log_path = tmp_path / "rag.log"
+        monkeypatch.setenv("RAG_LOG", str(log_path))
+        monkeypatch.setattr(rag_server, "_SINK_FH", None)
+        monkeypatch.setattr(rag_server, "_SINK_LABEL", None)
+        rag_server._log("timezone test")
+        content = log_path.read_text()
+        # UTC timestamps end with '+00:00'; naive local timestamps do not
+        assert "+00:00" in content
+
     def test_log_writes_to_rag_log_file(self, tmp_path, monkeypatch):
         log_path = tmp_path / "rag.log"
         monkeypatch.setenv("RAG_LOG", str(log_path))

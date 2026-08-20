@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 import re
 import sqlite3
 import sys
@@ -26,7 +27,7 @@ from pathlib import Path
 from model2vec import StaticModel
 
 ROOT = Path(__file__).resolve().parent
-CAMPAIGN = Path("/Users/mst/Downloads/job-search/job-apply")
+CAMPAIGN = Path(os.environ.get("RAG_CAMPAIGN", "/Users/mst/Downloads/job-search/job-apply"))
 TRACKER = CAMPAIGN / "tracker.json"
 DB = ROOT / "index.db"
 MODEL = "minishlab/potion-base-8M"
@@ -175,7 +176,7 @@ def write_index(
     """Write rows + their vectors into a SQLite index. Idempotent (drops existing)."""
     if db_path.exists():
         db_path.unlink()
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=10.0)
     try:
         conn.execute(
             """
