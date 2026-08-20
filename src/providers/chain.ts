@@ -44,12 +44,15 @@ export interface ChainResult {
 
 export class ProviderChain {
   private readonly queue: RotationQueue<RoutingEntry>;
+  private readonly consecutiveSuccesses = new Map<string, number>();
+  private readonly successDemoteLimit: number;
 
   constructor(
     private readonly providers: Providers,
     private readonly log: Logger,
   ) {
     this.queue = new RotationQueue(buildRoutingEntries(providers), { log, label: 'chain' });
+    this.successDemoteLimit = env().SUCCESS_DEMOTE_LIMIT ?? 5;
   }
 
   async handle(body: ChatRequestBody, signal: AbortSignal): Promise<ChainResult> {
@@ -162,6 +165,19 @@ export class ProviderChain {
         const resolvedModel = res.resolvedModel ?? model;
         const servedByModel =
           entry.provider === 'openrouter' ? `${resolvedModel}[key${entry.attemptIndex + 1}]` : resolvedModel;
+
+        // Track consecutive successes; demote to back of queue after limit
+        const count = (this.consecutiveSuccesses.get(entry.label) ?? 0) + 1;
+        this.consecutiveSuccesses.set(entry.label, count);
+        if (count >= this.successDemoteLimit) {
+          this.queue.demote(entry);
+          this.consecutiveSuccesses.set(entry.label, 0);
+          this.log.warn(
+            { provider: entry.label, successes: count, label: 'chain' },
+            'chain entry demoted after consecutive successes',
+          );
+        }
+
         return { response: res.response, servedBy: { provider: entry.label, model: servedByModel } };
       }
       failures.push(`${entry.label}:${res.kind}(${res.status})`);
@@ -169,6 +185,8 @@ export class ProviderChain {
         { provider: entry.label, kind: res.kind, status: res.status, msg: res.message },
         'routing entry attempt failed',
       );
+      // Reset consecutive success counter on any failure
+      this.consecutiveSuccesses.set(entry.label, 0);
       if (res.kind === 'TRANSIENT' && attempt < env().MAX_TRANSIENT_RETRIES) {
         attempt++;
         await sleep(backoffMs(attempt, env().TRANSIENT_BACKOFF_MS));

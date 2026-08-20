@@ -89,6 +89,9 @@ const schema = z.object({
   UPSTREAM_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
   MAX_TRANSIENT_RETRIES: z.coerce.number().int().min(0).default(2),
   TRANSIENT_BACKOFF_MS: z.coerce.number().int().positive().default(1_000),
+  // Demote provider to back of queue after N consecutive successes (prevents
+  // local model from monopolizing the chain when remote providers fail).
+  SUCCESS_DEMOTE_LIMIT: z.coerce.number().int().positive().default(5),
 
   // Agent / scheduler
   SCHEDULE_INTERVAL_MINUTES: z.coerce.number().int().default(-1),
@@ -134,7 +137,6 @@ const schema = z.object({
   // (node -e, npm install, find -exec, git clone hooks). Add them only if you
   // explicitly opt in and trust the agent.
   TERMINAL_ALLOWLIST: csv.default('ls,cat,echo,pwd,head,tail,grep'),
-
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   LOG_REDACT: csv,
 });
@@ -227,7 +229,6 @@ export function loadEnv(raw: NodeJS.ProcessEnv = process.env): ResolvedConfig {
       'No provider configured: set at least one OPENROUTER_KEY* or OPENAI/ZAI/OPENCODE API key',
     );
   }
-
   cached = { env: parsed.data, openrouterKeys, opencodeKeys };
   return cached;
 }
