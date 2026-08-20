@@ -111,6 +111,8 @@ async function handleChat(
     const json = parseUpstreamJson(text);
     log.info({ correlationId: req.id, servedBy: result.servedBy, status }, 'chat completion ok');
     if (idem) storeIdemResult(idem, status, json);
+    res.setHeader('X-Served-By-Provider', result.servedBy.provider);
+    res.setHeader('X-Served-By-Model', result.servedBy.model);
     sendJson(res, status, json);
   } catch (e) {
     // Abort (client disconnect) or real failure: drop the idem entry so the
