@@ -603,3 +603,118 @@ describe('ProviderChain - demoteEntry white-box', () => {
     expect(after[0]).not.toBe('openrouter[key1/openrouter/free]');
   });
 });
+
+describe('ProviderChain - local provider success-based demotion', () => {
+  const DEFAULT_ENV = {
+    NODE_ENV: 'test',
+    PORT: '8788',
+    OPENROUTER_KEY1: 'sk-or-test-key-1111',
+    OPENROUTER_KEY2: 'sk-or-test-key-2222',
+    FORCE_FREE: 'true',
+    SCHEDULE_INTERVAL_MINUTES: '-1',
+    UPSTREAM_TIMEOUT_MS: '5000',
+    LOCAL_ENABLED: 'false',
+    LMSTUDIO_ENABLED: 'true',
+    LMSTUDIO_MODEL: 'qwen3.5-4b',
+    LMSTUDIO_BASE_URL: 'http://127.0.0.1:1234/v1',
+    SUCCESS_DEMOTE_LIMIT: '3',
+  };
+
+  afterEach(() => loadEnv(DEFAULT_ENV));
+
+  it('demotes lmstudio after SUCCESS_DEMOTE_LIMIT consecutive successes', async () => {
+    loadEnv({ ...DEFAULT_ENV, SUCCESS_DEMOTE_LIMIT: '3' });
+    const p = makeProviders({
+      openrouterKeys: 1,
+      openrouterResults: [
+        { kind: 'KEY_FAILURE', status: 429, message: 'or fail' },
+      ],
+      lmstudioResults: [
+        { kind: 'OK', response: okResponse() },
+        { kind: 'OK', response: okResponse() },
+        { kind: 'OK', response: okResponse() },
+      ],
+    });
+    // Override lmstudio stub to return OK
+    const lmstudio = p.lmstudio as unknown as { attempt: ReturnType<typeof vi.fn> };
+    lmstudio.attempt
+      .mockResolvedValueOnce({ kind: 'OK', response: okResponse() })
+      .mockResolvedValueOnce({ kind: 'OK', response: okResponse() })
+      .mockResolvedValueOnce({ kind: 'OK', response: okResponse() });
+
+    const chain = new ProviderChain(p, silentLogger);
+
+    // First 3 calls should succeed via lmstudio
+    for (let i = 0; i < 3; i++) {
+      const res = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+      expect(res.servedBy.provider).toBe('lmstudio');
+    }
+
+    // After 3 successes, lmstudio should be demoted to back of queue
+    const labels = chain.queueSnapshot().map((e) => e.label);
+    expect(labels[labels.length - 1]).toContain('lmstudio');
+  });
+
+  it('does not demote remote providers after successes', async () => {
+    loadEnv({ ...DEFAULT_ENV, SUCCESS_DEMOTE_LIMIT: '2' });
+    const p = makeProviders({
+      openrouterKeys: 1,
+      openrouterResults: [
+        { kind: 'OK', response: okResponse() },
+        { kind: 'OK', response: okResponse() },
+        { kind: 'OK', response: okResponse() },
+      ],
+    });
+
+    const chain = new ProviderChain(p, silentLogger);
+
+    // Make 3 successful calls via openrouter
+    for (let i = 0; i < 3; i++) {
+      const res = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+      expect(res.servedBy.provider).toContain('openrouter');
+    }
+
+    // OpenRouter should NOT be demoted (it's remote, not local)
+    const labels = chain.queueSnapshot().map((e) => e.label);
+    expect(labels[0]).toContain('openrouter[key1');
+  });
+
+  it('resets success counter on failure', async () => {
+    loadEnv({ ...DEFAULT_ENV, SUCCESS_DEMOTE_LIMIT: '3' });
+    const p = makeProviders({
+      openrouterKeys: 1,
+      openrouterResults: [
+        { kind: 'KEY_FAILURE', status: 429, message: 'or fail' },
+      ],
+    });
+    const lmstudio = p.lmstudio as unknown as { attempt: ReturnType<typeof vi.fn> };
+    // 2 successes, then 1 failure (resets counter), then 2 more successes
+    lmstudio.attempt
+      .mockResolvedValueOnce({ kind: 'OK', response: okResponse() })
+      .mockResolvedValueOnce({ kind: 'OK', response: okResponse() })
+      .mockResolvedValueOnce({ kind: 'KEY_FAILURE', status: 500, message: 'lmstudio fail' })
+      .mockResolvedValueOnce({ kind: 'OK', response: okResponse() })
+      .mockResolvedValueOnce({ kind: 'OK', response: okResponse() });
+
+    const chain = new ProviderChain(p, silentLogger);
+
+    // 2 successes
+    await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+
+    // 1 failure - this will cause the chain to try other providers which also fail
+    // So we expect an error here
+    await expect(
+      chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal),
+    ).rejects.toBeInstanceOf(NoProviderAvailableError);
+
+    // 2 more successes - counter was reset, so only 2 consecutive (not enough to demote)
+    await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+
+    // lmstudio should still be at front (only 2 consecutive successes after reset)
+    const labels = chain.queueSnapshot().map((e) => e.label);
+    const lmstudioIndex = labels.findIndex((l) => l.includes('lmstudio'));
+    expect(lmstudioIndex).toBeLessThan(labels.length - 1);
+  });
+});
