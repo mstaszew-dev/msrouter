@@ -166,15 +166,17 @@ export class ProviderChain {
         const servedByModel =
           entry.provider === 'openrouter' ? `${resolvedModel}[key${entry.attemptIndex + 1}]` : resolvedModel;
 
-        // Track consecutive successes; demote to back of queue after limit
+        // Track consecutive successes; demote local provider to back of queue
+        // after limit (prevents local model from monopolizing the chain).
         const count = (this.consecutiveSuccesses.get(entry.label) ?? 0) + 1;
         this.consecutiveSuccesses.set(entry.label, count);
-        if (count >= this.successDemoteLimit) {
+        const isLocal = entry.provider === 'lmstudio' || entry.provider === 'local';
+        if (isLocal && count >= this.successDemoteLimit) {
           this.queue.demote(entry);
           this.consecutiveSuccesses.set(entry.label, 0);
           this.log.warn(
             { provider: entry.label, successes: count, label: 'chain' },
-            'chain entry demoted after consecutive successes',
+            'local provider demoted after consecutive successes',
           );
         }
 
