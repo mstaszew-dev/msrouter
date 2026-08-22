@@ -11,7 +11,6 @@ import { z } from 'zod';
 
 const csv = z
   .string()
-  .default('')
   .transform((s) =>
     s
       .split(',')
@@ -138,7 +137,7 @@ const schema = z.object({
   // explicitly opt in and trust the agent.
   TERMINAL_ALLOWLIST: csv.default('ls,cat,echo,pwd,head,tail,grep'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
-  LOG_REDACT: csv,
+  LOG_REDACT: csv.default(''),
 });
 
 export type Env = z.infer<typeof schema>;
