@@ -183,9 +183,10 @@ export class ProviderChain {
         return { response: res.response, servedBy: { provider: entry.label, model: servedByModel } };
       }
       failures.push(`${entry.label}:${res.kind}(${res.status})`);
-      this.log.debug(
+      const logLevel = res.kind === 'BAD_REQUEST' ? 'info' : 'debug';
+      this.log[logLevel](
         { provider: entry.label, kind: res.kind, status: res.status, msg: res.message },
-        'routing entry attempt failed',
+        res.kind === 'BAD_REQUEST' ? 'routing entry skipped (bad request)' : 'routing entry attempt failed',
       );
       // Reset consecutive success counter on any failure
       this.consecutiveSuccesses.set(entry.label, 0);

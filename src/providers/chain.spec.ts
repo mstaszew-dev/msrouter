@@ -136,8 +136,8 @@ describe('ProviderChain - routing-entry queue construction', () => {
     expect(labels).toEqual([
       'openrouter[key1/openrouter/free]',
       'openrouter[key2/openrouter/free]',
-      'openrouter[key1/stealth/ox-alpha:free]',
-      'openrouter[key2/stealth/ox-alpha:free]',
+      'openrouter[key1/stealth/ox-alpha]',
+      'openrouter[key2/stealth/ox-alpha]',
       'openai',
       'zai',
       'opencode[key1/big-pickle]',
@@ -249,7 +249,7 @@ describe('ProviderChain - adaptive demotion', () => {
     const after = chain.queueSnapshot().map((c) => c.label);
     // The demoted entry is openrouter[key1/openrouter/free], but with 2 models
     // (openrouter/free + stealth/ox-alpha), the back of queue is stealth/ox-alpha
-    expect(after[after.length - 1]).toBe('openrouter[key1/stealth/ox-alpha:free]');
+    expect(after[after.length - 1]).toBe('openrouter[key1/stealth/ox-alpha]');
     expect(after[0]).toBe('openai');
   });
 

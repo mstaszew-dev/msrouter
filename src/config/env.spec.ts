@@ -114,6 +114,34 @@ describe('loadEnv - OpenCode key pool', () => {
   });
 });
 
+describe('loadEnv - OPENROUTER_MODELS', () => {
+  it('defaults to ["stealth/ox-alpha"] when unset', () => {
+    const cfg = loadEnv({});
+    expect(cfg.env.OPENROUTER_MODELS).toEqual(['stealth/ox-alpha']);
+  });
+
+  it('accepts a custom comma-separated list', () => {
+    const cfg = loadEnv({ OPENROUTER_MODELS: 'model-a,model-b' });
+    expect(cfg.env.OPENROUTER_MODELS).toEqual(['model-a', 'model-b']);
+  });
+
+  it('returns [] when explicitly set to empty string', () => {
+    const cfg = loadEnv({ OPENROUTER_MODELS: '' });
+    expect(cfg.env.OPENROUTER_MODELS).toEqual([]);
+  });
+
+  it('trims whitespace and filters blanks', () => {
+    const cfg = loadEnv({ OPENROUTER_MODELS: ' model-a , , model-b ' });
+    expect(cfg.env.OPENROUTER_MODELS).toEqual(['model-a', 'model-b']);
+  });
+
+  it('OPENROUTER_MODEL remains separate from OPENROUTER_MODELS', () => {
+    const cfg = loadEnv({});
+    expect(cfg.env.OPENROUTER_MODEL).toBe('openrouter/free');
+    expect(cfg.env.OPENROUTER_MODELS).toEqual(['stealth/ox-alpha']);
+  });
+});
+
 describe('loadEnv - VPN rotation', () => {
   it('defaults VPN_ROTATION_INTERVAL_MINUTES to 30', () => {
     const cfg = loadEnv({});

@@ -92,3 +92,34 @@ describe('buildRoutingEntries - multiple OpenRouter models', () => {
     expect(expectedEntries).toBe(4);
   });
 });
+
+describe('withFree - free-tier model naming', () => {
+  it('does not append :free to stealth/ox-alpha (inherently free, no :free variant)', () => {
+    expect(withFree('stealth/ox-alpha', true)).toBe('stealth/ox-alpha');
+  });
+
+  it('does not double-append :free when model already ends with :free', () => {
+    expect(withFree('stealth/ox-alpha:free', true)).toBe('stealth/ox-alpha:free');
+  });
+
+  it('appends :free to other models when force=true', () => {
+    expect(withFree('anthropic/claude-3-opus', true)).toBe('anthropic/claude-3-opus:free');
+  });
+
+  it('does not append :free to openrouter/auto (meta-router)', () => {
+    expect(withFree('openrouter/auto', true)).toBe('openrouter/auto');
+  });
+
+  it('does not append :free to openrouter/free (meta-router)', () => {
+    expect(withFree('openrouter/free', true)).toBe('openrouter/free');
+  });
+
+  it('preserves model with existing colon variant even if not :free', () => {
+    expect(withFree('openai/gpt-4o:2024-08-06', true)).toBe('openai/gpt-4o:2024-08-06');
+  });
+
+  it('returns model unchanged when force=false', () => {
+    expect(withFree('stealth/ox-alpha', false)).toBe('stealth/ox-alpha');
+    expect(withFree('anthropic/claude-3-opus', false)).toBe('anthropic/claude-3-opus');
+  });
+});
