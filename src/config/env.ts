@@ -7,7 +7,6 @@
  * The OpenRouter key pool is collected by scanning process.env for
  * `OPENROUTER_KEY\d+`, so adding keys is just adding env vars - no code change.
  */
-
 import { z } from 'zod';
 
 const csv = z
@@ -80,12 +79,13 @@ const schema = z.object({
   // OpenRouter default model when the client sends an alias (e.g. mst/free).
   // `openrouter/free` is OpenRouter's auto-router over free models.
   OPENROUTER_MODEL: z.string().default('openrouter/free'),
+  // Additional OpenRouter models (comma-separated). Each model × each key
+  // creates a routing entry, so the chain tries all combinations.
+  OPENROUTER_MODELS: csv.default('stealth/ox-alpha'),
   // The alias(es) that mean "walk every provider with its own default model".
   // Comma-separated; canonical ones are "mst/free" and "free".
   WALK_ALIAS: csv.default('mst/free,free'),
-
   FORCE_FREE: flag('true'),
-
   UPSTREAM_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
   MAX_TRANSIENT_RETRIES: z.coerce.number().int().min(0).default(2),
   TRANSIENT_BACKOFF_MS: z.coerce.number().int().positive().default(1_000),

@@ -47,14 +47,18 @@ export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
   const list: RoutingEntry[] = [];
   const or = providers.openrouter;
   if (or.available) {
-    const orModel = withFree(e.OPENROUTER_MODEL, e.FORCE_FREE);
-    for (let i = 0; i < or.keyCount; i++) {
-      list.push({
-        provider: 'openrouter',
-        label: `openrouter[key${i + 1}/${orModel}]`,
-        model: orModel,
-        attemptIndex: i,
-      });
+    // Build list of all OpenRouter models: primary + additional
+    const orModels = [e.OPENROUTER_MODEL, ...e.OPENROUTER_MODELS];
+    for (const model of orModels) {
+      const orModel = withFree(model, e.FORCE_FREE);
+      for (let i = 0; i < or.keyCount; i++) {
+        list.push({
+          provider: 'openrouter',
+          label: `openrouter[key${i + 1}/${orModel}]`,
+          model: orModel,
+          attemptIndex: i,
+        });
+      }
     }
   }
   if (providers.openai.available) {

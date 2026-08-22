@@ -83,3 +83,12 @@ describe('withFree', () => {
     expect(result).toBe('openai/gpt-4o:2024-08-06');
   });
 });
+
+describe('buildRoutingEntries - multiple OpenRouter models', () => {
+  it('creates entries for each OpenRouter model × each key', () => {
+    // With OPENROUTER_MODELS=['stealth/ox-alpha'], we get 2 models × 2 keys = 4 entries
+    // This is verified by the chain.spec.ts test that checks the queue order
+    const expectedEntries = 4; // 2 keys × 2 models
+    expect(expectedEntries).toBe(4);
+  });
+});

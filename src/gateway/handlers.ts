@@ -191,6 +191,7 @@ export function buildModelList(): Array<{ id: string; object: string; owned_by: 
   const data: Array<{ id: string; object: string; owned_by: string }> = [
     ...cfg.WALK_ALIAS.map((alias) => ({ id: alias, object: 'model', owned_by: 'msrouter' })),
     { id: cfg.OPENROUTER_MODEL, object: 'model', owned_by: 'openrouter' },
+    ...cfg.OPENROUTER_MODELS.map((model) => ({ id: model, object: 'model', owned_by: 'openrouter' })),
   ];
   if (cfg.OPENAI_API_KEY) data.push({ id: cfg.OPENAI_MODEL, object: 'model', owned_by: 'openai' });
   if (cfg.ZAI_API_KEY) data.push({ id: cfg.ZAI_MODEL, object: 'model', owned_by: 'zai' });

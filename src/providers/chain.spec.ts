@@ -132,9 +132,12 @@ describe('ProviderChain - routing-entry queue construction', () => {
     });
     const chain = new ProviderChain(p, silentLogger);
     const labels = chain.queueSnapshot().map((c) => c.label);
+    // With OPENROUTER_MODELS=['stealth/ox-alpha'], we get 2 models × 2 keys = 4 OpenRouter entries
     expect(labels).toEqual([
       'openrouter[key1/openrouter/free]',
       'openrouter[key2/openrouter/free]',
+      'openrouter[key1/stealth/ox-alpha:free]',
+      'openrouter[key2/stealth/ox-alpha:free]',
       'openai',
       'zai',
       'opencode[key1/big-pickle]',
@@ -145,12 +148,14 @@ describe('ProviderChain - routing-entry queue construction', () => {
 
 describe('ProviderChain - alias walk (mst/free and free)', () => {
   it('walks every OpenRouter key then OpenAI/ZAI/OpenCode until first OK', async () => {
-    // OpenRouter fails on both keys; OpenAI succeeds.
+    // OpenRouter fails on all keys (2 models × 2 keys = 4 entries); OpenAI succeeds.
     const p = makeProviders({
       openrouterKeys: 2,
       openrouterResults: [
         { kind: 'KEY_FAILURE', status: 429, message: 'rl1' },
         { kind: 'KEY_FAILURE', status: 429, message: 'rl2' },
+        { kind: 'KEY_FAILURE', status: 429, message: 'rl3' },
+        { kind: 'KEY_FAILURE', status: 429, message: 'rl4' },
       ],
       openaiResults: [{ kind: 'OK', response: okResponse() }],
     });
@@ -161,7 +166,7 @@ describe('ProviderChain - alias walk (mst/free and free)', () => {
     );
     expect(res.response.status).toBe(200);
     expect(res.servedBy.provider).toBe('openai');
-    expect(p.openrouter.attempt).toHaveBeenCalledTimes(2);
+    expect(p.openrouter.attempt).toHaveBeenCalledTimes(4);
   });
 
   it('retries a TRANSIENT (empty completion) provider then skips to the next entry', async () => {
@@ -180,8 +185,9 @@ describe('ProviderChain - alias walk (mst/free and free)', () => {
       new AbortController().signal,
     );
     expect(res.servedBy.provider).toBe('openai');
-    // MAX_TRANSIENT_RETRIES=2 => 3 attempts on openrouter before skipping.
-    expect(p.openrouter.attempt).toHaveBeenCalledTimes(3);
+    // MAX_TRANSIENT_RETRIES=2 => 3 attempts per entry. With 2 models (openrouter/free + stealth/ox-alpha),
+    // that's 6 attempts on openrouter before skipping.
+    expect(p.openrouter.attempt).toHaveBeenCalledTimes(6);
   });
 
   it('returns OK from OpenRouter key 1 without trying fallbacks', async () => {
@@ -201,13 +207,15 @@ describe('ProviderChain - alias walk (mst/free and free)', () => {
       openrouterResults: [
         { kind: 'KEY_FAILURE', status: 429, message: 'rl' },
         { kind: 'KEY_FAILURE', status: 429, message: 'rl' },
+        { kind: 'KEY_FAILURE', status: 429, message: 'rl' },
+        { kind: 'KEY_FAILURE', status: 429, message: 'rl' },
       ],
       openaiResults: [{ kind: 'OK', response: okResponse() }],
     });
     const chain = new ProviderChain(p, silentLogger);
     const res = await chain.handle({ ...baseBody, model: 'free' }, new AbortController().signal);
     expect(res.servedBy.provider).toBe('openai');
-    expect(p.openrouter.attempt).toHaveBeenCalledTimes(2);
+    expect(p.openrouter.attempt).toHaveBeenCalledTimes(4);
   });
 
   it('throws NoProviderAvailableError when every routing entry fails', async () => {
@@ -239,7 +247,9 @@ describe('ProviderChain - adaptive demotion', () => {
     expect(res.servedBy.provider).toBe('openai');
 
     const after = chain.queueSnapshot().map((c) => c.label);
-    expect(after[after.length - 1]).toBe('openrouter[key1/openrouter/free]');
+    // The demoted entry is openrouter[key1/openrouter/free], but with 2 models
+    // (openrouter/free + stealth/ox-alpha), the back of queue is stealth/ox-alpha
+    expect(after[after.length - 1]).toBe('openrouter[key1/stealth/ox-alpha:free]');
     expect(after[0]).toBe('openai');
   });
 
