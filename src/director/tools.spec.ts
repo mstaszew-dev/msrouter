@@ -17,7 +17,13 @@ describe('toolDefinitions', () => {
   it('exposes terminal + web_search + write_prompt_override', () => {
     const defs = toolDefinitions();
     const names = defs.map((d) => d.function.name).sort();
-    expect(names).toEqual(['terminal', 'web_search', 'write_prompt_override']);
+    expect(names).toEqual([
+      'rag_search_apps',
+      'rag_search_docs',
+      'terminal',
+      'web_search',
+      'write_prompt_override',
+    ]);
   });
 });
 

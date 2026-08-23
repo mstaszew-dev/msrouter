@@ -1,7 +1,9 @@
 /**
- * Director tools: terminal (allowlisted commands) + web_search (DuckDuckGo Lite HTML scrape) + write-prompt-override.
- * NO Playwright. No browser MCP. Pure TypeScript + fetch().
+ * Director tools: terminal (allowlisted commands) + web_search (DuckDuckGo Lite HTML scrape)
+ * + RAG semantic search over THE shared campaign index + write-prompt-override.
+ * NO Playwright. No browser MCP. Pure TypeScript + fetch() (+ one-shot python CLI for RAG).
  */
+
 
 import { execFile } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
@@ -9,7 +11,10 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
+import type { Logger } from 'pino';
+
 import { env } from '../config/env.js';
+import { RagClient } from './rag.js';
 
 const execFileP = promisify(execFile);
 
@@ -58,6 +63,38 @@ export function toolDefinitions() {
     {
       type: 'function',
       function: {
+        name: 'rag_search_apps',
+        description:
+          'Semantic search over past job applications (the shared dedupe index). Use to check whether a company/role was already applied to before proposing anything.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Natural-language query (company, role, stack, location).' },
+            k: { type: 'number', default: 5, minimum: 1, maximum: 20 },
+          },
+          required: ['query'],
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'rag_search_docs',
+        description:
+          'Semantic search over campaign docs/context chunks (same shared index). Useful for recalling prior decisions and notes.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Natural-language query.' },
+            k: { type: 'number', default: 3, minimum: 1, maximum: 20 },
+          },
+          required: ['query'],
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
         name: 'write_prompt_override',
         description: 'Append text to the Director prompt override file. This text will be appended to the agent message on next restart.',
         parameters: {
@@ -72,12 +109,27 @@ export function toolDefinitions() {
   ];
 }
 
-export async function callTool(name: string, args: unknown, _log: unknown): Promise<ToolResult> {
+export async function callTool(name: string, args: unknown, log: unknown): Promise<ToolResult> {
   if (name === 'terminal') {
     return terminal(args as { command: string; args?: string[] });
   }
   if (name === 'web_search') {
     return webSearch(args as { query: string; maxResults?: number });
+  }
+  if (name === 'rag_search_apps' || name === 'rag_search_docs') {
+    const { query, k } = args as { query?: string; k?: number };
+    if (!query || !query.trim()) {
+      return { content: `${name}: query is required`, isError: true };
+    }
+    const rag = new RagClient({
+      campaignDir: env().DIRECTOR_CAMPAIGN_DIR,
+      log: log as Logger,
+    });
+    const hits =
+      name === 'rag_search_apps'
+        ? await rag.ragSearchApps(query, k ?? 5)
+        : await rag.ragSearchDocs(query, k ?? 3);
+    return { content: JSON.stringify({ result: hits }) };
   }
   if (name === 'write_prompt_override') {
     return writePromptOverride(args as { text: string });

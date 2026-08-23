@@ -8,13 +8,19 @@ describe('agent-tools', () => {
   it('toolDefinitions returns read-only tools (terminal + web_search) by default', () => {
     const defs = toolDefinitions();
     const names = defs.map((d) => d.function.name).sort();
-    expect(names).toEqual(['terminal', 'web_search']);
+    expect(names).toEqual(['rag_search_apps', 'rag_search_docs', 'terminal', 'web_search']);
   });
 
   it('toolDefinitions includes write_prompt_override in write mode', () => {
     const defs = toolDefinitions('write');
     const names = defs.map((d) => d.function.name).sort();
-    expect(names).toEqual(['terminal', 'web_search', 'write_prompt_override']);
+    expect(names).toEqual([
+      'rag_search_apps',
+      'rag_search_docs',
+      'terminal',
+      'web_search',
+      'write_prompt_override',
+    ]);
   });
 
   it('callTool dispatches terminal', async () => {
