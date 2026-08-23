@@ -201,3 +201,122 @@ PROPS
   sed -e "s/:9092/:19092/g" "$props" | grep -q ":19092"
   ! sed -e "s/:9092/:19092/g" "$props" | grep -q ":9092"
 }
+
+# ---------------------------------------------------------------------------
+# reinit_kraft() tests
+# ---------------------------------------------------------------------------
+
+@test "reinit_kraft kills lingering broker and formats storage" {
+  # Create a fake broker process
+  sleep 3600 &
+  local fake_pid=$!
+  echo "$fake_pid" > .run/kafka.pid
+
+  # Mock kafka-storage.sh (use hardcoded path since mock runs in subprocess)
+  cat > "${KAFKA_HOME}/bin/kafka-storage.sh" <<MOCK
+#!/bin/bash
+echo "\$@" >> "${KAFKA_HOME}/.storage_args"
+echo "test-cluster-uuid"
+MOCK
+  chmod +x "${KAFKA_HOME}/bin/kafka-storage.sh"
+
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  reinit_kraft
+
+  # Broker should be killed
+  ! kill -0 "$fake_pid" 2>/dev/null
+
+  # PIDFILE should be removed
+  [ ! -f .run/kafka.pid ]
+
+  # Storage should be formatted with cluster UUID
+  grep -q "random-uuid" "${KAFKA_HOME}/.storage_args"
+  grep -q "format" "${KAFKA_HOME}/.storage_args"
+}
+
+@test "reinit_kraft handles missing PIDFILE gracefully" {
+  rm -f .run/kafka.pid
+
+  cat > "${KAFKA_HOME}/bin/kafka-storage.sh" <<'MOCK'
+#!/bin/bash
+echo "new-uuid"
+MOCK
+  chmod +x "${KAFKA_HOME}/bin/kafka-storage.sh"
+
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  run reinit_kraft
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"KRaft storage reinitialized"* ]]
+}
+
+# ---------------------------------------------------------------------------
+# start_or_init() tests
+# ---------------------------------------------------------------------------
+
+@test "start_or_init succeeds when broker starts on first attempt" {
+  # Mock kafka-server-start.sh to start a fake process
+  cat > "${KAFKA_HOME}/bin/kafka-server-start.sh" <<'MOCK'
+#!/bin/bash
+sleep 3600 &
+echo $! > .run/kafka.pid
+MOCK
+  chmod +x "${KAFKA_HOME}/bin/kafka-server-start.sh"
+
+  # Mock kafka-topics.sh to succeed immediately
+  cat > "${KAFKA_HOME}/bin/kafka-topics.sh" <<'MOCK'
+#!/bin/bash
+exit 0
+MOCK
+  chmod +x "${KAFKA_HOME}/bin/kafka-topics.sh"
+
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  run start_or_init
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"broker ready"* ]]
+}
+
+@test "start_or_init retries with reinit on first failure" {
+  # Track calls to kafka-topics.sh
+  local counter_file="${TEST_TMPDIR}/topics_call_count"
+  echo "0" > "$counter_file"
+
+  # Mock kafka-server-start.sh
+  cat > "${KAFKA_HOME}/bin/kafka-server-start.sh" <<'MOCK'
+#!/bin/bash
+sleep 3600 &
+echo $! > .run/kafka.pid
+MOCK
+  chmod +x "${KAFKA_HOME}/bin/kafka-server-start.sh"
+
+  # Mock kafka-topics.sh: fail first 20 calls, succeed on 21st
+  cat > "${KAFKA_HOME}/bin/kafka-topics.sh" <<'MOCK'
+#!/bin/bash
+counter_file="COUNTER_FILE"
+count=$(cat "$counter_file")
+count=$((count + 1))
+echo "$count" > "$counter_file"
+if [ "$count" -le 20 ]; then
+  exit 1
+fi
+exit 0
+MOCK
+  sed -i '' "s|COUNTER_FILE|${counter_file}|g" "${KAFKA_HOME}/bin/kafka-topics.sh"
+  chmod +x "${KAFKA_HOME}/bin/kafka-topics.sh"
+
+  # Mock kafka-storage.sh
+  cat > "${KAFKA_HOME}/bin/kafka-storage.sh" <<'MOCK'
+#!/bin/bash
+echo "recovered-uuid"
+MOCK
+  chmod +x "${KAFKA_HOME}/bin/kafka-storage.sh"
+
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  run start_or_init
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Kafka start failed"* ]]
+  [[ "$output" == *"attempting KRaft reinitialization"* ]]
+  [[ "$output" == *"KRaft storage reinitialized"* ]]
+}
