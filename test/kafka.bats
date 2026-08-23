@@ -208,7 +208,7 @@ PROPS
 
 @test "reinit_kraft kills lingering broker and formats storage" {
   # Create a fake broker process
-  sleep 3600 &
+  sleep 61 >/dev/null 2>&1 </dev/null &
   local fake_pid=$!
   echo "$fake_pid" > .run/kafka.pid
 
@@ -258,7 +258,7 @@ MOCK
   # Mock kafka-server-start.sh to start a fake process
   cat > "${KAFKA_HOME}/bin/kafka-server-start.sh" <<'MOCK'
 #!/bin/bash
-sleep 3600 &
+sleep 61 >/dev/null 2>&1 </dev/null &
 echo $! > .run/kafka.pid
 MOCK
   chmod +x "${KAFKA_HOME}/bin/kafka-server-start.sh"
@@ -285,7 +285,7 @@ MOCK
   # Mock kafka-server-start.sh
   cat > "${KAFKA_HOME}/bin/kafka-server-start.sh" <<'MOCK'
 #!/bin/bash
-sleep 3600 &
+sleep 61 >/dev/null 2>&1 </dev/null &
 echo $! > .run/kafka.pid
 MOCK
   chmod +x "${KAFKA_HOME}/bin/kafka-server-start.sh"
