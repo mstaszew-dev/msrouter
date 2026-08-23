@@ -47,6 +47,18 @@ describe('callTool: terminal', () => {
     expect(res.content).toContain('hello');
   });
 
+  it('reports an error result when an allowlisted command fails', async () => {
+    // ls on a missing path exits non-zero: execFileP rejects and the catch
+    // maps the failure into a ToolResult instead of throwing.
+    const res = await callTool(
+      'terminal',
+      { command: 'ls', args: ['/definitely/not/a/real/path-xyz'] },
+      silent,
+    );
+    expect(res.isError).toBe(true);
+    expect(String(res.content)).toMatch(/^terminal: /);
+  });
+
   it('returns error for unknown tool name', async () => {
     const res = await callTool('unknown_tool', { query: 'x' }, silent);
     expect(res.isError).toBe(true);
@@ -107,6 +119,17 @@ describe('callTool: web_search', () => {
       const res = await callTool('web_search', { query: 'x' }, silent);
       expect(res.isError).toBe(true);
       expect(String(res.content)).toContain('web_search failed');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('stringifies non-Error network failures', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce('socket blew'));
+    try {
+      const res = await callTool('web_search', { query: 'x' }, silent);
+      expect(res.isError).toBe(true);
+      expect(String(res.content)).toBe('web_search failed: socket blew');
     } finally {
       vi.unstubAllGlobals();
     }

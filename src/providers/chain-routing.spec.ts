@@ -54,6 +54,13 @@ describe('shortCircuit', () => {
     const r = shortCircuit('DIRECT:OpenAI/gpt-4o');
     expect(r).toEqual({ provider: 'openai', model: 'gpt-4o' });
   });
+
+  it('returns null for an unknown direct: provider (no short-circuit)', () => {
+    // An unrecognized direct: target must fall through to the default chain
+    // rather than being pinned to a nonexistent provider.
+    expect(shortCircuit('direct:unknown-provider/some-model')).toBeNull();
+    expect(shortCircuit('direct:/')).toBeNull();
+  });
 });
 
 describe('withFree', () => {

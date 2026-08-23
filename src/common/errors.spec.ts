@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   BadRequestError,
   DomainError,
+  errorMessage,
   NoProviderAvailableError,
   toErrorBody,
   UnauthorizedError,
@@ -41,5 +42,27 @@ describe('toErrorBody', () => {
     const e = new BadRequestError('x');
     expect(e).toBeInstanceOf(DomainError);
     expect(e.code).toBe('BAD_REQUEST');
+  });
+});
+
+describe('errorMessage', () => {
+  it('returns the message of an Error instance', () => {
+    expect(errorMessage(new Error('boom'))).toBe('boom');
+  });
+
+  it('returns a plain string as-is', () => {
+    expect(errorMessage('plain failure')).toBe('plain failure');
+  });
+
+  it('JSON-serializes non-string, non-Error values', () => {
+    expect(errorMessage({ reason: 'quota' })).toBe('{"reason":"quota"}');
+    expect(errorMessage(42)).toBe('42');
+    expect(errorMessage(null)).toBe('null');
+  });
+
+  it("returns 'unknown error' when JSON serialization fails (circular ref)", () => {
+    const circular: Record<string, unknown> = {};
+    circular['self'] = circular;
+    expect(errorMessage(circular)).toBe('unknown error');
   });
 });

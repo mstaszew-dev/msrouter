@@ -201,4 +201,58 @@ describe('observe', () => {
     );
     expect(snapshot.recentEvents).toHaveLength(2);
   });
+
+  it('captures trimmed stdout from a successful tick_status.sh run', async () => {
+    const dir = makeCampaignDir();
+    writeFileSync(join(dir, 'events.jsonl'), '');
+    writeFileSync(join(dir, 'tick_status.sh'), '#!/bin/sh\necho "  submitted=5 ok  "\n');
+    const { snapshot } = await observe(
+      { eventsReadOffset: 0, lastTickAt: '' },
+      { campaignDir: dir },
+    );
+    // The raw script output is trimmed before landing in the snapshot.
+    expect(snapshot.tickStatus).toBe('submitted=5 ok');
+  });
+
+  it('falls back across legacy tracker field spellings', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'director-obs-legacy-'));
+    writeFileSync(
+      join(dir, 'tracker.json'),
+      JSON.stringify({ submittedCount: 7, target: 9 }),
+    );
+    const { snapshot } = await observe(
+      { eventsReadOffset: 0, lastTickAt: '' },
+      { campaignDir: dir },
+    );
+    expect(snapshot.tracker.submitted).toBe(7); // stats missing -> submittedCount
+    expect(snapshot.tracker.target).toBe(9); // targetApplications missing -> target
+    expect(snapshot.tracker.queueLength).toBe(0); // applyQueue missing
+    expect(snapshot.tracker.lastApplied).toBeUndefined();
+    expect(snapshot.tracker.updatedAt).toBe('');
+  });
+
+  it('maps lastApplied into the summary when a company is present', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'director-obs-applied-'));
+    writeFileSync(
+      join(dir, 'tracker.json'),
+      JSON.stringify({
+        stats: { submitted: 3 },
+        targetApplications: 10,
+        applyQueue: [{ id: 'q1' }, { id: 'q2' }],
+        lastApplied: { company: 'Acme' }, // no source / roleTitle -> defaults
+        updatedAt: '2026-08-01T00:00:00Z',
+      }),
+    );
+    const { snapshot } = await observe(
+      { eventsReadOffset: 0, lastTickAt: '' },
+      { campaignDir: dir },
+    );
+    expect(snapshot.tracker.queueLength).toBe(2);
+    expect(snapshot.tracker.lastApplied).toEqual({
+      source: '',
+      company: 'Acme',
+      roleTitle: '',
+      at: '2026-08-01T00:00:00Z',
+    });
+  });
 });

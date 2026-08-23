@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { backoffMs, isTransientMessage, isTransientStatus, isKeyFailureStatus } from './retry.js';
+import {
+  backoffMs,
+  isBadRequestStatus,
+  isTransientMessage,
+  isTransientStatus,
+  isKeyFailureStatus,
+} from './retry.js';
 
 describe('retry predicates', () => {
   it('classifies statuses', () => {
@@ -10,6 +16,15 @@ describe('retry predicates', () => {
     expect(isTransientStatus(503)).toBe(true);
     expect(isTransientStatus(502)).toBe(true);
     expect(isTransientStatus(200)).toBe(false);
+  });
+
+  it('classifies bad-request statuses (terminal, no rotation)', () => {
+    expect(isBadRequestStatus(400)).toBe(true);
+    expect(isBadRequestStatus(404)).toBe(true);
+    expect(isBadRequestStatus(405)).toBe(true);
+    expect(isBadRequestStatus(422)).toBe(true);
+    expect(isBadRequestStatus(200)).toBe(false);
+    expect(isBadRequestStatus(500)).toBe(false);
   });
 
   it('classifies transient messages', () => {

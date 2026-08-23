@@ -105,6 +105,21 @@ describe('isEmptyCompletion', () => {
     expect(isEmptyCompletion('string')).toBe(false);
     expect(isEmptyCompletion(42)).toBe(false);
   });
+
+  it('treats malformed choice entries as empty (skip and keep scanning)', () => {
+    // null choice entry
+    expect(isEmptyCompletion({ choices: [null, { message: { content: 'x' } }] })).toBe(false);
+    // choice without a message object
+    expect(isEmptyCompletion({ choices: [{ finish_reason: 'length' }] })).toBe(true);
+    // non-object message
+    expect(isEmptyCompletion({ choices: [{ message: 'oops', finish_reason: 'length' }] })).toBe(
+      true,
+    );
+    // falsy error field does not count as an error response
+    expect(
+      isEmptyCompletion({ error: null, choices: [{ message: { content: '' }, finish_reason: 'x' }] }),
+    ).toBe(true);
+  });
 });
 
 describe('checkStreamContent', () => {
@@ -186,5 +201,55 @@ describe('checkStreamContent', () => {
     const res = new Response(stream, { status: 200 });
     const result = await checkStreamContent(res);
     expect(result.ok).toBe(true);
+  });
+
+  it('skips non-data SSE lines, [DONE], and events without usable choices', async () => {
+    const encoder = new TextEncoder();
+    const junk = [
+      'event: ping', // not a data: line -> skipped
+      'data: [DONE]', // explicit done marker -> skipped
+      'data: {"nope":1}', // no choices array -> skipped
+      'data: {"choices":"bad"}', // non-array choices -> skipped
+      'data: ' + JSON.stringify({ choices: [{ finish_reason: null }] }), // no delta -> skipped
+      'data: ' + JSON.stringify({ choices: [{ delta: { content: 'real' } }] }),
+    ].join('\n\n');
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(junk + '\n\n'));
+        controller.close();
+      },
+    });
+    const result = await checkStreamContent(new Response(stream, { status: 200 }));
+    expect(result.ok).toBe(true);
+  });
+
+  it('swallows the close race when the consumer cancels while the pump is draining', async () => {
+    const encoder = new TextEncoder();
+    let srcController!: ReadableStreamDefaultController<Uint8Array>;
+    const firstEvent =
+      `data: ${JSON.stringify({ choices: [{ delta: { content: 'hi' } }] })}\n\n`;
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        srcController = controller;
+        controller.enqueue(encoder.encode(firstEvent));
+        // Keep the source open; the tail arrives only after the consumer acts.
+      },
+    });
+    const result = await checkStreamContent(new Response(source, { status: 200 }));
+    if (!result.ok) throw new Error(`expected ok, got: ${result.reason}`);
+    expect(result.response.status).toBe(200);
+
+    // Consume the buffered prefix, then cancel before the tail is pumped.
+    const reader = result.response.body!.getReader();
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    expect(new TextDecoder().decode(first.value as Uint8Array)).toContain('"content":"hi"');
+    await reader.cancel();
+
+    // The pump now enqueues into a canceled stream: its enqueue throws, and
+    // the finally-block close() throws again - both must be swallowed.
+    srcController.enqueue(encoder.encode('tail-data'));
+    srcController.close();
+    await new Promise((resolve) => setTimeout(resolve, 50));
   });
 });

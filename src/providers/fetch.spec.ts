@@ -7,7 +7,7 @@ vi.mock('./stream-check.js', () => ({
 
 import { postChatCompletion, scrubSecrets } from './fetch.js';
 import { checkStreamContent, isEmptyCompletion } from './stream-check.js';
-import type { ChatRequestBody } from './types.js';
+import type { AttemptOutcome, ChatRequestBody, ProviderCallResult } from './types.js';
 
 const mockedCheckStream = vi.mocked(checkStreamContent);
 const mockedIsEmpty = vi.mocked(isEmptyCompletion);
@@ -53,6 +53,18 @@ function fakeFetchError(err: Error) {
   return vi.fn().mockRejectedValue(err);
 }
 
+/** Narrow a ProviderCallResult to its OK branch; throws (fails the test) otherwise. */
+function assertOk(result: ProviderCallResult): Extract<ProviderCallResult, { kind: 'OK' }> {
+  if (result.kind !== 'OK') throw new Error(`expected OK result, got ${result.kind}`);
+  return result;
+}
+
+/** Narrow a ProviderCallResult to a classified failure (KEY_FAILURE/TRANSIENT/BAD_REQUEST). */
+function assertFailure(result: ProviderCallResult): AttemptOutcome {
+  if (result.kind === 'OK') throw new Error('expected a failure result, got OK');
+  return result;
+}
+
 let fetchSpy: ReturnType<typeof vi.fn>;
 const originalFetch = globalThis.fetch;
 
@@ -89,7 +101,7 @@ describe('postChatCompletion', () => {
       expect(result.kind).toBe('OK');
       expect(fetchSpy).toHaveBeenCalledOnce();
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      expect(fetchSpy.mock.calls[0][0]).toBe(`${BASE_URL}/chat/completions`);
+      expect(fetchSpy.mock.calls[0]![0]).toBe(`${BASE_URL}/chat/completions`);
     });
 
     it('returns OK when JSON parsing fails (raw text response)', async () => {
@@ -124,9 +136,10 @@ describe('postChatCompletion', () => {
       globalThis.fetch = fetchSpy;
 
       const result = await postChatCompletion(body(), opts());
+      const outcome = assertFailure(result);
 
-      expect(result.kind).toBe('TRANSIENT');
-      expect(result.message).toContain('rate limited');
+      expect(outcome.kind).toBe('TRANSIENT');
+      expect(outcome.message).toContain('rate limited');
     });
 
     it('returns TRANSIENT with error.message for object errors', async () => {
@@ -135,9 +148,10 @@ describe('postChatCompletion', () => {
       globalThis.fetch = fetchSpy;
 
       const result = await postChatCompletion(body(), opts());
+      const outcome = assertFailure(result);
 
-      expect(result.kind).toBe('TRANSIENT');
-      expect(result.message).toContain('quota exceeded');
+      expect(outcome.kind).toBe('TRANSIENT');
+      expect(outcome.message).toContain('quota exceeded');
     });
 
     it('returns TRANSIENT with stringified error for unknown error shapes', async () => {
@@ -146,9 +160,10 @@ describe('postChatCompletion', () => {
       globalThis.fetch = fetchSpy;
 
       const result = await postChatCompletion(body(), opts());
+      const outcome = assertFailure(result);
 
-      expect(result.kind).toBe('TRANSIENT');
-      expect(result.message).toContain('42');
+      expect(outcome.kind).toBe('TRANSIENT');
+      expect(outcome.message).toContain('42');
     });
   });
 
@@ -162,9 +177,10 @@ describe('postChatCompletion', () => {
       mockedIsEmpty.mockReturnValue(true);
 
       const result = await postChatCompletion(body(), opts());
+      const outcome = assertFailure(result);
 
-      expect(result.kind).toBe('TRANSIENT');
-      expect(result.message).toContain('empty completion');
+      expect(outcome.kind).toBe('TRANSIENT');
+      expect(outcome.message).toContain('empty completion');
       expect(mockedIsEmpty).toHaveBeenCalledOnce();
     });
   });
@@ -175,10 +191,11 @@ describe('postChatCompletion', () => {
       globalThis.fetch = fetchSpy;
 
       const result = await postChatCompletion(body(), opts());
+      const outcome = assertFailure(result);
 
-      expect(result.kind).toBe('KEY_FAILURE');
-      expect(result.status).toBe(401);
-      expect(result.message).toContain('unauthorized');
+      expect(outcome.kind).toBe('KEY_FAILURE');
+      expect(outcome.status).toBe(401);
+      expect(outcome.message).toContain('unauthorized');
     });
 
     it('returns KEY_FAILURE for 403', async () => {
@@ -186,9 +203,10 @@ describe('postChatCompletion', () => {
       globalThis.fetch = fetchSpy;
 
       const result = await postChatCompletion(body(), opts());
+      const outcome = assertFailure(result);
 
-      expect(result.kind).toBe('KEY_FAILURE');
-      expect(result.status).toBe(403);
+      expect(outcome.kind).toBe('KEY_FAILURE');
+      expect(outcome.status).toBe(403);
     });
 
     it('returns KEY_FAILURE for 429', async () => {
@@ -196,9 +214,10 @@ describe('postChatCompletion', () => {
       globalThis.fetch = fetchSpy;
 
       const result = await postChatCompletion(body(), opts());
+      const outcome = assertFailure(result);
 
-      expect(result.kind).toBe('KEY_FAILURE');
-      expect(result.status).toBe(429);
+      expect(outcome.kind).toBe('KEY_FAILURE');
+      expect(outcome.status).toBe(429);
     });
 
     it('returns TRANSIENT for 500', async () => {
@@ -206,9 +225,10 @@ describe('postChatCompletion', () => {
       globalThis.fetch = fetchSpy;
 
       const result = await postChatCompletion(body(), opts());
+      const outcome = assertFailure(result);
 
-      expect(result.kind).toBe('TRANSIENT');
-      expect(result.status).toBe(500);
+      expect(outcome.kind).toBe('TRANSIENT');
+      expect(outcome.status).toBe(500);
     });
 
     it('returns TRANSIENT for 503', async () => {
@@ -216,9 +236,10 @@ describe('postChatCompletion', () => {
       globalThis.fetch = fetchSpy;
 
       const result = await postChatCompletion(body(), opts());
+      const outcome = assertFailure(result);
 
-      expect(result.kind).toBe('TRANSIENT');
-      expect(result.status).toBe(503);
+      expect(outcome.kind).toBe('TRANSIENT');
+      expect(outcome.status).toBe(503);
     });
 
     it('returns BAD_REQUEST for 400', async () => {
@@ -226,9 +247,10 @@ describe('postChatCompletion', () => {
       globalThis.fetch = fetchSpy;
 
       const result = await postChatCompletion(body(), opts());
+      const outcome = assertFailure(result);
 
-      expect(result.kind).toBe('BAD_REQUEST');
-      expect(result.status).toBe(400);
+      expect(outcome.kind).toBe('BAD_REQUEST');
+      expect(outcome.status).toBe(400);
     });
 
     it('returns TRANSIENT for 408', async () => {
@@ -236,19 +258,20 @@ describe('postChatCompletion', () => {
       globalThis.fetch = fetchSpy;
 
       const result = await postChatCompletion(body(), opts());
+      const outcome = assertFailure(result);
 
-      expect(result.kind).toBe('TRANSIENT');
-      expect(result.status).toBe(408);
+      expect(outcome.kind).toBe('TRANSIENT');
+      expect(outcome.status).toBe(408);
     });
 
     it('appends scrubbed error body to outcome message', async () => {
       fetchSpy = fakeFetch(401, { error: { message: 'key sk-or-v1-abc123def is invalid' } });
       globalThis.fetch = fetchSpy;
 
-      const result = await postChatCompletion(body(), opts());
+      const outcome = assertFailure(await postChatCompletion(body(), opts()));
 
-      expect(result.message).toContain('sk-[REDACTED]');
-      expect(result.message).not.toContain('sk-or-v1-abc123def');
+      expect(outcome.message).toContain('sk-[REDACTED]');
+      expect(outcome.message).not.toContain('sk-or-v1-abc123def');
     });
   });
 
@@ -258,21 +281,22 @@ describe('postChatCompletion', () => {
       globalThis.fetch = fetchSpy;
 
       const result = await postChatCompletion(body(), opts());
+      const outcome = assertFailure(result);
 
-      expect(result.kind).toBe('TRANSIENT');
-      expect(result.status).toBe(0);
-      expect(result.message).toContain('fetch error:');
-      expect(result.message).toContain('connection refused');
+      expect(outcome.kind).toBe('TRANSIENT');
+      expect(outcome.status).toBe(0);
+      expect(outcome.message).toContain('fetch error:');
+      expect(outcome.message).toContain('connection refused');
     });
 
     it('scrubs secrets from error messages', async () => {
       fetchSpy = fakeFetchError(new Error('auth failed with sk-testkey123'));
       globalThis.fetch = fetchSpy;
 
-      const result = await postChatCompletion(body(), opts());
+      const outcome = assertFailure(await postChatCompletion(body(), opts()));
 
-      expect(result.message).not.toContain('sk-testkey123');
-      expect(result.message).toContain('sk-[REDACTED]');
+      expect(outcome.message).not.toContain('sk-testkey123');
+      expect(outcome.message).toContain('sk-[REDACTED]');
     });
 
     it('handles non-Error thrown values', async () => {
@@ -280,11 +304,12 @@ describe('postChatCompletion', () => {
       globalThis.fetch = fetchSpy;
 
       const result = await postChatCompletion(body(), opts());
+      const outcome = assertFailure(result);
 
-      expect(result.kind).toBe('TRANSIENT');
-      expect(result.status).toBe(0);
-      expect(result.message).toContain('fetch error:');
-      expect(result.message).toContain('string error');
+      expect(outcome.kind).toBe('TRANSIENT');
+      expect(outcome.status).toBe(0);
+      expect(outcome.message).toContain('fetch error:');
+      expect(outcome.message).toContain('string error');
     });
   });
 
@@ -297,10 +322,11 @@ describe('postChatCompletion', () => {
       vi.advanceTimersByTime(150);
 
       const result = await fetchPromise;
+      const outcome = assertFailure(result);
 
-      expect(result.kind).toBe('TRANSIENT');
-      expect(result.status).toBe(0);
-      expect(result.message).toContain('fetch error');
+      expect(outcome.kind).toBe('TRANSIENT');
+      expect(outcome.status).toBe(0);
+      expect(outcome.message).toContain('fetch error');
     });
 
     it('returns TRANSIENT when caller signal aborts', async () => {
@@ -311,9 +337,10 @@ describe('postChatCompletion', () => {
       ac.abort();
 
       const result = await fetchPromise;
+      const outcome = assertFailure(result);
 
-      expect(result.kind).toBe('TRANSIENT');
-      expect(result.status).toBe(0);
+      expect(outcome.kind).toBe('TRANSIENT');
+      expect(outcome.status).toBe(0);
     });
   });
 
@@ -327,7 +354,7 @@ describe('postChatCompletion', () => {
       const result = await postChatCompletion(body({ stream: true }), opts());
 
       expect(result.kind).toBe('OK');
-      expect(result.response).toBe(streamResponse);
+      expect(assertOk(result).response).toBe(streamResponse);
       expect(mockedCheckStream).toHaveBeenCalledOnce();
     });
 
@@ -337,21 +364,25 @@ describe('postChatCompletion', () => {
       mockedCheckStream.mockResolvedValue({ ok: false, reason: 'no content tokens' });
 
       const result = await postChatCompletion(body({ stream: true }), opts());
+      const outcome = assertFailure(result);
 
-      expect(result.kind).toBe('KEY_FAILURE');
-      expect(result.status).toBe(200);
-      expect(result.message).toContain('no content tokens');
+      expect(outcome.kind).toBe('KEY_FAILURE');
+      expect(outcome.status).toBe(200);
+      expect(outcome.message).toContain('no content tokens');
     });
 
     it('uses default message when checkStreamContent reason is undefined', async () => {
       fetchSpy = fakeFetch(200, {});
       globalThis.fetch = fetchSpy;
-      mockedCheckStream.mockResolvedValue({ ok: false });
+      // Simulate a malformed stream-check result whose `reason` is missing at
+      // runtime, to exercise the default-message fallback in postChatCompletion.
+      mockedCheckStream.mockResolvedValue({ ok: false } as { ok: false; reason: string });
 
       const result = await postChatCompletion(body({ stream: true }), opts());
+      const outcome = assertFailure(result);
 
-      expect(result.kind).toBe('KEY_FAILURE');
-      expect(result.message).toContain('stream returned no content');
+      expect(outcome.kind).toBe('KEY_FAILURE');
+      expect(outcome.message).toContain('stream returned no content');
     });
   });
 
@@ -437,8 +468,9 @@ describe('postChatCompletion', () => {
       ac.abort();
 
       const result = await fetchPromise;
-      expect(result.kind).toBe('TRANSIENT');
-      expect(result.status).toBe(0);
+      const outcome = assertFailure(result);
+      expect(outcome.kind).toBe('TRANSIENT');
+      expect(outcome.status).toBe(0);
     });
   });
 
@@ -450,8 +482,10 @@ describe('postChatCompletion', () => {
       const b = body({ model: 'claude-4', temperature: 0.7 });
       await postChatCompletion(b, opts());
 
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-argument
-      const sentBody: Record<string, unknown> = JSON.parse(fetchSpy.mock.calls[0][1].body);
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment
+      const rawBody: unknown = fetchSpy.mock.calls[0]![1]!.body;
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- JSON.parse returns any
+      const sentBody: Record<string, unknown> = JSON.parse(rawBody as string);
       expect(sentBody.model).toBe('claude-4');
       expect(sentBody.temperature).toBe(0.7);
       expect(sentBody.messages).toEqual([{ role: 'user', content: 'hi' }]);
@@ -464,7 +498,7 @@ describe('postChatCompletion', () => {
       await postChatCompletion(body(), opts());
 
       // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      expect(fetchSpy.mock.calls[0][1].method).toBe('POST');
+      expect(fetchSpy.mock.calls[0]![1]!.method).toBe('POST');
     });
   });
 });

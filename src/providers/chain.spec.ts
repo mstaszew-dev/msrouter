@@ -45,6 +45,7 @@ function makeProviders(
     opencodeModels?: string[];
     opencodeKeys?: number;
     localResults?: ProviderCallResult[];
+    lmstudioResults?: ProviderCallResult[];
   } = {},
 ): Providers {
   const orKeys = overrides.openrouterKeys ?? 2;
@@ -85,11 +86,12 @@ function makeProviders(
     return localResults.shift() ?? { kind: 'TRANSIENT', status: 0, message: 'local stub' };
   });
 
-  const lmstudioAttempt = vi.fn(async (): Promise<ProviderCallResult> => ({
-    kind: 'KEY_FAILURE',
-    status: 0,
-    message: 'lmstudio stub',
-  }));
+  const lmstudioResults = overrides.lmstudioResults ?? [];
+  const lmstudioAttempt = vi.fn(async (): Promise<ProviderCallResult> => {
+    return (
+      lmstudioResults.shift() ?? { kind: 'KEY_FAILURE', status: 0, message: 'lmstudio stub' }
+    );
+  });
 
   return {
     openrouter: {
@@ -322,11 +324,11 @@ describe('ProviderChain - direct: short-circuit', () => {
     const chain = new ProviderChain(p, silentLogger);
     await expect(
       chain.handle({ ...baseBody, model: 'direct:openrouter/mst/free' }, new AbortController().signal),
-    ).rejects.toSatisfy((err: Error) => {
+    ).rejects.toSatisfy((err: unknown) => {
       expect(err).toBeInstanceOf(NoProviderAvailableError);
       // runSingle uses entry.label = p.id ('openrouter'), not the queue label
-      expect(err.message).toContain('openrouter');
-      expect(err.message).toContain('KEY_FAILURE');
+      expect((err as Error).message).toContain('openrouter');
+      expect((err as Error).message).toContain('KEY_FAILURE');
       return true;
     });
   });
@@ -596,6 +598,24 @@ describe('ProviderChain - tryEntry demoteOnKeyFailure=false path', () => {
     // The entry should NOT be demoted (demoteOnKeyFailure=false in runSingle)
     const labels = chain.queueSnapshot().map((c) => c.label);
     expect(labels[0]).toBe('openrouter[key1/openrouter/free]');
+  });
+});
+
+describe('ProviderChain - entry whose provider disappears after queue build', () => {
+  it('aggregates a :not-configured failure when an entry provider is unavailable at handle time', async () => {
+    const p = makeProviders({ openrouterKeys: 1 });
+    // Build the queue while openrouter is still available...
+    const chain = new ProviderChain(p, silentLogger);
+    // ...then flip availability so tryEntry hits its not-configured guard
+    // mid-walk (provider vanished between queue build and handle()).
+    (p.openrouter as unknown as { available: boolean }).available = false;
+    await expect(
+      chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal),
+    ).rejects.toSatisfy((err: unknown) => {
+      expect(err).toBeInstanceOf(NoProviderAvailableError);
+      expect((err as Error).message).toContain(':not-configured');
+      return true;
+    });
   });
 });
 

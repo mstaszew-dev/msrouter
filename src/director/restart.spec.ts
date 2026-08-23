@@ -29,6 +29,7 @@ import {
   isInIterm,
   isRunningInIterm,
   pollCdp,
+  restartWorker,
   snapshot,
   startChromeCdp,
   startWorkerInIterm,
@@ -492,6 +493,16 @@ describe('waitForStartup', () => {
     const up = await waitForStartup(kafkaOpts, 1);
     expect(up).toBe(false);
   });
+
+  it('resolves true even when clearing the start lock fails (best-effort)', async () => {
+    // A directory where the lock file should live makes writeFileSync throw
+    // (EISDIR); waitForStartup must treat lock bookkeeping as best-effort.
+    const lockPath = join(process.env['HOME']!, '.campaign-agent', 'agent-start.lock');
+    mkdirSync(lockPath, { recursive: true });
+    vi.mocked(execFileSync).mockReturnValue('4242\n');
+    const up = await waitForStartup(kafkaOpts, 1000);
+    expect(up).toBe(true);
+  });
 });
 
 describe('startWorkerInIterm', () => {
@@ -582,5 +593,102 @@ describe('ensureInfrastructureHealthy', () => {
       { missing: ['playwright-mcp'] },
       'Campaign infrastructure unhealthy; restarting campaign',
     );
+  });
+
+  it('reports Chrome still up (not down) when restarting with CDP alive', async () => {
+    // chrome detected, playwright-mcp + openclaw missing -> the cdpAlive info
+    // branch fires instead of the "Chrome CDP is also down" one.
+    vi.mocked(execFileSync).mockImplementation((...args: unknown[]) => {
+      const file = args[0] as string;
+      const cmdArgs = args[1] as string[];
+      if (file === 'pgrep') {
+        return cmdArgs[1] === 'chrome.*remote-debugging' ? '900\n' : '';
+      }
+      if (file === 'osascript') return '';
+      throw new Error(`unexpected exec ${file}`);
+    });
+    const restarted = await ensureInfrastructureHealthy({
+      ...kafkaOpts,
+      cdpTimeoutMs: 1,
+      cdpUrl: 'http://127.0.0.1:1',
+    });
+    expect(restarted).toBe(true);
+    expect(silent.info).toHaveBeenCalledWith(
+      'Chrome CDP is still up; restarting campaign to reinitialize Playwright MCP',
+    );
+  });
+});
+
+describe('restartWorker', () => {
+  let realHome: string;
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    realHome = process.env['HOME']!;
+    process.env['HOME'] = mkdtempSync(join(tmpdir(), 'director-restartworker-home-'));
+  });
+
+  afterEach(() => {
+    process.env['HOME'] = realHome;
+  });
+
+  it('logs stopped pids and a CDP warning across the full restart flow', async () => {
+    let workerArmed = false;
+    vi.mocked(execFileSync).mockImplementation((...args: unknown[]) => {
+      const file = args[0] as string;
+      const cmdArgs = args[1] as string[];
+      if (file === 'pgrep') {
+        // First detectWorker call sees pid 4242; every later poll sees none
+        // (the tree was just killed), so stopTree/waitForStartup resolve fast.
+        if (cmdArgs[1] === 'job-search-agent') {
+          if (!workerArmed) {
+            workerArmed = true;
+            return '4242\n';
+          }
+          return '';
+        }
+        return ''; // campaign_agent.main and friends
+      }
+      if (file === 'osascript') return '';
+      throw new Error(`unexpected exec ${file}`);
+    });
+
+    const out = await restartWorker({
+      ...kafkaOpts,
+      cdpUrl: 'http://127.0.0.1:1', // nothing listens here; CDP poll must fail
+      cdpTimeoutMs: 5,
+    });
+
+    expect(out.iterm).toBe(true);
+    expect(out.state.running).toBe(false);
+    // Previous campaign pids were reported before relaunching.
+    expect(silent.info).toHaveBeenCalledWith(
+      { pids: [4242] },
+      'stopped previous campaign',
+    );
+    // The worker never registered via pgrep within the tiny timeout...
+    expect(silent.warn).toHaveBeenCalledWith(
+      'job-search-agent did not register via pgrep within timeout',
+    );
+    // ...and CDP never came up either.
+    expect(silent.warn).toHaveBeenCalledWith(
+      { cdpUrl: 'http://127.0.0.1:1' },
+      'CDP did not become healthy; worker may still be starting',
+    );
+  });
+
+  it('skips the "stopped previous campaign" log when nothing was running', async () => {
+    vi.mocked(execFileSync).mockImplementation((...args: unknown[]) => {
+      const file = args[0] as string;
+      if (file === 'pgrep') return '';
+      if (file === 'osascript') return '';
+      throw new Error(`unexpected exec ${file}`);
+    });
+    const out = await restartWorker({ ...kafkaOpts, cdpTimeoutMs: 1, cdpUrl: 'http://127.0.0.1:1' });
+    expect(out.iterm).toBe(true);
+    const stopLog = vi
+      .mocked(silent.info)
+      .mock.calls.find((c) => c[1] === 'stopped previous campaign');
+    expect(stopLog).toBeUndefined();
   });
 });

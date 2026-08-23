@@ -64,6 +64,10 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
     expect(makeProvider().available).toBe(true);
   });
 
+  it('exposes the configured default model for alias resolution', () => {
+    expect(makeProvider().resolvedDefaultModel).toBe('qwen3.5:2b');
+  });
+
   it('posts to {base}/chat/completions with the resolved model and OpenAI body shape', async () => {
     const fetchMock = stubFetchOnce({
       choices: [{ message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
@@ -248,6 +252,21 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
           ],
         }],
       },
+      new AbortController().signal,
+      { model: 'qwen3.5:2b' },
+    );
+    expect(res.kind).toBe('OK');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('tolerates malformed messages when estimating prompt tokens', async () => {
+    const fetchMock = stubFetchOnce({
+      choices: [{ message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
+    });
+    // Non-array messages and junk entries must not crash the guard; they are
+    // estimated as zero and the request proceeds to the upstream call.
+    const res = await makeProvider().attempt(
+      { ...baseBody, messages: [null, 42, 'junk'] as never },
       new AbortController().signal,
       { model: 'qwen3.5:2b' },
     );

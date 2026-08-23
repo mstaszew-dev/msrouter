@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { loadEnv } from './env.js';
+import { initEnv, loadEnv } from './env.js';
 
 describe('loadEnv', () => {
   it('collects numbered OPENROUTER_KEY1..N in ascending order', () => {
@@ -195,5 +195,54 @@ describe('loadEnv - LM Studio (Bionic) local provider', () => {
     expect(cfg.env.LMSTUDIO_TIMEOUT_MS).toBe(300_000);
     const over = loadEnv({ LMSTUDIO_TIMEOUT_MS: '600000' });
     expect(over.env.LMSTUDIO_TIMEOUT_MS).toBe(600_000);
+  });
+});
+
+describe('loadEnv - production safety', () => {
+  it('throws when NODE_ENV=production and no provider is configured', () => {
+    expect(() => loadEnv({ NODE_ENV: 'production' })).toThrow(/No provider configured/);
+  });
+
+  it('accepts a production env with an OpenRouter key', () => {
+    const cfg = loadEnv({ NODE_ENV: 'production', OPENROUTER_KEY1: 'k1' });
+    expect(cfg.openrouterKeys).toEqual(['k1']);
+  });
+
+  it('accepts a production env with only a fallback API key', () => {
+    const cfg = loadEnv({ NODE_ENV: 'production', OPENAI_API_KEY: 'sk-x' });
+    expect(cfg.env.OPENAI_API_KEY).toBe('sk-x');
+  });
+
+  it('does not apply the production guard outside production', () => {
+    const cfg = loadEnv({});
+    expect(cfg.openrouterKeys).toEqual([]);
+  });
+});
+
+describe('initEnv', () => {
+  it('returns the cached config once loadEnv has run (idempotent)', () => {
+    const cfg = loadEnv({ OPENROUTER_KEY1: 'cached-key' });
+    // Same module instance: initEnv must return the exact cached object.
+    expect(initEnv()).toBe(cfg);
+    expect(initEnv().openrouterKeys).toEqual(['cached-key']);
+  });
+
+  it('parses process.env on first call in a fresh module registry', async () => {
+    vi.resetModules();
+    const savedNodeEnv = process.env['NODE_ENV'];
+    process.env['NODE_ENV'] = 'test';
+    try {
+      const fresh = await import('./env.js');
+      const cfg = fresh.initEnv();
+      expect(cfg.env.PORT).toBeGreaterThan(0);
+      // A second call must return the same (now-cached) object.
+      expect(fresh.initEnv()).toBe(cfg);
+    } finally {
+      if (savedNodeEnv === undefined) {
+        delete process.env['NODE_ENV'];
+      } else {
+        process.env['NODE_ENV'] = savedNodeEnv;
+      }
+    }
   });
 });

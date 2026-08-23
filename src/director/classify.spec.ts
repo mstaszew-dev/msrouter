@@ -92,4 +92,18 @@ describe('classify', () => {
     const out = classify(snap([]), now, recentEventAt);
     expect(out.find((c) => c.kind === 'stale-campaign')).toBeUndefined();
   });
+
+  it('treats object/array record values as empty strings (never regex-matched)', () => {
+    // A malformed record whose roleTitle/companyKey are objects must fall
+    // through to good-apply, not throw or spuriously match policy regexes.
+    const out = classify(
+      snap([submitted({ roleTitle: { nested: 'Team Lead' }, companyKey: ['acme'] })]),
+      now,
+      now,
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]).toEqual(
+      expect.objectContaining({ kind: 'good-apply', severity: 'info', reason: 'Clean submission: (no title)' }),
+    );
+  });
 });

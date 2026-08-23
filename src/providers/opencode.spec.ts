@@ -87,6 +87,21 @@ describe('OpenCodeProvider pool', () => {
     expect(res.kind).toBe('KEY_FAILURE');
   });
 
+  it('returns a KEY_FAILURE when the triple queue is empty (no models configured)', async () => {
+    // Keys exist (so the provider is "available") but zero models means the
+    // rotation queue has no triples at all; attempt() must fail safe instead
+    // of throwing on the missing triple.
+    const { p } = makeProvider(['k1'], []);
+    const res = await p.attempt({ model: 'x', messages: [] }, new AbortController().signal, {
+      tripleIndex: 0,
+    });
+    expect(res).toEqual({
+      kind: 'KEY_FAILURE',
+      status: 0,
+      message: 'opencode: triple index out of range',
+    });
+  });
+
   it('queue.at wraps modulo length, so any tripleIndex resolves to a real triple (no out-of-range path)', () => {
     // RotationQueue.at() wraps; there is no "out of range" early-return by
     // design. This test documents that contract: a length-1 queue has one

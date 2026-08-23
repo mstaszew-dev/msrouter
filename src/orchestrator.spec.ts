@@ -167,4 +167,20 @@ describe('startOrchestrator', () => {
     vi.useRealTimers();
     await Promise.resolve();
   });
+
+  it('logs an error (and keeps the scheduler alive) when a Director tick throws', async () => {
+    const runOnce = vi.fn(async (_signal: AbortSignal) => {
+      throw new Error('llm exploded');
+    });
+    vi.mocked(DirectorLoop).mockImplementation(() => ({ runOnce }) as never);
+
+    const handles = startOrchestrator({ chain: {} as never, log: silent });
+    // Flush the fire-and-forget initial tick so its rejection settles.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(silent.error).toHaveBeenCalledWith({ err: 'llm exploded' }, 'Director tick failed');
+    // The tick slot was released, so the scheduler is not wedged.
+    expect(runOnce).toHaveBeenCalledTimes(1);
+    handles.shutdown();
+  });
 });

@@ -44,6 +44,10 @@ export default defineConfig({
         'src/providers/types.ts',
         // agent loop orchestrates chain+tools; integration territory.
         'src/agent/loop.ts',
+        // Type-only module: zero runtime code to cover.
+        'src/director/types.ts',
+        // Barrel re-export of sibling modules, which carry their own coverage.
+        'src/director/index.ts',
         'src/config/logger.ts',
         'msrouter.ts',
         'vitest.config.ts',
