@@ -76,8 +76,24 @@ function isKafkaRunning(): boolean {
 let lastKafkaSpawnAt = 0;
 const KAFKA_SPAWN_COOLDOWN_MS = 60_000;
 
-/** Reset the spawn cooldown (for testing only). */
+/** Consecutive Kafka start attempts (resets when broker detected running). */
+let kafkaConsecutiveFailures = 0;
+const KAFKA_BACKOFF_MAX_MS = 30 * 60_000; // 30 minutes cap
+
+/** Exponential backoff: 60s, 120s, 240s, ... capped at 30min. */
+function getKafkaBackoffMs(): number {
+  const ms = KAFKA_SPAWN_COOLDOWN_MS * Math.pow(2, kafkaConsecutiveFailures);
+  return Math.min(ms, KAFKA_BACKOFF_MAX_MS);
+}
+
+/** Reset spawn cooldown + failure state (for testing only). */
 export function __resetKafkaSpawnCooldown(): void {
+  lastKafkaSpawnAt = 0;
+}
+
+/** Reset failure state (for testing only). */
+export function __resetKafkaFailureState(): void {
+  kafkaConsecutiveFailures = 0;
   lastKafkaSpawnAt = 0;
 }
 
@@ -113,27 +129,36 @@ export function startWorkerInIterm(opts: iTermOpts): void {
 
 export function startKafkaInIterm(opts: iTermOpts): void {
   if (isKafkaRunning()) {
+    kafkaConsecutiveFailures = 0;
     opts.log.info('Kafka broker already running; skipping spawn');
     return;
   }
-  // Cooldown: don't spam iTerm tabs when Kafka fails to start (e.g. missing
-  // KRaft meta.properties). The director tick calls this every minute; a
-  // failed spawn would otherwise open a new tab every tick.
+  // Cooldown: exponential backoff when Kafka repeatedly fails to start.
   const now = Date.now();
-  if (now - lastKafkaSpawnAt < KAFKA_SPAWN_COOLDOWN_MS) {
+  const backoffMs = getKafkaBackoffMs();
+  if (now - lastKafkaSpawnAt < backoffMs) {
     opts.log.info('Kafka spawn cooldown active; skipping');
     return;
   }
   lastKafkaSpawnAt = now;
-  // Both start and monitor run in the SAME tab/session (start, then monitor).
+  // Use start-or-init: if the broker can't start (e.g. KRaft storage wiped
+  // from /tmp cleanup), reinitialize KRaft and retry once.
   const script = itermScript(
-    `cd ${MSROUTER_ROOT} && bash scripts/kafka.sh start`,
+    `cd ${MSROUTER_ROOT} && bash scripts/kafka.sh start-or-init`,
     `cd ${MSROUTER_ROOT} && bash scripts/kafka.sh monitor`,
   );
   try {
     execFileSync('osascript', ['-e', script], { encoding: 'utf8', stdio: 'ignore' });
+    kafkaConsecutiveFailures++;
+    if (kafkaConsecutiveFailures >= 3) {
+      opts.log.warn(
+        { failures: kafkaConsecutiveFailures, nextBackoffMs: getKafkaBackoffMs() },
+        'Kafka has failed to start multiple times; backing off',
+      );
+    }
     opts.log.info('started Kafka in iTerm2');
   } catch (e) {
+    kafkaConsecutiveFailures++;
     opts.log.error(
       { err: e instanceof Error ? e.message : String(e) },
       'failed to launch Kafka in iTerm2',

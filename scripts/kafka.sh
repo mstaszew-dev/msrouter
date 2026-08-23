@@ -55,7 +55,40 @@ start() {
   done
   echo "--- kafka log ---" >&2
   tail -n 20 .run/kafka.log >&2 || true
-  die "broker did not become ready in 20s"
+  echo "broker did not become ready in 20s" >&2
+  return 1
+}
+
+# Reinitialize KRaft storage (fixes corrupted/missing meta.properties from /tmp cleanup).
+reinit_kraft() {
+  log "reinitializing KRaft storage..."
+  # Kill any lingering broker from a failed start attempt
+  if is_running; then
+    kill "$(cat "$PIDFILE")" 2>/dev/null || true
+    sleep 2
+  fi
+  rm -f "$PIDFILE" .run/kafka-server.properties
+  # Generate a fresh cluster UUID and format storage
+  local cluster_uuid
+  cluster_uuid=$("$KAFKA_HOME/bin/kafka-storage.sh" random-uuid)
+  local props=".run/kafka-server.properties"
+  sed -e "s/:9092/:${KAFKA_PORT}/g" \
+      "$KAFKA_HOME/config/kraft/server.properties" > "$props"
+  "$KAFKA_HOME/bin/kafka-storage.sh" format \
+    --cluster-id "$cluster_uuid" \
+    --config "$props" \
+    --ignore-formatted
+  ok "KRaft storage reinitialized (cluster-id: $cluster_uuid)"
+}
+
+# Try to start; if broker fails to come up, reinitialize KRaft and retry once.
+start_or_init() {
+  if start; then
+    return 0
+  fi
+  log "Kafka start failed; attempting KRaft reinitialization"
+  reinit_kraft
+  start
 }
 
 stop() {
@@ -150,6 +183,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 
   case "${1:-status}" in
     start)   start; create_topics; report ;;
+    start-or-init)  start_or_init; create_topics; report ;;
     stop)    stop ;;
     restart) stop; sleep 2; start; create_topics; report ;;
     status)  status ;;
@@ -157,6 +191,6 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     monitor) monitor ;;
     tail)    shift; tail_topic "$@" ;;
     produce) shift; produce_one "$@" ;;
-    *) die "unknown: $1 (use: start | stop | restart | status | topics | monitor | tail <topic> | produce <topic> <key> <value>)" ;;
+    *) die "unknown: $1 (use: start | start-or-init | stop | restart | status | topics | monitor | tail <topic> | produce <topic> <key> <value>)" ;;
   esac
 fi

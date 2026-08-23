@@ -18,6 +18,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 import {
   __resetKafkaSpawnCooldown,
+  __resetKafkaFailureState,
   assertInIterm,
   checkInfrastructure,
   detectWorker,
@@ -143,6 +144,8 @@ describe('startKafkaInIterm', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    __resetKafkaSpawnCooldown();
+    __resetKafkaFailureState();
     realHome = process.env['HOME']!;
     process.env['HOME'] = mkdtempSync(join(tmpdir(), 'director-kafka-home-'));
   });
@@ -151,7 +154,7 @@ describe('startKafkaInIterm', () => {
     process.env['HOME'] = realHome;
   });
 
-  it('starts Kafka in an iTerm tab when broker is not running', () => {
+  it('starts Kafka via start-or-init in an iTerm tab when broker is not running', () => {
     vi.mocked(execFileSync).mockImplementation((cmd: string) => {
       if (cmd === 'lsof') throw new Error('not found');
       return '';
@@ -163,7 +166,7 @@ describe('startKafkaInIterm', () => {
     const script = osaCalls[0]![1]![1]!;
     expect(script).toContain('kafka');
     expect(script).toContain('scripts/kafka.sh');
-    expect(script).toContain('bash scripts/kafka.sh start');
+    expect(script).toContain('bash scripts/kafka.sh start-or-init');
     expect(script).toContain('bash scripts/kafka.sh monitor');
     expect(script).not.toContain('tell current session of newTab');
     const repoRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
@@ -181,7 +184,6 @@ describe('startKafkaInIterm', () => {
   });
 
   it('does not spam tabs when Kafka repeatedly fails to start (cooldown)', () => {
-    __resetKafkaSpawnCooldown();
     vi.mocked(execFileSync).mockImplementation((cmd: string) => {
       if (cmd === 'lsof') throw new Error('not found');
       return '';
@@ -196,7 +198,6 @@ describe('startKafkaInIterm', () => {
   });
 
   it('rethrows when osascript fails in startKafkaInIterm', () => {
-    __resetKafkaSpawnCooldown();
     vi.mocked(execFileSync).mockImplementation((cmd: string) => {
       if (cmd === 'lsof') throw new Error('not found');
       throw new Error('osascript failed');
@@ -204,6 +205,110 @@ describe('startKafkaInIterm', () => {
     expect(() => startKafkaInIterm(kafkaOpts)).toThrow(
       'iTerm2 launch failed (is iTerm2 installed and running?). Start Kafka manually.',
     );
+  });
+
+  it('uses exponential backoff after consecutive Kafka start failures', () => {
+    vi.mocked(execFileSync).mockImplementation((cmd: string) => {
+      if (cmd === 'lsof') throw new Error('not found');
+      return '';
+    });
+    const origNow = Date.now;
+
+    // Failure #1 at t=0: backoff becomes 120s
+    startKafkaInIterm(kafkaOpts);
+    let osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
+    expect(osaCalls.length).toBe(1);
+    vi.mocked(execFileSync).mockClear();
+
+    // t=61s: within 120s backoff -> skip
+    vi.spyOn(Date, 'now').mockReturnValue(origNow() + 61_000);
+    startKafkaInIterm(kafkaOpts);
+    osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
+    expect(osaCalls.length).toBe(0);
+
+    // t=121s: past 120s backoff -> failure #2, backoff becomes 240s
+    vi.spyOn(Date, 'now').mockReturnValue(origNow() + 121_000);
+    startKafkaInIterm(kafkaOpts);
+    osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
+    expect(osaCalls.length).toBe(1);
+    vi.mocked(execFileSync).mockClear();
+
+    // t=300s: within 240s of second attempt -> skip
+    vi.spyOn(Date, 'now').mockReturnValue(origNow() + 300_000);
+    startKafkaInIterm(kafkaOpts);
+    osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
+    expect(osaCalls.length).toBe(0);
+
+    // t=362s: past 240s of second attempt -> failure #3, backoff becomes 480s
+    vi.spyOn(Date, 'now').mockReturnValue(origNow() + 362_000);
+    startKafkaInIterm(kafkaOpts);
+    osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
+    expect(osaCalls.length).toBe(1);
+    vi.mocked(execFileSync).mockClear();
+
+    // t=700s: within 480s of third attempt -> skip
+    vi.spyOn(Date, 'now').mockReturnValue(origNow() + 700_000);
+    startKafkaInIterm(kafkaOpts);
+    osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
+    expect(osaCalls.length).toBe(0);
+
+    Date.now = origNow;
+  });
+
+  it('resets backoff when broker is detected running', () => {
+    // First: make a failed attempt to build up failures
+    vi.mocked(execFileSync).mockImplementation((cmd: string) => {
+      if (cmd === 'lsof') throw new Error('not found');
+      return '';
+    });
+    startKafkaInIterm(kafkaOpts);
+    let osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
+    expect(osaCalls.length).toBe(1);
+    vi.mocked(execFileSync).mockClear();
+
+    // Now broker is running: should skip and reset
+    vi.mocked(execFileSync).mockImplementation((cmd: string) => {
+      if (cmd === 'lsof') return 'java  12345  mst  5u  IPv4  ...\n';
+      return '';
+    });
+    startKafkaInIterm(kafkaOpts);
+    osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
+    expect(osaCalls.length).toBe(0);
+
+    // Advance past original cooldown (60s): should open because failures were reset
+    const origNow = Date.now;
+    vi.spyOn(Date, 'now').mockReturnValue(origNow() + 65_000);
+    vi.mocked(execFileSync).mockClear();
+    vi.mocked(execFileSync).mockImplementation((cmd: string) => {
+      if (cmd === 'lsof') throw new Error('not found');
+      return '';
+    });
+    startKafkaInIterm(kafkaOpts);
+    // After reset, cooldown is back to 60s base; 65s > 60s so it should fire
+    osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
+    expect(osaCalls.length).toBe(1);
+    Date.now = origNow;
+  });
+
+  it('warns after multiple consecutive Kafka start failures', () => {
+    vi.mocked(execFileSync).mockImplementation((cmd: string) => {
+      if (cmd === 'lsof') throw new Error('not found');
+      return '';
+    });
+
+    // 3 consecutive failures to trigger warning (backoff: 60->120->240s)
+    const origNow = Date.now;
+    startKafkaInIterm(kafkaOpts); // failure #1
+    vi.spyOn(Date, 'now').mockReturnValue(origNow() + 121_000);
+    startKafkaInIterm(kafkaOpts); // failure #2
+    vi.spyOn(Date, 'now').mockReturnValue(origNow() + 362_000);
+    startKafkaInIterm(kafkaOpts); // failure #3
+
+    expect(silent.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ failures: 3 }),
+      expect.stringContaining('Kafka has failed to start multiple times'),
+    );
+    Date.now = origNow;
   });
 });
 
