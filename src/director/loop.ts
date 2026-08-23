@@ -22,6 +22,7 @@ import type { Env } from '../config/env.js';
 import type { ProviderChain } from '../providers/chain.js';
 
 import { runDirectorAgent } from './agent-loop.js';
+import { MSROUTER_ROOT } from './iterm.js';
 import { readOverrides, applyPatch } from './apply.js';
 import { classify } from './classify.js';
 import { kafkaProduce, type KafkaOpts } from './kafka.js';
@@ -116,8 +117,34 @@ export class DirectorLoop {
     }
   }
 
-  /** Run the read-only agent loop and post proposals to Slack. Returns count proposed. */
-  private async proposePatches(
+  /**
+   * Supervise the local Kafka broker: probe with `kafka.sh status`, and on
+   * failure attempt `kafka.sh start-or-init` once. Kafka is observability-
+   * only: every failure path logs a warning and never blocks the tick.
+   */
+  async ensureKafkaRunning(): Promise<boolean> {
+    if (!this.kafkaOpts) return true;
+    const script = join(MSROUTER_ROOT, 'scripts', 'kafka.sh');
+    try {
+      await execFileP('bash', [script, 'status'], { timeout: 20_000 });
+      return true;
+    } catch {
+      this.opts.log.warn('kafka broker down; attempting start-or-init');
+    }
+    try {
+      await execFileP('bash', [script, 'start-or-init'], { timeout: 150_000 });
+      this.opts.log.info('kafka broker recovered via start-or-init');
+      return true;
+    } catch (e) {
+      this.opts.log.warn(
+        { err: e instanceof Error ? e.message : String(e) },
+        'kafka recovery failed; continuing without broker',
+      );
+      return false;
+    }
+  }
+
+  /** Run the read-only agent loop and post proposals to Slack. Returns count proposed. */  private async proposePatches(
     actionable: DecisionClassification[],
     snapshot: { tracker: { submitted: number; target: number; queueLength: number } },
     e: Env,
@@ -254,6 +281,10 @@ export class DirectorLoop {
     let observed = 0;
     let classificationsCount = 0;
     let proposedCount = 0;
+
+    // Supervise the observability broker before doing any work: a dead Kafka
+    // must never block the tick, but it should also not stay dead silently.
+    await this.ensureKafkaRunning();
 
     try {
       const t0 = Date.now();

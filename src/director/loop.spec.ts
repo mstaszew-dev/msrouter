@@ -1,9 +1,10 @@
+import { execFile } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type pino from 'pino';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { kafkaProduce } from './kafka.js';
 import { DirectorLoop } from './loop.js';
@@ -347,5 +348,106 @@ describe('DirectorLoop.runOnce', () => {
     });
     const result = await loop.runOnce(new AbortController().signal);
     expect(result.reason).toBe('ok');
+  });
+});
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  void actual;
+  // Default: instant no-op success so tests never touch the real filesystem
+  // or scripts (ensureKafkaRunning would otherwise really start Kafka).
+  return {
+    ...actual,
+    execFile: vi.fn(
+      (
+        _cmd: string,
+        _args: string[],
+        _opts: unknown,
+        cb: (err: Error | null, result?: { stdout: string; stderr: string }) => void,
+      ) => cb(null, { stdout: '', stderr: '' }),
+    ),
+  };
+});
+
+describe('ensureKafkaRunning supervision', () => {
+  const execFileMock = vi.mocked(execFile);
+
+  beforeEach(() => {
+    execFileMock.mockClear();
+  });
+
+  function kafkaLoop(stateDir: string, campaign: string, envOverrides: Record<string, unknown> = {}) {
+    return new DirectorLoop({
+      env: makeEnv({
+        KAFKA_ENABLED: true,
+        KAFKA_HOME: '/tmp/fake-kafka-home',
+        DIRECTOR_CAMPAIGN_DIR: campaign,
+        DIRECTOR_LEDGER: join(stateDir, 'l.jsonl'),
+        ...envOverrides,
+      }) as never,
+      chain: { handle: vi.fn(async () => ({ response: new Response('{"choices":[{"message":{"content":"{\\"patches\\":[]}"}}]}'), servedBy: {} })) } as never,
+      surface: nullSurface(),
+      log: silent,
+      checkpointPath: join(stateDir, 'cp.json'),
+    });
+  }
+
+  function fakeExec(statusExitOk: boolean, initExitOk: boolean): void {
+    execFileMock.mockImplementation(
+      ((...cbArgs: unknown[]) => {
+        const cb = cbArgs[3] as (
+          err: Error | null,
+          out?: { stdout: string; stderr: string },
+        ) => void;
+        const sub = (cbArgs[1] as string[])[1];
+        if (sub === 'status') {
+          if (statusExitOk) cb(null, { stdout: '[ok] running', stderr: '' });
+          else cb(new Error('kafka not running'));
+        } else if (sub === 'start-or-init') {
+          if (initExitOk) cb(null, { stdout: '[ok] broker ready', stderr: '' });
+          else cb(new Error('broker did not become ready'));
+        } else {
+          cb(null, { stdout: '', stderr: '' });
+        }
+      }) as never,
+    );
+  }
+
+  it('runs start-or-init once when the broker is down', async () => {
+    fakeExec(false, true);
+    const stateDir = mkdtempSync(join(tmpdir(), 'director-state-'));
+    const loop = kafkaLoop(stateDir, makeCampaign());
+    await loop.runOnce(new AbortController().signal);
+    const subs = execFileMock.mock.calls.map((c) => ((c[1] as string[]) ?? [])[1]);
+    expect(subs).toContain('status');
+    expect(subs.filter((s) => s === 'start-or-init')).toHaveLength(1);
+  });
+
+  it('does not attempt recovery when status reports the broker up', async () => {
+    fakeExec(true, true);
+    const stateDir = mkdtempSync(join(tmpdir(), 'director-state-'));
+    const loop = kafkaLoop(stateDir, makeCampaign());
+    await loop.runOnce(new AbortController().signal);
+    const subs = execFileMock.mock.calls.map((c) => (c[1] as string[])[1]);
+    expect(subs).toContain('status');
+    expect(subs).not.toContain('start-or-init');
+  });
+
+  it('continues the tick when recovery also fails (warn, never throw)', async () => {
+    fakeExec(false, false);
+    const stateDir = mkdtempSync(join(tmpdir(), 'director-state-'));
+    const loop = kafkaLoop(stateDir, makeCampaign());
+    await expect(loop.runOnce(new AbortController().signal)).resolves.toBeDefined();
+    const subs = execFileMock.mock.calls.map((c) => (c[1] as string[])[1]);
+    expect(subs).toContain('start-or-init');
+  });
+
+  it('skips supervision entirely when KAFKA_ENABLED is false', async () => {
+    fakeExec(true, true);
+    const stateDir = mkdtempSync(join(tmpdir(), 'director-state-'));
+    const loop = kafkaLoop(stateDir, makeCampaign(), { KAFKA_ENABLED: false });
+    await loop.runOnce(new AbortController().signal);
+    const subs = execFileMock.mock.calls.map((c) => (c[1] as string[])[1]);
+    expect(subs).not.toContain('status');
   });
 });

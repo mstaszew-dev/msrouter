@@ -380,7 +380,15 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
     const result = await loop.runOnce(freshSignal());
 
     expect(result.reason).toBe('ok');
-    expect(vi.mocked(execFile)).toHaveBeenCalledOnce();
+    const calls = vi.mocked(execFile).mock.calls;
+    // Exactly one rebuild spawn (python index_builder.py)...
+    expect(
+      calls.filter((c) =>
+        String((c[1] as string[])?.[0]).endsWith('index_builder.py'),
+      ),
+    ).toHaveLength(1);
+    // ...plus the broker supervision probe (status; broker "up" via mock).
+    expect(calls.some((c) => (c[1] as string[])?.[1] === 'status')).toBe(true);
   });
 
   it('handles a bare tilde in KAFKA_HOME', async () => {
