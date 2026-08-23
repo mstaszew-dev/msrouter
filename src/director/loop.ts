@@ -88,10 +88,14 @@ export class DirectorLoop {
     }
   }
 
-  /** Publish an event to Kafka if enabled. */
+  /** Publish an event to Kafka if enabled. Swallows errors (best-effort). */
   private async publishEvent(key: string, value: string): Promise<void> {
     if (!this.kafkaOpts) return;
-    await kafkaProduce('director-events', key, value, this.kafkaOpts);
+    try {
+      await kafkaProduce('director-events', key, value, this.kafkaOpts);
+    } catch (e) {
+      this.opts.log.warn({ err: e instanceof Error ? e.message : String(e), key }, 'kafka publish failed');
+    }
   }
 
   /** Rebuild the campaign RAG index after new submissions. */

@@ -5,9 +5,14 @@ import { join } from 'node:path';
 import type pino from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 
+import { kafkaProduce } from './kafka.js';
 import { DirectorLoop } from './loop.js';
 import { rotateVpnIp, snapshot as snapshotWorker, startWorkerInIterm } from './restart.js';
 import type { DirectorSurface } from './types.js';
+
+vi.mock('./kafka.js', () => ({
+  kafkaProduce: vi.fn(async () => {}),
+}));
 
 // Mock the supervision/infra helpers to no-ops so runOnce is hermetic and
 // fast (the real ones pgrep/osascript/iTerm and can take >5s). rotateVpnIp
@@ -286,5 +291,61 @@ describe('DirectorLoop.runOnce', () => {
     });
     await loop.runOnce(new AbortController().signal);
     expect(vi.mocked(startWorkerInIterm)).not.toHaveBeenCalled();
+  });
+
+  it('tick completes when kafkaProduce throws (Kafka is non-fatal)', async () => {
+    vi.mocked(kafkaProduce).mockRejectedValueOnce(new Error('kafka broker down'));
+    const campaign = makeCampaign();
+    const stateDir = mkdtempSync(join(tmpdir(), 'director-state-'));
+    const env = makeEnv({
+      DIRECTOR_CAMPAIGN_DIR: campaign,
+      DIRECTOR_LEDGER: join(stateDir, 'l.jsonl'),
+      KAFKA_ENABLED: 'true',
+      KAFKA_HOME: '/opt/kafka',
+      KAFKA_BOOTSTRAP: 'localhost:19092',
+    });
+    const chain = {
+      handle: vi.fn(async () => ({
+        response: new Response('{"choices":[{"message":{"content":"{\\"patches\\":[]}"}}]}'),
+        servedBy: {},
+      })),
+    };
+    const loop = new DirectorLoop({
+      env: env as never,
+      chain: chain as never,
+      surface: nullSurface(),
+      log: silent,
+      checkpointPath: join(stateDir, 'cp.json'),
+    });
+    const result = await loop.runOnce(new AbortController().signal);
+    expect(result.reason).toBe('ok');
+  });
+
+  it('tick completes when kafkaProduce throws on every publishEvent call', async () => {
+    vi.mocked(kafkaProduce).mockRejectedValue(new Error('kafka broker unreachable'));
+    const campaign = makeCampaign();
+    const stateDir = mkdtempSync(join(tmpdir(), 'director-state-'));
+    const env = makeEnv({
+      DIRECTOR_CAMPAIGN_DIR: campaign,
+      DIRECTOR_LEDGER: join(stateDir, 'l.jsonl'),
+      KAFKA_ENABLED: 'true',
+      KAFKA_HOME: '/opt/kafka',
+      KAFKA_BOOTSTRAP: 'localhost:19092',
+    });
+    const chain = {
+      handle: vi.fn(async () => ({
+        response: new Response('{"choices":[{"message":{"content":"{\\"patches\\":[]}"}}]}'),
+        servedBy: {},
+      })),
+    };
+    const loop = new DirectorLoop({
+      env: env as never,
+      chain: chain as never,
+      surface: nullSurface(),
+      log: silent,
+      checkpointPath: join(stateDir, 'cp.json'),
+    });
+    const result = await loop.runOnce(new AbortController().signal);
+    expect(result.reason).toBe('ok');
   });
 });
