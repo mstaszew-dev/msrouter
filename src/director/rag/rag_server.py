@@ -403,6 +403,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.query:
         # One-shot CLI mode: process query, print JSON result to stdout, exit.
+        # Honor --db here too (module-level assignment rebinds the global the
+        # loader reads); previously --db was silently ignored in this mode.
+        DB = args.db
         _ensure_loaded()
         if not args.tool:
             print(json.dumps({"error": "--tool is required when using --query"}))

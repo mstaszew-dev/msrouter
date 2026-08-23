@@ -1,7 +1,9 @@
 import asyncio
 import json
+import runpy
 import sqlite3
 import sys
+import types
 from pathlib import Path
 
 import numpy as np
@@ -286,6 +288,36 @@ class TestSearch:
         with pytest.raises(RuntimeError, match="index not found"):
             rag_server._ensure_loaded()
 
+    def test_ensure_loaded_loads_model_and_index_from_disk(self, monkeypatch, tmp_path):
+        """First use must lazily load the StaticModel + index.db into module state."""
+        db = _write_minimal_db(tmp_path / "index.db")
+
+        fake_module = types.ModuleType("model2vec")
+        loaded_with = []
+
+        class _StaticModel:
+            @staticmethod
+            def from_pretrained(name):
+                loaded_with.append(name)
+                return _FakeModel()
+
+        fake_module.StaticModel = _StaticModel
+        monkeypatch.setitem(sys.modules, "model2vec", fake_module)
+
+        monkeypatch.setattr(rag_server, "_model", None)
+        monkeypatch.setattr(rag_server, "_matrix", None)
+        monkeypatch.setattr(rag_server, "_rows", None)
+        monkeypatch.setattr(rag_server, "DB", db)
+        logged = []
+        monkeypatch.setattr(rag_server, "_log", lambda msg: logged.append(msg))
+
+        rag_server._ensure_loaded()
+
+        assert loaded_with == [rag_server.MODEL]
+        assert rag_server._rows[0]["meta"] == {"id": 1}
+        assert rag_server._matrix.shape == (2, 2)
+        assert any(msg.startswith("loaded 2 chunks, dim 2") for msg in logged)
+
     def test_search_uses_model_and_matrix(self, monkeypatch):
         monkeypatch.setattr(rag_server, "_model", _FakeModel())
         monkeypatch.setattr(rag_server, "_matrix", np.array([[1.0, 0.0]], dtype=np.float32))
@@ -427,3 +459,141 @@ class TestLogging:
         monkeypatch.setattr(rag_server, "_SINK_FH", None)
         monkeypatch.setattr(rag_server, "_SINK_LABEL", None)
         rag_server._log("swallowed")
+
+
+def _write_minimal_db(db_path: Path) -> Path:
+    """Seed a tiny index: one apps row + one docs row, identical unit vectors."""
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            "CREATE TABLE chunks (id INTEGER PRIMARY KEY, collection TEXT NOT NULL, "
+            "source TEXT NOT NULL, chunk TEXT NOT NULL, meta_json TEXT NOT NULL, "
+            "vector_json TEXT NOT NULL)"
+        )
+        conn.executemany(
+            "INSERT INTO chunks VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                (
+                    1,
+                    "apps",
+                    "tracker.json",
+                    "chunk-a",
+                    json.dumps({"id": 1}),
+                    json.dumps([1.0, 0.0]),
+                ),
+                (
+                    2,
+                    "docs",
+                    "PORTALS.md",
+                    "chunk-b",
+                    json.dumps({"file": "PORTALS.md", "header": "Poland"}),
+                    json.dumps([1.0, 0.0]),
+                ),
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return db_path
+
+
+class TestMainEntrypoint:
+    """Covers the __main__ argparse wiring by executing rag_server.py as a script."""
+
+    @pytest.fixture()
+    def repo_index_db(self):
+        """One-shot --query mode loads the module-level DB (ROOT/index.db)."""
+        db = Path(rag_server.__file__).resolve().parent / "index.db"
+        existed_before = db.exists()
+        _write_minimal_db(db)
+        yield db
+        if not existed_before:
+            db.unlink()
+
+    @pytest.fixture()
+    def fake_model2vec(self, monkeypatch):
+        fake_module = types.ModuleType("model2vec")
+
+        class _StaticModel:
+            @staticmethod
+            def from_pretrained(name):
+                return _FakeModel()
+
+        fake_module.StaticModel = _StaticModel
+        monkeypatch.setitem(sys.modules, "model2vec", fake_module)
+
+    def test_one_shot_query_without_tool_errors_and_exits(
+        self, monkeypatch, capsys, repo_index_db, fake_model2vec
+    ):
+        monkeypatch.setattr(sys, "argv", ["rag_server.py", "--query", "java"])
+        with pytest.raises(SystemExit) as excinfo:
+            runpy.run_path(rag_server.__file__, run_name="__main__")
+        assert excinfo.value.code == 1
+        payload = json.loads(capsys.readouterr().out.strip())
+        assert payload["error"] == "--tool is required when using --query"
+
+    def test_one_shot_query_prints_json_result_line(
+        self, monkeypatch, capsys, repo_index_db, fake_model2vec
+    ):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["rag_server.py", "--query", "java", "--tool", "rag_search_apps", "--k", "2"],
+        )
+        runpy.run_path(rag_server.__file__, run_name="__main__")
+        payload = json.loads(capsys.readouterr().out.strip())
+        assert payload["result"][0]["score"] == 1.0
+        assert payload["result"][0]["text"].startswith("score 1.0")
+
+    def test_line_protocol_flag_serves_requests_from_stdin(
+        self, monkeypatch, capsys, tmp_path, fake_model2vec
+    ):
+        db = _write_minimal_db(tmp_path / "lp.db")
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["rag_server.py", "--line-protocol", "--db", str(db), "--campaign", str(tmp_path)],
+        )
+        monkeypatch.setattr(
+            sys, "stdin", _FakeStdin(['{"id":5,"tool":"rag_search_docs","args":{"query":"x"}}'])
+        )
+        runpy.run_path(rag_server.__file__, run_name="__main__")
+        payload = json.loads(capsys.readouterr().out.strip())
+        assert payload["id"] == 5
+        assert payload["result"][0]["score"] == 1.0
+        assert "chunk-b" in payload["result"][0]["text"]
+
+    def test_default_mode_starts_mcp_main_via_asyncio_run(self, monkeypatch):
+        started = []
+
+        def fake_asyncio_run(coro):
+            started.append(coro)
+            coro.close()
+
+        monkeypatch.setattr(asyncio, "run", fake_asyncio_run)
+        monkeypatch.setattr(sys, "argv", ["rag_server.py"])
+        runpy.run_path(rag_server.__file__, run_name="__main__")
+        assert [c.__name__ for c in started] == ["main"]
+
+    def test_one_shot_query_honors_db_override(
+        self, monkeypatch, tmp_path, fake_model2vec
+    ):
+        """--query must load the --db it was given, not silently fall back to
+        the module-default index (the --line-protocol path already does)."""
+        bogus_db = tmp_path / "override.db"
+        assert not bogus_db.exists()
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "rag_server.py",
+                "--query",
+                "java",
+                "--tool",
+                "rag_search_docs",
+                "--db",
+                str(bogus_db),
+            ],
+        )
+        with pytest.raises(RuntimeError, match="override.db"):
+            runpy.run_path(rag_server.__file__, run_name="__main__")

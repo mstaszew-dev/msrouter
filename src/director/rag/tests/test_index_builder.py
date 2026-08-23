@@ -1,6 +1,9 @@
 import json
 import os
+import runpy
 import sqlite3
+import sys
+import types
 from pathlib import Path
 
 import numpy as np
@@ -77,6 +80,12 @@ class TestChunkDoc:
 
     def test_empty_text(self):
         assert index_builder.chunk_doc("") == []
+
+    def test_leading_blank_line_drops_empty_intro_chunk(self):
+        """A blank line before the first header yields an empty '(intro)' body,
+        which _has_content must reject via its empty-body early return."""
+        chunks = index_builder.chunk_doc("\n## A\nbody\n")
+        assert chunks == [("A", "## A\nbody")]
 
     def test_chunk_includes_header_line(self):
         text = "## Title\nbody\n"
@@ -211,3 +220,39 @@ class TestBuild:
         finally:
             conn.close()
         assert count == 2  # 1 app + 1 doc
+
+    def test_loads_default_model_when_not_injected(self, tmp_path, monkeypatch, capsys):
+        """build(model=None) must load the minishlab StaticModel itself."""
+        loaded_with = []
+
+        def fake_from_pretrained(name):
+            loaded_with.append(name)
+            return FakeModel(2)
+
+        monkeypatch.setattr(index_builder.StaticModel, "from_pretrained", staticmethod(fake_from_pretrained))
+        (tmp_path / "tracker.json").write_text(json.dumps({"applications": []}))
+        index_builder.build(check_only=True, campaign=tmp_path, db_path=tmp_path / "out.db")
+        assert loaded_with == [index_builder.MODEL]
+        assert "Loading embedding model" in capsys.readouterr().out
+
+
+class TestMainEntry:
+    def test_check_flag_runs_build_without_writing(self, tmp_path, monkeypatch, capsys):
+        """__main__ guard: --check parses argv and runs build(check_only=True)."""
+        fake_module = types.ModuleType("model2vec")
+
+        class _StaticModel:
+            @staticmethod
+            def from_pretrained(name):
+                return FakeModel(2)
+
+        fake_module.StaticModel = _StaticModel
+        monkeypatch.setitem(sys.modules, "model2vec", fake_module)
+        (tmp_path / "tracker.json").write_text(json.dumps({"applications": []}))
+        monkeypatch.setenv("RAG_CAMPAIGN", str(tmp_path))
+        monkeypatch.setattr(sys, "argv", ["index_builder.py", "--check"])
+
+        namespace = runpy.run_path(str(Path(index_builder.__file__)), run_name="__main__")
+        out = capsys.readouterr().out
+        assert "Corpus: 0 applications, 0 doc chunks" in out
+        assert not namespace["DB"].exists()
