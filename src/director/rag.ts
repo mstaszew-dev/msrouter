@@ -1,20 +1,26 @@
 /**
  * rag.ts: One-shot CLI client for the Director's Python RAG. For each query,
- * spawns a Python subprocess, waits for the result, and exits. No persistent
- * server, no line-protocol. Simple and debuggable.
+ * spawns a Python subprocess, waits for the result, and exits. Simple and
+ * debuggable.
+ *
+ * The Python RAG server lives ONCE, in the openclaw-job-search repo, and owns
+ * THE shared index.db that the job-search agent's dedupe also queries - one
+ * corpus, one index, always consistent. Rebuild it from here:
+ *   npm run rag:rebuild
  */
 
 import { execFile } from 'node:child_process';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import type { Logger } from 'pino';
 
 const execFileP = promisify(execFile);
 
-const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
-const SERVER_PATH = join(MODULE_DIR, 'rag', 'rag_server.py');
+export const CANONICAL_RAG_DIR =
+  '/Users/mst/ZCodeProject/openclaw-job-search/rag';
+const SERVER_PATH = `${CANONICAL_RAG_DIR}/rag_server.py`;
+const DEFAULT_PYTHON = `${CANONICAL_RAG_DIR}/.venv/bin/python`;
+const DEFAULT_DB = `${CANONICAL_RAG_DIR}/index.db`;
 
 export interface RagResult {
   score: number;
@@ -22,8 +28,10 @@ export interface RagResult {
 }
 
 export interface RagClientOpts {
-  pythonPath: string;
-  dbPath: string;
+  /** Defaults to the canonical RAG venv python. */
+  pythonPath?: string;
+  /** Defaults to the canonical shared index.db (the agent's dedupe index). */
+  dbPath?: string;
   campaignDir: string;
   log: Logger;
 }
@@ -42,13 +50,13 @@ export class RagClient {
   private async query(tool: string, query: string, k: number): Promise<RagResult[]> {
     try {
       const { stdout, stderr } = await execFileP(
-        this.opts.pythonPath,
+        this.opts.pythonPath ?? DEFAULT_PYTHON,
         [
           SERVER_PATH,
           '--query', query,
           '--tool', tool,
           '--k', String(k),
-          '--db', this.opts.dbPath,
+          '--db', this.opts.dbPath ?? DEFAULT_DB,
           '--campaign', this.opts.campaignDir,
         ],
         { timeout: 30_000, maxBuffer: 1024 * 1024 },

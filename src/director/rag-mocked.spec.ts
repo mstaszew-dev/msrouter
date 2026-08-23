@@ -89,3 +89,46 @@ describe('RagClient mocked query paths', () => {
     expect(results).toEqual([{ score: 0.9, text: 'match' }]);
   });
 });
+
+describe('RagClient consolidation defaults', () => {
+  let RagClient: typeof RagClientType;
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    vi.resetModules();
+    ({ RagClient } = await import('./rag.js'));
+  });
+
+  function stubExec(stdout: string) {
+    execFileMock.mockImplementation(
+      (
+        _cmd: string,
+        _args: string[],
+        _opts: unknown,
+        cb: (err: Error | null, result: { stdout: string; stderr: string }) => void,
+      ) => {
+        cb(null, { stdout, stderr: '' });
+      },
+    );
+  }
+
+  it('falls back to the canonical shared RAG paths when optional opts omitted', async () => {
+    stubExec('{"result": []}');
+    const client = new RagClient({ campaignDir: '/tmp/campaign', log: silent });
+    await client.ragSearchApps('dup check', 5);
+
+    expect(execFileMock).toHaveBeenCalledTimes(1);
+    const [cmd, args, opts] = execFileMock.mock.calls[0] as [
+      string,
+      string[],
+      { timeout: number; maxBuffer: number },
+    ];
+    // One corpus, one index: the Director must query THE index the agent's
+    // dedupe uses, not a private copy.
+    expect(cmd).toBe('/Users/mst/ZCodeProject/openclaw-job-search/rag/.venv/bin/python');
+    expect(args[0]).toBe('/Users/mst/ZCodeProject/openclaw-job-search/rag/rag_server.py');
+    expect(args).toContain('/Users/mst/ZCodeProject/openclaw-job-search/rag/index.db');
+    expect(opts.timeout).toBe(30_000);
+    expect(opts.maxBuffer).toBe(1024 * 1024);
+  });
+});

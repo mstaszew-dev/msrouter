@@ -30,8 +30,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",
-    "test:rag": "bash -c 'cd src/director/rag && .venv/bin/python -m pytest tests -q'",
-    "test:rag:cov": "bash -c 'cd src/director/rag && .venv/bin/python -m pytest tests --cov=rag_server --cov=index_builder --cov-report=term-missing -q'",
+    "test:rag": "bash -c 'cd /Users/mst/ZCodeProject/openclaw-job-search/rag && .venv/bin/python -m pytest tests -q'",
+    "rag:rebuild": "bash -c 'cd /Users/mst/ZCodeProject/openclaw-job-search/rag && RAG_CAMPAIGN=/Users/mst/Downloads/job-search/job-apply .venv/bin/python index_builder.py'",
+    "test:rag:cov": "bash -c 'cd /Users/mst/ZCodeProject/openclaw-job-search/rag && .venv/bin/python -m pytest tests --cov=. --cov-report=term-missing -q'",
     "prepare": "husky || true"
   },
   "dependencies": {
