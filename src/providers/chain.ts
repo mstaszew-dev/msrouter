@@ -52,7 +52,8 @@ export class ProviderChain {
     private readonly log: Logger,
   ) {
     this.queue = new RotationQueue(buildRoutingEntries(providers), { log, label: 'chain' });
-    this.successDemoteLimit = env().SUCCESS_DEMOTE_LIMIT ?? 5;
+    // zod guarantees SUCCESS_DEMOTE_LIMIT (coerced int, default 5).
+    this.successDemoteLimit = env().SUCCESS_DEMOTE_LIMIT;
   }
 
   async handle(body: ChatRequestBody, signal: AbortSignal): Promise<ChainResult> {
