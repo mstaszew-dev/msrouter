@@ -74,6 +74,16 @@ reinit_kraft() {
   local props=".run/kafka-server.properties"
   sed -e "s/:9092/:${KAFKA_PORT}/g" \
       "$KAFKA_HOME/config/kraft/server.properties" > "$props"
+  # A formatted data dir whose meta.properties holds a FOREIGN cluster id
+  # makes 'format --ignore-formatted' fail with 'Invalid cluster.id'.
+  # Wipe the disposable KRaft data dir first; guard on meta.properties so we
+  # only ever remove something that is unmistakably a KRaft data dir.
+  local log_dirs
+  log_dirs=$(grep '^log.dirs=' "$props" | cut -d= -f2- || true)
+  if [ -n "$log_dirs" ] && [ -f "$log_dirs/meta.properties" ]; then
+    rm -rf "$log_dirs"
+    log "wiped stale KRaft data dir $log_dirs (foreign cluster id)"
+  fi
   "$KAFKA_HOME/bin/kafka-storage.sh" format \
     --cluster-id "$cluster_uuid" \
     --config "$props" \

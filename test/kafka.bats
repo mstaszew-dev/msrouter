@@ -320,3 +320,38 @@ MOCK
   [[ "$output" == *"attempting KRaft reinitialization"* ]]
   [[ "$output" == *"KRaft storage reinitialized"* ]]
 }
+
+@test "reinit_kraft wipes mismatched KRaft data dir before formatting" {
+  # Regression (2026-08-24): a formatted /tmp kraft dir whose meta.properties
+  # holds a FOREIGN cluster id made 'format --ignore-formatted' throw
+  # 'Invalid cluster.id' - reinit must wipe the data dir first.
+  local kraft_data="${TEST_TMPDIR}/kraft-data"
+  mkdir -p "$kraft_data/__consumer_offsets-0"
+  echo "cluster.id=FOREIGN-ID-FROM-OLD-RUN" > "$kraft_data/meta.properties"
+  echo "log.dirs=$kraft_data" >> "${KAFKA_HOME}/config/kraft/server.properties"
+
+  # Mock storage: random-uuid works; format FAILS if meta.properties still
+  # exists (that is exactly what real StorageTool does on cluster-id mismatch).
+  cat > "${KAFKA_HOME}/bin/kafka-storage.sh" <<MOCK
+#!/bin/bash
+if [ "\$1" = "random-uuid" ]; then echo "fresh-uuid"; exit 0; fi
+if [ "\$1" = "format" ]; then
+  db_dir=\$(grep '^log.dirs=' "\$4" | cut -d= -f2)
+  if [ -f "\$db_dir/meta.properties" ]; then
+    echo "Invalid cluster.id in: \$db_dir/meta.properties" >&2
+    exit 1
+  fi
+  echo "FORMATTED-CLEAN" >> "${KAFKA_HOME}/.format_ok"
+  exit 0
+fi
+exit 0
+MOCK
+  chmod +x "${KAFKA_HOME}/bin/kafka-storage.sh"
+
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  run reinit_kraft
+
+  [ "$status" -eq 0 ]
+  [ ! -f "$kraft_data/meta.properties" ]
+  grep -q "FORMATTED-CLEAN" "${KAFKA_HOME}/.format_ok"
+}
