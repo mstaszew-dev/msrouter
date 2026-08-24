@@ -11,6 +11,11 @@ import { DirectorLoop } from './loop.js';
 import { rotateVpnIp, snapshot as snapshotWorker, startWorkerInIterm } from './restart.js';
 import type { DirectorSurface } from './types.js';
 
+const itermSpies = vi.hoisted(() => ({
+  startKafkaInIterm: vi.fn(),
+  isRunningInIterm: vi.fn((): boolean => true),
+}));
+
 vi.mock('./kafka.js', () => ({
   kafkaProduce: vi.fn(async () => {}),
 }));
@@ -28,6 +33,7 @@ vi.mock('./restart.js', async (importOriginal) => {
     ensureInfrastructureHealthy: vi.fn(async () => false),
     snapshot: vi.fn(() => ({ pids: [], running: true, orphaned: false })),
     startWorkerInIterm: vi.fn(),
+    startKafkaInIterm: itermSpies.startKafkaInIterm,
     restartWorker: vi.fn(async () => ({ iterm: true, state: { pids: [], running: true, orphaned: false } })),
     rotateVpnIp: vi.fn(async () => false),
   };
@@ -369,11 +375,25 @@ vi.mock('node:child_process', async (importOriginal) => {
   };
 });
 
+// Tab-first recovery rule: broker + monitor live in iTerm tabs like the agent;
+// headless start-or-init is ONLY the fallback when not running inside iTerm.
+vi.mock('./iterm.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./iterm.js')>();
+  return {
+    ...actual,
+    isRunningInIterm: () => itermSpies.isRunningInIterm(),
+  };
+});
+
 describe('ensureKafkaRunning supervision', () => {
   const execFileMock = vi.mocked(execFile);
 
   beforeEach(() => {
     execFileMock.mockClear();
+    itermSpies.startKafkaInIterm.mockClear();
+    itermSpies.startKafkaInIterm.mockReturnValue(undefined);
+    itermSpies.isRunningInIterm.mockClear();
+    itermSpies.isRunningInIterm.mockReturnValue(true);
   });
 
   function kafkaLoop(stateDir: string, campaign: string, envOverrides: Record<string, unknown> = {}) {
@@ -392,20 +412,16 @@ describe('ensureKafkaRunning supervision', () => {
     });
   }
 
-  function fakeExec(statusExitOk: boolean, initExitOk: boolean): void {
+  function fakeExecStatus(ok: boolean) {
     execFileMock.mockImplementation(
       ((...cbArgs: unknown[]) => {
         const cb = cbArgs[3] as (
           err: Error | null,
           out?: { stdout: string; stderr: string },
         ) => void;
-        const sub = (cbArgs[1] as string[])[1];
-        if (sub === 'status') {
-          if (statusExitOk) cb(null, { stdout: '[ok] running', stderr: '' });
+        if ((cbArgs[1] as string[])[1] === 'status') {
+          if (ok) cb(null, { stdout: '[ok] running', stderr: '' });
           else cb(new Error('kafka not running'));
-        } else if (sub === 'start-or-init') {
-          if (initExitOk) cb(null, { stdout: '[ok] broker ready', stderr: '' });
-          else cb(new Error('broker did not become ready'));
         } else {
           cb(null, { stdout: '', stderr: '' });
         }
@@ -413,41 +429,110 @@ describe('ensureKafkaRunning supervision', () => {
     );
   }
 
-  it('runs start-or-init once when the broker is down', async () => {
-    fakeExec(false, true);
+  const subsCalled = () =>
+    execFileMock.mock.calls.map((c) => ((c[1] as string[]) ?? [])[1]);
+
+  it('does nothing when the broker is up', async () => {
+    fakeExecStatus(true);
     const stateDir = mkdtempSync(join(tmpdir(), 'director-state-'));
-    const loop = kafkaLoop(stateDir, makeCampaign());
-    await loop.runOnce(new AbortController().signal);
-    const subs = execFileMock.mock.calls.map((c) => ((c[1] as string[]) ?? [])[1]);
-    expect(subs).toContain('status');
-    expect(subs.filter((s) => s === 'start-or-init')).toHaveLength(1);
+    await kafkaLoop(stateDir, makeCampaign()).runOnce(new AbortController().signal);
+    expect(subsCalled()).toContain('status');
+    // ensureCampaignRunning's own tab-spawn is fine when up (idempotent);
+    // the supervision contract is only that no HEADLESS spawn happens.
+    expect(subsCalled()).not.toContain('start-or-init');
   });
 
-  it('does not attempt recovery when status reports the broker up', async () => {
-    fakeExec(true, true);
+  it('delegates recovery to iTerm tabs when running inside iTerm', async () => {
+    fakeExecStatus(false);
+    itermSpies.isRunningInIterm.mockReturnValue(true);
     const stateDir = mkdtempSync(join(tmpdir(), 'director-state-'));
-    const loop = kafkaLoop(stateDir, makeCampaign());
-    await loop.runOnce(new AbortController().signal);
-    const subs = execFileMock.mock.calls.map((c) => (c[1] as string[])[1]);
-    expect(subs).toContain('status');
-    expect(subs).not.toContain('start-or-init');
+    await kafkaLoop(stateDir, makeCampaign()).runOnce(new AbortController().signal);
+    // >=1: supervision delegates; a second call comes from the legacy
+    // idempotent ensureCampaignRunning path in the same tick.
+    expect(itermSpies.startKafkaInIterm.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(itermSpies.startKafkaInIterm).toHaveBeenCalledWith(
+      expect.objectContaining({ log: silent }),
+    );
+    // The rule: no headless spawns stealing the broker from its monitor tab.
+    expect(subsCalled()).not.toContain('start-or-init');
   });
 
-  it('continues the tick when recovery also fails (warn, never throw)', async () => {
-    fakeExec(false, false);
+  it('falls back to headless start-or-init only outside iTerm', async () => {
+    fakeExecStatus(false);
+    itermSpies.isRunningInIterm.mockReturnValue(false);
     const stateDir = mkdtempSync(join(tmpdir(), 'director-state-'));
-    const loop = kafkaLoop(stateDir, makeCampaign());
-    await expect(loop.runOnce(new AbortController().signal)).resolves.toBeDefined();
-    const subs = execFileMock.mock.calls.map((c) => (c[1] as string[])[1]);
-    expect(subs).toContain('start-or-init');
+    await kafkaLoop(stateDir, makeCampaign()).runOnce(new AbortController().signal);
+    expect(subsCalled().filter((s) => s === 'start-or-init')).toHaveLength(1);
+  });
+
+  it('survives a failed iTerm delegation without throwing', async () => {
+    fakeExecStatus(false);
+    itermSpies.startKafkaInIterm.mockImplementation(() => {
+      throw new Error('iTerm2 launch failed');
+    });
+    const stateDir = mkdtempSync(join(tmpdir(), 'director-state-'));
+    await expect(
+      kafkaLoop(stateDir, makeCampaign()).runOnce(new AbortController().signal),
+    ).resolves.toBeDefined();
+    expect(subsCalled()).not.toContain('start-or-init');
   });
 
   it('skips supervision entirely when KAFKA_ENABLED is false', async () => {
-    fakeExec(true, true);
+    fakeExecStatus(true);
     const stateDir = mkdtempSync(join(tmpdir(), 'director-state-'));
-    const loop = kafkaLoop(stateDir, makeCampaign(), { KAFKA_ENABLED: false });
-    await loop.runOnce(new AbortController().signal);
-    const subs = execFileMock.mock.calls.map((c) => (c[1] as string[])[1]);
-    expect(subs).not.toContain('status');
+    await kafkaLoop(stateDir, makeCampaign(), { KAFKA_ENABLED: false }).runOnce(
+      new AbortController().signal,
+    );
+    expect(subsCalled()).not.toContain('status');
+    expect(itermSpies.startKafkaInIterm).not.toHaveBeenCalled();
+  });
+});
+
+describe('ensureKafkaRunning headless failure arm', () => {
+  function kafkaLoop2(stateDir: string, campaign: string) {
+    return new DirectorLoop({
+      env: makeEnv({
+        KAFKA_ENABLED: true,
+        KAFKA_HOME: '/tmp/fake-kafka-home',
+        DIRECTOR_CAMPAIGN_DIR: campaign,
+        DIRECTOR_LEDGER: join(stateDir, 'l.jsonl'),
+      }) as never,
+      chain: { handle: vi.fn(async () => ({ response: new Response('{"choices":[{"message":{"content":"{\\"patches\\":[]}"}}]}'), servedBy: {} })) } as never,
+      surface: nullSurface(),
+      log: silent,
+      checkpointPath: join(stateDir, 'cp.json'),
+    });
+  }
+
+  const execFileMock = vi.mocked(execFile);
+
+  beforeEach(() => {
+    execFileMock.mockClear();
+    itermSpies.isRunningInIterm.mockReturnValue(false);
+  });
+
+  it('warns and returns false when headless start-or-init fails', async () => {
+    execFileMock.mockImplementation(
+      ((...cbArgs: unknown[]) => {
+        const cb = cbArgs[3] as (
+          err: Error | null,
+          out?: { stdout: string; stderr: string },
+        ) => void;
+        if ((cbArgs[1] as string[])[1] === 'status') {
+          cb(new Error('kafka not running'));
+        } else if ((cbArgs[1] as string[])[1] === 'start-or-init') {
+          cb(new Error('broker did not become ready'));
+        } else {
+          cb(null, { stdout: '', stderr: '' });
+        }
+      }) as never,
+    );
+    const stateDir = mkdtempSync(join(tmpdir(), 'director-state-'));
+    await expect(
+      kafkaLoop2(stateDir, makeCampaign()).runOnce(new AbortController().signal),
+    ).resolves.toBeDefined();
+    expect(
+      execFileMock.mock.calls.filter((c) => (c[1] as string[])?.[1] === 'start-or-init'),
+    ).toHaveLength(1);
   });
 });

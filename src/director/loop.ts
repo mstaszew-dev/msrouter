@@ -22,7 +22,7 @@ import type { Env } from '../config/env.js';
 import type { ProviderChain } from '../providers/chain.js';
 
 import { runDirectorAgent } from './agent-loop.js';
-import { MSROUTER_ROOT } from './iterm.js';
+import { isRunningInIterm, MSROUTER_ROOT } from './iterm.js';
 import { readOverrides, applyPatch } from './apply.js';
 import { classify } from './classify.js';
 import { kafkaProduce, type KafkaOpts } from './kafka.js';
@@ -118,9 +118,12 @@ export class DirectorLoop {
   }
 
   /**
-   * Supervise the local Kafka broker: probe with `kafka.sh status`, and on
-   * failure attempt `kafka.sh start-or-init` once. Kafka is observability-
-   * only: every failure path logs a warning and never blocks the tick.
+   * Supervise the local Kafka broker: probe with `kafka.sh status`, recover
+   * when down. Recovery honors the tab rule - broker + its monitor live in
+   * iTerm tabs exactly like the agent - so inside iTerm we delegate to
+   * startKafkaInIterm; a headless `start-or-init` is only the fallback for
+   * non-iTerm runs. Kafka is observability-only: every failure path logs a
+   * warning and never blocks the tick.
    */
   async ensureKafkaRunning(): Promise<boolean> {
     if (!this.kafkaOpts) return true;
@@ -129,16 +132,33 @@ export class DirectorLoop {
       await execFileP('bash', [script, 'status'], { timeout: 20_000 });
       return true;
     } catch {
-      this.opts.log.warn('kafka broker down; attempting start-or-init');
+      this.opts.log.warn('kafka broker down; attempting recovery');
+    }
+    if (!isRunningInIterm()) {
+      try {
+        await execFileP('bash', [script, 'start-or-init'], { timeout: 150_000 });
+        this.opts.log.info('kafka broker recovered via headless start-or-init');
+        return true;
+      } catch (e) {
+        this.opts.log.warn(
+          { err: e instanceof Error ? e.message : String(e) },
+          'kafka recovery failed; continuing without broker',
+        );
+        return false;
+      }
     }
     try {
-      await execFileP('bash', [script, 'start-or-init'], { timeout: 150_000 });
-      this.opts.log.info('kafka broker recovered via start-or-init');
+      startKafkaInIterm({
+        entryCommand: this.opts.env.DIRECTOR_RUNNER || 'job-search-agent',
+        workspace: this.opts.env.DIRECTOR_OPENCLAW_WORKSPACE,
+        log: this.opts.log,
+      });
+      this.opts.log.info('kafka recovery delegated to iTerm tabs (broker + monitor)');
       return true;
     } catch (e) {
       this.opts.log.warn(
         { err: e instanceof Error ? e.message : String(e) },
-        'kafka recovery failed; continuing without broker',
+        'kafka iTerm recovery failed; continuing without broker',
       );
       return false;
     }
