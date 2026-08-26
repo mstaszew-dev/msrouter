@@ -135,7 +135,7 @@ function buildUserMessage(
     'Recent classifications:',
     cls,
     '',
-    `Tracker: submitted=${snapshot.tracker.submitted}/${snapshot.tracker.target} queue=${snapshot.tracker.queueLength}`,
+    `Tracker: submitted=${snapshot.tracker.submitted}/${snapshot.tracker.target}`,
     'Last tick status:',
     snapshot.tickStatus || '(unavailable)',
     '',

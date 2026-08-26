@@ -93,20 +93,20 @@ describe('withFree', () => {
 
 describe('buildRoutingEntries - multiple OpenRouter models', () => {
   it('creates entries for each OpenRouter model × each key', () => {
-    // With OPENROUTER_MODELS=['stealth/ox-alpha'], we get 2 models × 2 keys = 4 entries
-    // This is verified by the chain.spec.ts test that checks the queue order
+    // With OPENROUTER_MODELS=['vendor/extra'] pinned in test setup, we get
+    // 2 models × 2 keys = 4 entries, verified by chain.spec.ts queue order.
     const expectedEntries = 4; // 2 keys × 2 models
     expect(expectedEntries).toBe(4);
   });
 });
 
 describe('withFree - free-tier model naming', () => {
-  it('does not append :free to stealth/ox-alpha (inherently free, no :free variant)', () => {
-    expect(withFree('stealth/ox-alpha', true)).toBe('stealth/ox-alpha');
+  it('appends :free to additional configured models (e.g. vendor/extra)', () => {
+    expect(withFree('vendor/extra', true)).toBe('vendor/extra:free');
   });
 
   it('does not double-append :free when model already ends with :free', () => {
-    expect(withFree('stealth/ox-alpha:free', true)).toBe('stealth/ox-alpha:free');
+    expect(withFree('vendor/extra:free', true)).toBe('vendor/extra:free');
   });
 
   it('appends :free to other models when force=true', () => {
@@ -126,7 +126,7 @@ describe('withFree - free-tier model naming', () => {
   });
 
   it('returns model unchanged when force=false', () => {
-    expect(withFree('stealth/ox-alpha', false)).toBe('stealth/ox-alpha');
+    expect(withFree('vendor/extra', false)).toBe('vendor/extra');
     expect(withFree('anthropic/claude-3-opus', false)).toBe('anthropic/claude-3-opus');
   });
 });

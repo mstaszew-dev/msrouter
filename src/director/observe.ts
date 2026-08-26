@@ -92,7 +92,6 @@ async function readTrackerSummary(campaignDir: string): Promise<TrackerSummary> 
     submitted: stats['submitted'] ?? (t['submittedCount'] as number | undefined) ?? 0,
     target:
       (t['targetApplications'] as number | undefined) ?? (t['target'] as number | undefined) ?? 0,
-    queueLength: Array.isArray(t['applyQueue']) ? (t['applyQueue'] as unknown[]).length : 0,
     lastApplied: lastApplied?.company
       ? {
           source: lastApplied.source ?? '',

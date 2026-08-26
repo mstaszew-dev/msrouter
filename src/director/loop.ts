@@ -166,7 +166,7 @@ export class DirectorLoop {
 
   /** Run the read-only agent loop and post proposals to Slack. Returns count proposed. */  private async proposePatches(
     actionable: DecisionClassification[],
-    snapshot: { tracker: { submitted: number; target: number; queueLength: number } },
+    snapshot: { tracker: { submitted: number; target: number } },
     e: Env,
     signal: AbortSignal,
   ): Promise<number> {
@@ -178,7 +178,7 @@ export class DirectorLoop {
       .join('\n');
     const directorPrompt = readDirectorPrompt();
     const systemPrompt = `${directorPrompt}\n\nYou are in READ-ONLY mode. Investigate freely but do NOT write anything.\n\nCurrent overrides:\n${overridesText}\n\nRecent classifications:\n${classificationsText}`;
-    const goal = `Campaign: ${snapshot.tracker.submitted}/${snapshot.tracker.target} submitted. Queue: ${snapshot.tracker.queueLength}. Investigate and output {"patches":[...]} or nothing.`;
+    const goal = `Campaign: ${snapshot.tracker.submitted}/${snapshot.tracker.target} submitted. Investigate and output {"patches":[...]} or nothing.`;
 
     this.opts.log.info(
       {
@@ -375,7 +375,6 @@ export class DirectorLoop {
       // (observe() only sets eventsReadOffset and lastTickAt)
       next.lastSlackTs = checkpoint.lastSlackTs;
       next.lastSubmitted = checkpoint.lastSubmitted;
-      next.lastQueueLength = checkpoint.lastQueueLength;
       next.lastProposalHash = checkpoint.lastProposalHash;
       next.staleWarningActive = checkpoint.staleWarningActive;
       next.lastVpnRotation = checkpoint.lastVpnRotation;
@@ -429,11 +428,9 @@ export class DirectorLoop {
 
       // Publish observation event to Kafka (only when data changed)
       const subChanged = snapshot.tracker.submitted !== checkpoint.lastSubmitted;
-      const queueChanged = snapshot.tracker.queueLength !== checkpoint.lastQueueLength;
       const hasClassifications = classificationsCount > 0;
-      if (subChanged || queueChanged || hasClassifications) {
+      if (subChanged || hasClassifications) {
         checkpoint.lastSubmitted = snapshot.tracker.submitted;
-        checkpoint.lastQueueLength = snapshot.tracker.queueLength;
         await this.publishEvent(
           `obs-${Date.now()}`,
           JSON.stringify({
@@ -441,7 +438,6 @@ export class DirectorLoop {
             snapshot: {
               submitted: snapshot.tracker.submitted,
               target: snapshot.tracker.target,
-              queueLength: snapshot.tracker.queueLength,
             },
             classifications: classificationsCount,
           }),
@@ -450,10 +446,9 @@ export class DirectorLoop {
         await this.opts.surface.postObservation({
           submitted: snapshot.tracker.submitted,
           target: snapshot.tracker.target,
-          queueLength: snapshot.tracker.queueLength,
         });
         this.opts.log.debug(
-          { subChanged, queueChanged, hasClassifications },
+          { subChanged, hasClassifications },
           'Observation event published',
         );
       }

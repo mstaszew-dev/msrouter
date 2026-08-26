@@ -14,7 +14,6 @@ export interface CampaignSnapshot {
 export interface TrackerSummary {
   submitted: number;
   target: number;
-  queueLength: number;
   lastApplied?: { source: string; company: string; roleTitle: string; at: string };
   updatedAt: string;
 }
@@ -81,7 +80,7 @@ export interface DirectorSurface {
   postProposal(patch: Patch): Promise<void>;
   postDecision(decision: PatchDecision): Promise<void>;
   postApplied(patch: Patch): Promise<void>;
-  postObservation(snapshot: { submitted: number; target: number; queueLength: number }): Promise<void>;
+  postObservation(snapshot: { submitted: number; target: number }): Promise<void>;
   postRestart(detail: { pid: number; logPath: string }): Promise<void>;
   pollSlackMessages(lastTs?: string): Promise<{ decisions: PatchDecision[]; latestTs?: string }>;
   /** Re-attempt all pending outbox messages. Called once at the top of each
@@ -105,8 +104,6 @@ export interface Checkpoint {
   lastSlackTs?: string;
   /** Last known submitted count (suppresses duplicate observation events). */
   lastSubmitted?: number;
-  /** Last known queue length (suppresses duplicate observation events). */
-  lastQueueLength?: number;
   /** Hash of last proposal's actionable classifications (suppresses duplicate proposals). */
   lastProposalHash?: string;
   /** True when a stale-campaign warning was sent and the campaign is still idle.

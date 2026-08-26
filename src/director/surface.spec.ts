@@ -127,13 +127,13 @@ describe('NullSurface', () => {
 
   it('postObservation writes to ledger and logs', async () => {
     const surface = new NullSurface(makeOpts());
-    await surface.postObservation({ submitted: 5, target: 10, queueLength: 2 });
+    await surface.postObservation({ submitted: 5, target: 10});
 
     expect(appendLedger).toHaveBeenCalledWith(
       '/tmp/ledger.jsonl',
       expect.objectContaining({
         kind: 'observation',
-        detail: 'submitted=5 target=10 queue=2',
+        detail: 'submitted=5 target=10',
       }),
     );
   });
@@ -159,7 +159,6 @@ describe('SlackSurface message builders (pure functions)', () => {
     buildObservationMessage(snapshot: {
       submitted: number;
       target: number;
-      queueLength: number;
     }): string;
   };
   const patch: Patch = {
@@ -218,10 +217,10 @@ describe('SlackSurface message builders (pure functions)', () => {
   });
 
   it('buildObservationMessage', () => {
-    const msg = builders.buildObservationMessage({ submitted: 99, target: 1200, queueLength: 5 });
+    const msg = builders.buildObservationMessage({ submitted: 99, target: 1200});
     expect(msg).toContain('99/1200');
     expect(msg).toContain('1101 to go');
-    expect(msg).toContain('Queue: 5');
+    expect(msg).not.toContain('Queue');
   });
 });
 
@@ -414,7 +413,7 @@ describe('SlackSurface outbox durability', () => {
   it('does NOT enqueue when delivery succeeds', async () => {
     mockFetchOk();
     const surface = new SlackSurface(makeOpts({ outboxPath }));
-    await surface.postObservation({ submitted: 1200, target: 1200, queueLength: 0 });
+    await surface.postObservation({ submitted: 1200, target: 1200});
 
     expect(existsSync(outboxPath)).toBe(false);
     const remaining = await surface.flushOutbox();
@@ -424,7 +423,7 @@ describe('SlackSurface outbox durability', () => {
   it('enqueues to the outbox on a network failure', async () => {
     mockFetchThrow('ECONNRESET');
     const surface = new SlackSurface(makeOpts({ outboxPath }));
-    await surface.postObservation({ submitted: 1200, target: 1200, queueLength: 0 });
+    await surface.postObservation({ submitted: 1200, target: 1200});
 
     const entries = await readOutbox(outboxPath);
     expect(entries).toHaveLength(1);
@@ -441,7 +440,7 @@ describe('SlackSurface outbox durability', () => {
     // Tick 1: Slack rejects (rate_limited) -> enqueued.
     mockFetchSlackError('rate_limited');
     const surface = new SlackSurface(makeOpts({ outboxPath }));
-    await surface.postObservation({ submitted: 1200, target: 1200, queueLength: 0 });
+    await surface.postObservation({ submitted: 1200, target: 1200});
     expect(await readOutbox(outboxPath)).toHaveLength(1);
 
     // Tick 2: flushOutbox retries and Slack now accepts -> drained.
@@ -454,7 +453,7 @@ describe('SlackSurface outbox durability', () => {
   it('increments attempts on each failed flush and keeps the entry', async () => {
     mockFetchThrow();
     const surface = new SlackSurface(makeOpts({ outboxPath }));
-    await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
+    await surface.postObservation({ submitted: 1, target: 2});
 
     // Three failed retries.
     for (let i = 0; i < 3; i++) {
@@ -470,7 +469,7 @@ describe('SlackSurface outbox durability', () => {
   it('drops an entry after MAX_OUTBOX_ATTEMPTS failed attempts', async () => {
     mockFetchThrow();
     const surface = new SlackSurface(makeOpts({ outboxPath }));
-    await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
+    await surface.postObservation({ submitted: 1, target: 2});
 
     // Pre-seed attempts at the cap minus one so the next flush crosses the cap.
     const entries = await readOutbox(outboxPath);
@@ -517,7 +516,7 @@ describe('SlackSurface outbox durability', () => {
     mockFetchThrow();
     const ledgerPath = join(dir, 'ledger.jsonl');
     const surface = new SlackSurface(makeOpts({ outboxPath: undefined, ledgerPath }));
-    await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
+    await surface.postObservation({ submitted: 1, target: 2});
 
     const expectedDefault = `${ledgerPath}.slack-outbox.json`;
     expect(existsSync(expectedDefault)).toBe(true);
@@ -533,7 +532,7 @@ describe('SlackSurface outbox durability', () => {
         slackWebhook: undefined,
       }),
     );
-    await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
+    await surface.postObservation({ submitted: 1, target: 2});
     expect(existsSync(outboxPath)).toBe(false);
     expect(fetch).not.toHaveBeenCalled();
   });
@@ -597,7 +596,7 @@ describe('SlackSurface outbox durability', () => {
     mockFetchOk();
     await surface.postRestart({ pid: 1, logPath: '/tmp/log' });
     mockFetchOk();
-    await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
+    await surface.postObservation({ submitted: 1, target: 2});
     expect(existsSync(outboxPath)).toBe(false);
   });
 
@@ -645,7 +644,7 @@ describe('SlackSurface webhook delivery + outbox', () => {
         slackWebhook: 'https://hooks.slack.test/x',
       }),
     );
-    await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
+    await surface.postObservation({ submitted: 1, target: 2});
     expect(existsSync(outboxPath)).toBe(false);
     expect(fetch).toHaveBeenCalledWith(
       'https://hooks.slack.test/x',
@@ -663,7 +662,7 @@ describe('SlackSurface webhook delivery + outbox', () => {
         slackWebhook: 'https://hooks.slack.test/x',
       }),
     );
-    await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
+    await surface.postObservation({ submitted: 1, target: 2});
     expect(await readOutbox(outboxPath)).toHaveLength(1);
   });
 
@@ -672,7 +671,7 @@ describe('SlackSurface webhook delivery + outbox', () => {
     const surface = new SlackSurface(
       makeOpts({ outboxPath, slackChannel: undefined, slackWebhook: 'https://hooks.slack.test/x' }),
     );
-    await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
+    await surface.postObservation({ submitted: 1, target: 2});
     expect(fetch).toHaveBeenCalledWith(
       'https://hooks.slack.test/x',
       expect.objectContaining({ method: 'POST' }),
@@ -686,7 +685,7 @@ describe('SlackSurface webhook delivery + outbox', () => {
     const surface = new SlackSurface(
       makeOpts({ outboxPath, slackChannel: undefined, slackWebhook: undefined }),
     );
-    await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
+    await surface.postObservation({ submitted: 1, target: 2});
     expect(fetch).not.toHaveBeenCalled();
     expect(existsSync(outboxPath)).toBe(false);
   });
@@ -771,7 +770,7 @@ describe('SlackSurface deliverToSlack non-Error throws', () => {
   it('enqueues to outbox when fetch throws a non-Error value', async () => {
     fetchMock.mockRejectedValueOnce('a string, not an Error');
     const surface = new SlackSurface(makeOpts({ outboxPath }));
-    await surface.postObservation({ submitted: 1, target: 2, queueLength: 0 });
+    await surface.postObservation({ submitted: 1, target: 2});
     expect(await readOutbox(outboxPath)).toHaveLength(1);
   });
 });

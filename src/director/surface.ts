@@ -119,11 +119,11 @@ export class NullSurface implements DirectorSurface {
     this.opts.log.info({ pid: detail.pid }, 'worker restart recorded');
   }
 
-  async postObservation(snapshot: { submitted: number; target: number; queueLength: number }): Promise<void> {
+  async postObservation(snapshot: { submitted: number; target: number }): Promise<void> {
     await appendLedger(this.opts.ledgerPath, {
       at: new Date().toISOString(),
       kind: 'observation',
-      detail: `submitted=${snapshot.submitted} target=${snapshot.target} queue=${snapshot.queueLength}`,
+      detail: `submitted=${snapshot.submitted} target=${snapshot.target}`,
     });
     this.opts.log.debug({ submitted: snapshot.submitted }, 'observation recorded');
   }
@@ -185,7 +185,7 @@ export class SlackSurface extends NullSurface {
     await this.sendToSlack(message);
   }
 
-  override async postObservation(snapshot: { submitted: number; target: number; queueLength: number }): Promise<void> {
+  override async postObservation(snapshot: { submitted: number; target: number }): Promise<void> {
     await super.postObservation(snapshot);
     const message = this.buildObservationMessage(snapshot);
     await this.sendToSlack(message);
@@ -418,7 +418,7 @@ export class SlackSurface extends NullSurface {
     return `*Director Restart*: Campaign restarted (PID: ${detail.pid}). Log: ${detail.logPath}`;
   }
 
-  private buildObservationMessage(snapshot: { submitted: number; target: number; queueLength: number }): string {
-    return `*Campaign Status*: ${snapshot.submitted}/${snapshot.target} submitted (${snapshot.target - snapshot.submitted} to go). Queue: ${snapshot.queueLength}`;
+  private buildObservationMessage(snapshot: { submitted: number; target: number }): string {
+    return `*Campaign Status*: ${snapshot.submitted}/${snapshot.target} submitted (${snapshot.target - snapshot.submitted} to go)`;
   }
 }

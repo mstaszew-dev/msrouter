@@ -36,7 +36,7 @@ const silent = {
 
 const snap: CampaignSnapshot = {
   fetchedAt: 't',
-  tracker: { submitted: 100, target: 1200, queueLength: 0, updatedAt: 't' },
+  tracker: { submitted: 100, target: 1200, updatedAt: 't' },
   recentEvents: [],
   tickStatus: '',
 };

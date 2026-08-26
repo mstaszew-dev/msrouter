@@ -6,7 +6,7 @@ import type { CampaignEvent, CampaignSnapshot } from './types.js';
 function snap(events: CampaignEvent[]): CampaignSnapshot {
   return {
     fetchedAt: '2026-07-27T12:00:00Z',
-    tracker: { submitted: 0, target: 1200, queueLength: 0, updatedAt: '2026-07-27T12:00:00Z' },
+    tracker: { submitted: 0, target: 1200, updatedAt: '2026-07-27T12:00:00Z' },
     recentEvents: events,
     tickStatus: '',
   };

@@ -115,9 +115,9 @@ describe('loadEnv - OpenCode key pool', () => {
 });
 
 describe('loadEnv - OPENROUTER_MODELS', () => {
-  it('defaults to ["stealth/ox-alpha"] when unset', () => {
+  it('defaults to [] when unset (ox-alpha retired)', () => {
     const cfg = loadEnv({});
-    expect(cfg.env.OPENROUTER_MODELS).toEqual(['stealth/ox-alpha']);
+    expect(cfg.env.OPENROUTER_MODELS).toEqual([]);
   });
 
   it('accepts a custom comma-separated list', () => {
@@ -138,7 +138,7 @@ describe('loadEnv - OPENROUTER_MODELS', () => {
   it('OPENROUTER_MODEL remains separate from OPENROUTER_MODELS', () => {
     const cfg = loadEnv({});
     expect(cfg.env.OPENROUTER_MODEL).toBe('openrouter/free');
-    expect(cfg.env.OPENROUTER_MODELS).toEqual(['stealth/ox-alpha']);
+    expect(cfg.env.OPENROUTER_MODELS).toEqual([]);
   });
 });
 

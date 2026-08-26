@@ -134,12 +134,12 @@ describe('ProviderChain - routing-entry queue construction', () => {
     });
     const chain = new ProviderChain(p, silentLogger);
     const labels = chain.queueSnapshot().map((c) => c.label);
-    // With OPENROUTER_MODELS=['stealth/ox-alpha'], we get 2 models × 2 keys = 4 OpenRouter entries
+    // With OPENROUTER_MODELS=['vendor/extra'], we get 2 models × 2 keys = 4 OpenRouter entries
     expect(labels).toEqual([
       'openrouter[key1/openrouter/free]',
       'openrouter[key2/openrouter/free]',
-      'openrouter[key1/stealth/ox-alpha]',
-      'openrouter[key2/stealth/ox-alpha]',
+      'openrouter[key1/vendor/extra:free]',
+      'openrouter[key2/vendor/extra:free]',
       'openai',
       'zai',
       'opencode[key1/big-pickle]',
@@ -175,7 +175,7 @@ describe('ProviderChain - alias walk (mst/free and free)', () => {
     // OpenRouter returns an empty completion (no content, no tool calls) which
     // is classified TRANSIENT. The chain retries in place up to
     // MAX_TRANSIENT_RETRIES, then skips to the next provider.
-    loadEnv({ TRANSIENT_BACKOFF_MS: '1' }); // keep retries instant in the test
+    loadEnv({ OPENROUTER_MODELS: 'vendor/extra', TRANSIENT_BACKOFF_MS: '1' });
     const p = makeProviders({
       openrouterKeys: 1,
       openrouterResults: [{ kind: 'TRANSIENT', status: 200, message: 'empty completion' }],
@@ -187,7 +187,7 @@ describe('ProviderChain - alias walk (mst/free and free)', () => {
       new AbortController().signal,
     );
     expect(res.servedBy.provider).toBe('openai');
-    // MAX_TRANSIENT_RETRIES=2 => 3 attempts per entry. With 2 models (openrouter/free + stealth/ox-alpha),
+    // MAX_TRANSIENT_RETRIES=2 => 3 attempts per entry. With 2 models (openrouter/free + vendor/extra),
     // that's 6 attempts on openrouter before skipping.
     expect(p.openrouter.attempt).toHaveBeenCalledTimes(6);
   });
@@ -250,8 +250,8 @@ describe('ProviderChain - adaptive demotion', () => {
 
     const after = chain.queueSnapshot().map((c) => c.label);
     // The demoted entry is openrouter[key1/openrouter/free], but with 2 models
-    // (openrouter/free + stealth/ox-alpha), the back of queue is stealth/ox-alpha
-    expect(after[after.length - 1]).toBe('openrouter[key1/stealth/ox-alpha]');
+    // (openrouter/free + vendor/extra), the back of queue is vendor/extra
+    expect(after[after.length - 1]).toBe('openrouter[key1/vendor/extra:free]');
     expect(after[0]).toBe('openai');
   });
 
@@ -522,6 +522,7 @@ describe('ProviderChain - local (llama-server) entry', () => {
     FORCE_FREE: 'true',
     SCHEDULE_INTERVAL_MINUTES: '-1',
     UPSTREAM_TIMEOUT_MS: '5000',
+    OPENROUTER_MODELS: 'vendor/extra',
     LOCAL_ENABLED: 'false',
     LOCAL_MODEL: 'qwen3:14b-32k',
     LOCAL_BASE_URL: 'http://127.0.0.1:11434',
@@ -643,6 +644,7 @@ describe('ProviderChain - local provider success-based demotion', () => {
     FORCE_FREE: 'true',
     SCHEDULE_INTERVAL_MINUTES: '-1',
     UPSTREAM_TIMEOUT_MS: '5000',
+    OPENROUTER_MODELS: 'vendor/extra',
     LOCAL_ENABLED: 'false',
     LMSTUDIO_ENABLED: 'true',
     LMSTUDIO_MODEL: 'qwen3.5-4b',

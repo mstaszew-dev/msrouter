@@ -114,7 +114,7 @@ describe('observe', () => {
     );
     expect(snapshot.tracker.submitted).toBe(100);
     expect(snapshot.tracker.target).toBe(1200);
-    expect(snapshot.tracker.queueLength).toBe(0);
+    expect(snapshot.tracker).not.toHaveProperty('queueLength');
   });
 
   it('tails events.jsonl from the checkpoint byte offset', async () => {
@@ -226,7 +226,7 @@ describe('observe', () => {
     );
     expect(snapshot.tracker.submitted).toBe(7); // stats missing -> submittedCount
     expect(snapshot.tracker.target).toBe(9); // targetApplications missing -> target
-    expect(snapshot.tracker.queueLength).toBe(0); // applyQueue missing
+    expect(snapshot.tracker).not.toHaveProperty('queueLength'); // applyQueue ignored
     expect(snapshot.tracker.lastApplied).toBeUndefined();
     expect(snapshot.tracker.updatedAt).toBe('');
   });
@@ -247,7 +247,7 @@ describe('observe', () => {
       { eventsReadOffset: 0, lastTickAt: '' },
       { campaignDir: dir },
     );
-    expect(snapshot.tracker.queueLength).toBe(2);
+    expect(snapshot.tracker).not.toHaveProperty('queueLength'); // applyQueue ignored even when present
     expect(snapshot.tracker.lastApplied).toEqual({
       source: '',
       company: 'Acme',

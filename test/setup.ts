@@ -11,9 +11,13 @@ import 'dotenv/config';
 
 import { loadEnv } from '../src/config/env.js';
 
+// Deterministic multi-model chain in tests regardless of any per-spec
+// loadEnv() re-resolution (loadEnv re-reads process.env by default).
+process.env['OPENROUTER_MODELS'] = 'vendor/extra';
+
 if (process.env['INTEGRATION'] === '1') {
   // Live secrets from .env; production guard is skipped under NODE_ENV=test.
-  loadEnv({ ...process.env, NODE_ENV: 'test', PORT: '8788' });
+  loadEnv({ ...process.env, NODE_ENV: 'test', PORT: '8788', OPENROUTER_MODELS: 'vendor/extra' });
 } else {
   loadEnv({
     NODE_ENV: 'test',
@@ -29,5 +33,6 @@ if (process.env['INTEGRATION'] === '1') {
     FORCE_FREE: 'true',
     SCHEDULE_INTERVAL_MINUTES: '-1',
     UPSTREAM_TIMEOUT_MS: '5000',
+    OPENROUTER_MODELS: 'vendor/extra',
   });
 }

@@ -184,7 +184,7 @@ function defaultSnapshot(): CampaignSnapshot {
   return {
     fetchedAt: '2026-08-17T00:00:00Z',
     recentEvents: [],
-    tracker: { submitted: 10, target: 1200, queueLength: 3, updatedAt: '2026-08-17T00:00:00Z' },
+    tracker: { submitted: 10, target: 1200, updatedAt: '2026-08-17T00:00:00Z' },
     tickStatus: '',
   };
 }
