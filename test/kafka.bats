@@ -302,7 +302,8 @@ if [ "$count" -le 20 ]; then
 fi
 exit 0
 MOCK
-  sed -i '' "s|COUNTER_FILE|${counter_file}|g" "${KAFKA_HOME}/bin/kafka-topics.sh"
+  sed "s|COUNTER_FILE|${counter_file}|g" "${KAFKA_HOME}/bin/kafka-topics.sh" > "${KAFKA_HOME}/bin/kafka-topics.sh.tmp"
+  mv "${KAFKA_HOME}/bin/kafka-topics.sh.tmp" "${KAFKA_HOME}/bin/kafka-topics.sh"
   chmod +x "${KAFKA_HOME}/bin/kafka-topics.sh"
 
   # Mock kafka-storage.sh

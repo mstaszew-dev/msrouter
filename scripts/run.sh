@@ -62,7 +62,7 @@ start_gateway_prod() {
 
 start_worker() {
   [[ -d node_modules ]] || npm install
-  npm run build >/dev/null 2>&1 || true
+  npm run build
   nohup node dist/worker.js > .run/worker.log 2>&1 &
   echo $! > .run/worker.pid
   ok "worker pid $(cat .run/worker.pid)"
