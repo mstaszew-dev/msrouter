@@ -275,8 +275,12 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
       .join('\n');
     expect(values).toContain('"kind":"proposed"');
     expect(values).toContain('"kind":"decided"');
-    const cp = JSON.parse(readFileSync(cpPath, 'utf8')) as { lastSlackTs?: string };
+    const cp = JSON.parse(readFileSync(cpPath, 'utf8')) as {
+      lastSlackTs?: string;
+      lastQueueLength?: number;
+    };
     expect(cp.lastSlackTs).toBe('ts-9');
+    expect(cp).not.toHaveProperty('lastQueueLength'); // dropped since queue removal
   });
 
   it('executes approved patches via the write agent loop and publishes applied events', async () => {

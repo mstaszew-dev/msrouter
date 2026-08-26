@@ -148,6 +148,29 @@ describe('ProviderChain - routing-entry queue construction', () => {
   });
 });
 
+describe('ProviderChain - post ox-alpha default (no additional models)', () => {
+  it('builds the production queue with OPENROUTER_MODELS empty', () => {
+    loadEnv({ OPENROUTER_MODELS: '' });
+    const p = makeProviders({
+      openrouterKeys: 2,
+      opencodeKeys: 1,
+      opencodeModels: ['big-pickle'],
+    });
+    const labels = new ProviderChain(p, silentLogger)
+      .queueSnapshot()
+      .map((c) => c.label);
+    expect(labels).toEqual([
+      'openrouter[key1/openrouter/free]',
+      'openrouter[key2/openrouter/free]',
+      'openai',
+      'zai',
+      'opencode[key1/big-pickle]',
+    ]);
+    // restore the multi-model fixture for later tests
+    loadEnv({ OPENROUTER_MODELS: 'vendor/extra' });
+  });
+});
+
 describe('ProviderChain - alias walk (mst/free and free)', () => {
   it('walks every OpenRouter key then OpenAI/ZAI/OpenCode until first OK', async () => {
     // OpenRouter fails on all keys (2 models × 2 keys = 4 entries); OpenAI succeeds.

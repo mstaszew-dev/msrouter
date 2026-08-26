@@ -91,15 +91,6 @@ describe('withFree', () => {
   });
 });
 
-describe('buildRoutingEntries - multiple OpenRouter models', () => {
-  it('creates entries for each OpenRouter model × each key', () => {
-    // With OPENROUTER_MODELS=['vendor/extra'] pinned in test setup, we get
-    // 2 models × 2 keys = 4 entries, verified by chain.spec.ts queue order.
-    const expectedEntries = 4; // 2 keys × 2 models
-    expect(expectedEntries).toBe(4);
-  });
-});
-
 describe('withFree - free-tier model naming', () => {
   it('appends :free to additional configured models (e.g. vendor/extra)', () => {
     expect(withFree('vendor/extra', true)).toBe('vendor/extra:free');
