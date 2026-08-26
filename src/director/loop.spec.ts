@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import type * as childProcess from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,6 +7,7 @@ import { join } from 'node:path';
 import type pino from 'pino';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type * as itermModule from './iterm.js';
 import { kafkaProduce } from './kafka.js';
 import { DirectorLoop } from './loop.js';
 import { rotateVpnIp, snapshot as snapshotWorker, startWorkerInIterm } from './restart.js';
@@ -358,7 +360,7 @@ describe('DirectorLoop.runOnce', () => {
 });
 
 vi.mock('node:child_process', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:child_process')>();
+  const actual = await importOriginal<typeof childProcess>();
   void actual;
   // Default: instant no-op success so tests never touch the real filesystem
   // or scripts (ensureKafkaRunning would otherwise really start Kafka).
@@ -378,7 +380,7 @@ vi.mock('node:child_process', async (importOriginal) => {
 // Tab-first recovery rule: broker + monitor live in iTerm tabs like the agent;
 // headless start-or-init is ONLY the fallback when not running inside iTerm.
 vi.mock('./iterm.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('./iterm.js')>();
+  const actual = await importOriginal<typeof itermModule>();
   return {
     ...actual,
     isRunningInIterm: () => itermSpies.isRunningInIterm(),

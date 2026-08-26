@@ -22,9 +22,9 @@ import type { Env } from '../config/env.js';
 import type { ProviderChain } from '../providers/chain.js';
 
 import { runDirectorAgent } from './agent-loop.js';
-import { isRunningInIterm, MSROUTER_ROOT } from './iterm.js';
 import { readOverrides, applyPatch } from './apply.js';
 import { classify } from './classify.js';
+import { isRunningInIterm, MSROUTER_ROOT } from './iterm.js';
 import { kafkaProduce, type KafkaOpts } from './kafka.js';
 import { readApprovedPatches } from './ledger.js';
 import { observe, isCampaignComplete } from './observe.js';

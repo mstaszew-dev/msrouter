@@ -14,6 +14,7 @@ import { promisify } from 'node:util';
 import type { Logger } from 'pino';
 
 import { env } from '../config/env.js';
+
 import { RagClient } from './rag.js';
 
 const execFileP = promisify(execFile);

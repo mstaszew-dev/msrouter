@@ -6,16 +6,16 @@
 import type pino from 'pino';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const ragSearchApps = vi.fn();
-const ragSearchDocs = vi.fn();
-let lastClientOpts: unknown;
+const ragSearchApps = vi.fn<(...args: unknown[]) => unknown>();
+const ragSearchDocs = vi.fn<(...args: unknown[]) => unknown>();
+let lastClientOpts: Record<string, unknown> | undefined;
 
 vi.mock('./rag.js', () => ({
   RagClient: class {
     opts: unknown;
     constructor(opts: unknown) {
       this.opts = opts;
-      lastClientOpts = opts;
+      lastClientOpts = opts as Record<string, unknown>;
     }
     ragSearchApps = (...args: unknown[]) => ragSearchApps(...args);
     ragSearchDocs = (...args: unknown[]) => ragSearchDocs(...args);
@@ -58,7 +58,7 @@ describe('director RAG tools', () => {
     // Consolidation contract: the client targets the canonical RAG checkout;
     // rag.ts applies the shared index.db default at query time (pinned there).
     expect(lastClientOpts).toMatchObject({
-      campaignDir: expect.any(String),
+      campaignDir: expect.any(String) as unknown,
     });
     expect((lastClientOpts as { log: unknown }).log).toBeDefined();
   });
