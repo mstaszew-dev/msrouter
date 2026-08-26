@@ -11,7 +11,7 @@
  * (the Aug 2026 corruption wiped them).
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
@@ -36,7 +36,12 @@ function providerIds(json: Record<string, unknown>): string[] {
   return Object.keys(provider);
 }
 
-describe('constraint: local models are Qwen3.5 (9B + 4B) everywhere', () => {
+// Machine-constraint test: pins THIS dev machine's local fleet configs.
+// Auto-skips anywhere those files are absent (CI runners, other machines).
+const ON_DEV_MACHINE =
+  existsSync(ZCODE_CONFIG) && existsSync(OPENCODE_CONFIG) && existsSync(MSROUTER_ENV);
+
+describe.skipIf(!ON_DEV_MACHINE)('constraint: local models are Qwen3.5 (9B + 4B) everywhere', () => {
   it('msrouter .env prefers the 4b alias and points at the live llama-server port', () => {
     const env = readFileSync(MSROUTER_ENV, 'utf8');
     expect(env).toMatch(/^LMSTUDIO_ENABLED=true$/m);
@@ -65,7 +70,7 @@ describe('constraint: local models are Qwen3.5 (9B + 4B) everywhere', () => {
   });
 });
 
-describe('constraint: zcode models config keeps the remote custom providers', () => {
+describe.skipIf(!ON_DEV_MACHINE)('constraint: zcode models config keeps the remote custom providers', () => {
   // The Aug 2026 corruption wiped custom providers; these are the load-bearing
   // ones present in the live config. (The OpenAI gpt-5.5 and Gemini provider
   // ids from the earlier revision were removed from the config later and are
@@ -109,7 +114,7 @@ describe('constraint: zcode models config keeps the remote custom providers', ()
   });
 });
 
-describe('constraint: zcode local models are LM Studio serving Qwen3.5 9B + 4B', () => {
+describe.skipIf(!ON_DEV_MACHINE)('constraint: zcode local models are LM Studio serving Qwen3.5 9B + 4B', () => {
   function localProviderByBase(baseURL: string): { models?: Record<string, unknown> } {
     const cfg = readJson(ZCODE_CONFIG);
     const providers = cfg['provider'] as Record<string, unknown>;
