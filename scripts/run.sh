@@ -33,10 +33,14 @@ start_chrome() {
   ok "chrome pid $!"
 }
 
-start_gateway_dev() {
+ensure_gateway_not_running() {
   if [[ -f .run/gateway.pid ]] && kill -0 "$(cat .run/gateway.pid)" 2>/dev/null; then
     die "gateway already running (pid $(cat .run/gateway.pid))"
   fi
+}
+
+start_gateway_dev() {
+  ensure_gateway_not_running
   log "installing deps (if needed)"
   [[ -d node_modules ]] || npm install
   log "starting gateway in dev mode (tsx)"
@@ -46,6 +50,7 @@ start_gateway_dev() {
 }
 
 start_gateway_prod() {
+  ensure_gateway_not_running
   log "installing deps"
   npm install
   log "building"
@@ -119,6 +124,6 @@ case "${1:-dev}" in
   worker)  start_worker; ok "worker started" ;;
   chrome)  start_chrome ;;
   down)    down ;;
-  logs)    tail -F ".run/${2:-gateway}.log" 2>/dev/null || die "no log for ${2:-gateway}" ;;
+  logs)    LOGFILE=".run/${2:-gateway}.log"; [[ -f "$LOGFILE" ]] || die "no log for ${2:-gateway}"; exec tail -F "$LOGFILE" ;;
   *) die "unknown command: $1 (use: dev | prod | worker | chrome | logs <name> | down)" ;;
 esac
