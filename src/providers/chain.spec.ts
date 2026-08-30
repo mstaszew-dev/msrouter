@@ -42,6 +42,7 @@ function makeProviders(
     openrouterKeys?: number;
     openrouterResults?: ProviderCallResult[];
     openaiResults?: ProviderCallResult[];
+    tokenrouterResults?: ProviderCallResult[];
     opencodeModels?: string[];
     opencodeKeys?: number;
     localResults?: ProviderCallResult[];
@@ -71,6 +72,13 @@ function makeProviders(
     status: 429,
     message: 'zai stub',
   }));
+
+  const tokenrouterResults = overrides.tokenrouterResults ?? [];
+  const tokenrouterAttempt = vi.fn(async (): Promise<ProviderCallResult> => {
+    return (
+      tokenrouterResults.shift() ?? { kind: 'KEY_FAILURE', status: 429, message: 'tokenrouter stub' }
+    );
+  });
 
   const ocModels = overrides.opencodeModels ?? ['big-pickle', 'nemotron-3-ultra-free'];
   const ocKeys = overrides.opencodeKeys ?? 0; // unavailable by default
@@ -102,6 +110,7 @@ function makeProviders(
     } as never,
     openai: { id: 'openai', available: true, attempt: openaiAttempt } as never,
     zai: { id: 'zai', available: true, attempt: zaiAttempt } as never,
+    tokenrouter: { id: 'tokenrouter', available: true, attempt: tokenrouterAttempt } as never,
     opencode: {
       id: 'opencode',
       available: ocKeys > 0,
@@ -142,6 +151,7 @@ describe('ProviderChain - routing-entry queue construction', () => {
       'openrouter[key2/vendor/extra:free]',
       'openai',
       'zai',
+      'tokenrouter',
       'opencode[key1/big-pickle]',
       'opencode[key1/nemotron]',
     ]);
@@ -164,10 +174,83 @@ describe('ProviderChain - post ox-alpha default (no additional models)', () => {
       'openrouter[key2/openrouter/free]',
       'openai',
       'zai',
+      'tokenrouter',
       'opencode[key1/big-pickle]',
     ]);
     // restore the multi-model fixture for later tests
     loadEnv({ OPENROUTER_MODELS: 'vendor/extra' });
+  });
+});
+
+describe('ProviderChain - tokenrouter entry', () => {
+  const DEFAULT_ENV = {
+    NODE_ENV: 'test',
+    PORT: '8788',
+    OPENROUTER_KEY1: 'sk-or-test-key-1111',
+    FORCE_FREE: 'true',
+    SCHEDULE_INTERVAL_MINUTES: '-1',
+    UPSTREAM_TIMEOUT_MS: '5000',
+    OPENROUTER_MODELS: 'vendor/extra',
+  };
+
+  afterEach(() => loadEnv(DEFAULT_ENV));
+
+  it('uses TOKENROUTER_MODEL for the entry model', () => {
+    loadEnv({ ...DEFAULT_ENV, TOKENROUTER_MODEL: 'glm-5.3-free' });
+    const p = makeProviders({ openrouterKeys: 1 });
+    const chain = new ProviderChain(p, silentLogger);
+    const entry = chain.queueSnapshot().find((c) => c.provider === 'tokenrouter');
+    expect(entry).toBeDefined();
+    expect(entry!.model).toBe('glm-5.3-free');
+  });
+
+  it('walks to tokenrouter when OpenRouter/OpenAI/ZAI all fail (KEY_FAILURE demotes it)', async () => {
+    loadEnv({ ...DEFAULT_ENV, TOKENROUTER_MODEL: 'glm-5.3-free' });
+    const p = makeProviders({
+      openrouterKeys: 1,
+      openrouterResults: [{ kind: 'KEY_FAILURE', status: 429, message: 'rl' }],
+      openaiResults: [{ kind: 'KEY_FAILURE', status: 429, message: 'openai rl' }],
+      tokenrouterResults: [{ kind: 'OK', response: okResponse() }],
+    });
+    (p.zai as unknown as { available: boolean }).available = false;
+    const chain = new ProviderChain(p, silentLogger);
+    const res = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
+    expect(res.servedBy.provider).toBe('tokenrouter');
+  });
+
+  it('omits the tokenrouter entry when the provider is unavailable', () => {
+    loadEnv({ ...DEFAULT_ENV, TOKENROUTER_MODEL: 'glm-5.3-free' });
+    const p = makeProviders({ openrouterKeys: 1 });
+    (p.tokenrouter as unknown as { available: boolean }).available = false;
+    const chain = new ProviderChain(p, silentLogger);
+    expect(chain.queueSnapshot().some((e) => e.provider === 'tokenrouter')).toBe(false);
+  });
+
+  it('sends glm-5.3-free verbatim on the explicit-model path (no :free rewrite)', async () => {
+    // /v1/models advertises glm-5.3-free and resolveModel passes it through;
+    // the upstream id must not be mangled to glm-5.3-free:free by FORCE_FREE.
+    loadEnv({ ...DEFAULT_ENV, TOKENROUTER_MODEL: 'glm-5.3-free' });
+    const p = makeProviders({
+      openrouterKeys: 1,
+      openrouterResults: [{ kind: 'KEY_FAILURE', status: 404, message: 'no such model' }],
+      tokenrouterResults: [{ kind: 'OK', response: okResponse() }],
+    });
+    (p.openai as unknown as { available: boolean }).available = false;
+    (p.zai as unknown as { available: boolean }).available = false;
+    const chain = new ProviderChain(p, silentLogger);
+    const res = await chain.handle(
+      { ...baseBody, model: 'glm-5.3-free' },
+      new AbortController().signal,
+    );
+    expect(res.servedBy.provider).toBe('tokenrouter');
+    expect(p.tokenrouter.attempt).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ model: 'glm-5.3-free' }),
+    );
   });
 });
 
@@ -497,9 +580,10 @@ describe('ProviderChain - OpenCode pooling', () => {
       opencodeKeys: 1,
       opencodeModels: ocModels,
     });
-    // Make OpenAI and ZAI unavailable so the queue is just the two triples.
+    // Make OpenAI/ZAI/tokenrouter unavailable so the queue is just the two triples.
     (p.openai as unknown as { available: boolean }).available = false;
     (p.zai as unknown as { available: boolean }).available = false;
+    (p.tokenrouter as unknown as { available: boolean }).available = false;
     // Reprogram opencode.attempt: triple0 (big-pickle) fails, triple1 (nemotron) OK.
     (p.opencode as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(
       async (

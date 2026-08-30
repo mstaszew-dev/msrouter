@@ -40,6 +40,16 @@ describe('shortCircuit', () => {
     expect(r).toEqual({ provider: 'openrouter', model: 'anthropic/claude-3-opus:free' });
   });
 
+  it('parses direct:tokenrouter/<model>', () => {
+    const r = shortCircuit('direct:tokenrouter/glm-5.3-free');
+    expect(r).toEqual({ provider: 'tokenrouter', model: 'glm-5.3-free' });
+  });
+
+  it('is case-insensitive for the tokenrouter prefix', () => {
+    const r = shortCircuit('DIRECT:TokenRouter/glm-5.3-free');
+    expect(r).toEqual({ provider: 'tokenrouter', model: 'glm-5.3-free' });
+  });
+
   it('parses direct:local/<model>', () => {
     const r = shortCircuit('direct:local/qwen3:14b-32k');
     expect(r).toEqual({ provider: 'local', model: 'qwen3:14b-32k' });

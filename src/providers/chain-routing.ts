@@ -18,7 +18,7 @@ import { withFree } from './openrouter.js';
 /** A single flat routing entry: which provider, which model, which key slot. */
 export interface RoutingEntry {
   /** Lookup key into `Providers`. */
-  provider: 'openrouter' | 'openai' | 'zai' | 'opencode' | 'local' | 'lmstudio';
+  provider: 'openrouter' | 'openai' | 'zai' | 'tokenrouter' | 'opencode' | 'local' | 'lmstudio';
   /** Display label for servedBy / logs. */
   label: string;
   /** Model id to send upstream (alias substitution applied at handle time). */
@@ -67,6 +67,14 @@ export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
   if (providers.zai.available) {
     list.push({ provider: 'zai', label: 'zai', model: e.ZAI_MODEL, attemptIndex: 0 });
   }
+  if (providers.tokenrouter.available) {
+    list.push({
+      provider: 'tokenrouter',
+      label: 'tokenrouter',
+      model: e.TOKENROUTER_MODEL,
+      attemptIndex: 0,
+    });
+  }
   const oc = providers.opencode;
   if (oc.available) {
     const snapshot = oc.queueSnapshot();
@@ -90,6 +98,24 @@ export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
   return list;
 }
 
+/**
+ * True when the model id is a configured per-provider default (e.g. the
+ * TokenRouter glm-5.3-free, ZAI glm-4.6). Such ids are advertised verbatim in
+ * /v1/models and accepted by resolveModel, so the explicit-model path must not
+ * FORCE_FREE-rewrite them into an id no upstream accepts ('glm-5.3-free:free').
+ */
+export function isProviderDefaultModel(model: string): boolean {
+  const e = env();
+  return (
+    model === e.OPENAI_MODEL ||
+    model === e.ZAI_MODEL ||
+    model === e.TOKENROUTER_MODEL ||
+    model === e.OPENCODE_MODEL ||
+    model === e.LOCAL_MODEL ||
+    model === e.LMSTUDIO_MODEL
+  );
+}
+
 /** Detect direct:<provider>/<model> prefix to pin a single provider. */
 export function shortCircuit(model: string): { provider: ChainProvider; model: string } | null {
   const m = model.toLowerCase();
@@ -104,6 +130,9 @@ export function shortCircuit(model: string): { provider: ChainProvider; model: s
   }
   if (restLower.startsWith('zai/') || restLower.startsWith('glm-')) {
     return { provider: 'zai', model: rest };
+  }
+  if (restLower.startsWith('tokenrouter/')) {
+    return { provider: 'tokenrouter', model: rest.slice('tokenrouter/'.length) };
   }
   if (restLower.startsWith('openrouter/')) {
     const model = rest.slice('openrouter/'.length);

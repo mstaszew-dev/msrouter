@@ -34,6 +34,7 @@ function main(): void {
         openrouterKeys: providers.openrouter.keyCount,
         openai: providers.openai.available,
         zai: providers.zai.available,
+        tokenrouter: providers.tokenrouter.available,
         opencode: providers.opencode.available,
       },
       'gateway listening',

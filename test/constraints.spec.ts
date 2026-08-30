@@ -123,6 +123,7 @@ describe('constraint: source files stay under 250 lines (module size budget)', (
     'gateway/stream.ts',
     'gateway/validation.ts',
     'config/env.ts',
+    'config/keys.ts',
     'config/logger.ts',
     'common/errors.ts',
     'common/http.ts',
@@ -263,7 +264,9 @@ describe('constraint: OpenCode is a pooled provider (OPENCODE_KEY1..N)', () => {
 
   it('env.ts collects OPENCODE_KEY1..N into opencodeKeys', () => {
     const code = src('config/env.ts');
-    expect(code).toContain('collectOpenCodeKeys');
+    // Collector extracted to config/keys.ts (collectNumberedKeys); env.ts must
+    // still wire the OPENCODE pool through it (pooling guard, see above).
+    expect(code).toContain("collectNumberedKeys(raw, 'OPENCODE')");
     expect(code).toContain('opencodeKeys: string[]');
   });
 

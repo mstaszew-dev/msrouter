@@ -177,6 +177,7 @@ export function resolveModel(requested: string): string {
     cfg.OPENROUTER_MODEL,
     cfg.OPENAI_MODEL,
     cfg.ZAI_MODEL,
+    cfg.TOKENROUTER_MODEL,
     cfg.OPENCODE_MODEL,
   ]);
   if (known.has(requested)) return requested;
@@ -195,6 +196,9 @@ export function buildModelList(): Array<{ id: string; object: string; owned_by: 
   ];
   if (cfg.OPENAI_API_KEY) data.push({ id: cfg.OPENAI_MODEL, object: 'model', owned_by: 'openai' });
   if (cfg.ZAI_API_KEY) data.push({ id: cfg.ZAI_MODEL, object: 'model', owned_by: 'zai' });
+  if (cfg.TOKENROUTER_API_KEY) {
+    data.push({ id: cfg.TOKENROUTER_MODEL, object: 'model', owned_by: 'tokenrouter' });
+  }
   if (cfg.LOCAL_ENABLED) data.push({ id: cfg.LOCAL_MODEL, object: 'model', owned_by: 'local' });
   if (cfg.LMSTUDIO_ENABLED) data.push({ id: cfg.LMSTUDIO_MODEL, object: 'model', owned_by: 'lmstudio' });
   if (config().opencodeKeys.length > 0) {

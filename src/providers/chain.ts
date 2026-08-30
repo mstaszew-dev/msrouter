@@ -25,6 +25,7 @@ import { env } from '../config/env.js';
 
 import {
   buildRoutingEntries,
+  isProviderDefaultModel,
   shortCircuit,
   type ChainProvider,
   type RoutingEntry,
@@ -77,9 +78,10 @@ export class ProviderChain {
     signal: AbortSignal,
     opts: { explicitModel: string },
   ): Promise<ChainResult> {
-    return this.iterate(body, signal, {
-      explicitModel: withFree(opts.explicitModel, env().FORCE_FREE),
-    });
+    const explicit = isProviderDefaultModel(opts.explicitModel)
+      ? opts.explicitModel
+      : withFree(opts.explicitModel, env().FORCE_FREE);
+    return this.iterate(body, signal, { explicitModel: explicit });
   }
 
   /** Single provider pin (direct:). No fallback. */

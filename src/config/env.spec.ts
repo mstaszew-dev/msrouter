@@ -26,6 +26,37 @@ describe('loadEnv', () => {
   });
 });
 
+describe('loadEnv - TokenRouter config', () => {
+  it('defaults TOKENROUTER_BASE_URL to api.tokenrouter.com/v1 and model to glm-5.3-free', () => {
+    const cfg = loadEnv({});
+    expect(cfg.env.TOKENROUTER_BASE_URL).toBe('https://api.tokenrouter.com/v1');
+    expect(cfg.env.TOKENROUTER_MODEL).toBe('glm-5.3-free');
+    expect(cfg.env.TOKENROUTER_API_KEY).toBeUndefined();
+  });
+
+  it('accepts TOKENROUTER_* overrides', () => {
+    const cfg = loadEnv({
+      TOKENROUTER_API_KEY: 'sk-tokenrouter-test',
+      TOKENROUTER_BASE_URL: 'https://api.tokenrouter.com/v1',
+      TOKENROUTER_MODEL: 'glm-5.3-free',
+    });
+    expect(cfg.env.TOKENROUTER_API_KEY).toBe('sk-tokenrouter-test');
+    expect(cfg.env.TOKENROUTER_MODEL).toBe('glm-5.3-free');
+  });
+});
+
+describe('loadEnv - production guard', () => {
+  it('accepts a tokenrouter-only production configuration', () => {
+    expect(() =>
+      loadEnv({ NODE_ENV: 'production', TOKENROUTER_API_KEY: 'sk-tokenrouter-test' }),
+    ).not.toThrow();
+  });
+
+  it('rejects a production configuration with no provider at all', () => {
+    expect(() => loadEnv({ NODE_ENV: 'production' })).toThrow(/No provider configured/);
+  });
+});
+
 describe('loadEnv - Director config', () => {
   it('applies Director defaults when no DIRECTOR_* vars are set', () => {
     const cfg = loadEnv({});

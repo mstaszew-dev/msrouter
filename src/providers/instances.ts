@@ -20,6 +20,8 @@ export interface Providers {
   openrouter: OpenRouterProvider;
   openai: SingleKeyProvider;
   zai: SingleKeyProvider;
+  /** TokenRouter (tokenrouter.com): OpenAI-compatible single-key aggregator. */
+  tokenrouter: SingleKeyProvider;
   opencode: OpenCodeProvider;
   /** Local (llama-server) provider; always built, only routed when
    *  LOCAL_ENABLED=true (chain-routing gates the entry). */
@@ -78,6 +80,16 @@ export function buildProviders(log: Logger): Providers {
         baseUrl: env.ZAI_BASE_URL,
         apiKey: env.ZAI_API_KEY,
         defaultModel: env.ZAI_MODEL,
+      },
+      timeoutMs,
+      log,
+    ),
+    tokenrouter: new SingleKeyProvider(
+      {
+        id: 'tokenrouter',
+        baseUrl: env.TOKENROUTER_BASE_URL,
+        apiKey: env.TOKENROUTER_API_KEY,
+        defaultModel: env.TOKENROUTER_MODEL,
       },
       timeoutMs,
       log,

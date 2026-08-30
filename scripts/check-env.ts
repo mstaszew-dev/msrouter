@@ -11,6 +11,7 @@ console.log(
       openrouterKeys: c.openrouterKeys.length,
       openai: !!c.env.OPENAI_API_KEY,
       zai: !!c.env.ZAI_API_KEY,
+      tokenrouter: !!c.env.TOKENROUTER_API_KEY,
       opencode: !!c.env.OPENCODE_API_KEY,
       opencodeModel: c.env.OPENCODE_MODEL,
       walkAlias: c.env.WALK_ALIAS,

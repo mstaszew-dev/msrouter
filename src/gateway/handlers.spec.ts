@@ -72,6 +72,26 @@ describe('resolveModel - unknown model defaults to the alias walk', () => {
     expect(resolveModel('gpt-4')).toBe('mst/free');
     expect(resolveModel('')).toBe('mst/free');
   });
+
+  it('passes the tokenrouter default model through when its key is configured', () => {
+    loadEnv({ TOKENROUTER_API_KEY: 'sk-tokenrouter-test', TOKENROUTER_MODEL: 'glm-5.3-free' });
+    expect(resolveModel('glm-5.3-free')).toBe('glm-5.3-free');
+  });
+});
+
+describe('buildModelList - tokenrouter model advertisement', () => {
+  it('includes glm-5.3-free with owned_by=tokenrouter when TOKENROUTER_API_KEY is set', () => {
+    loadEnv({ TOKENROUTER_API_KEY: 'sk-tokenrouter-test', TOKENROUTER_MODEL: 'glm-5.3-free' });
+    const tr = buildModelList().find((m) => m.id === 'glm-5.3-free');
+    expect(tr).toBeDefined();
+    expect(tr?.owned_by).toBe('tokenrouter');
+  });
+
+  it('omits the tokenrouter model when TOKENROUTER_API_KEY is unset', () => {
+    loadEnv({ TOKENROUTER_API_KEY: undefined, TOKENROUTER_MODEL: 'glm-5.3-free' });
+    const ids = buildModelList().map((m) => m.id);
+    expect(ids).not.toContain('glm-5.3-free');
+  });
 });
 
 describe('buildModelList - local (llama-server) model advertisement', () => {

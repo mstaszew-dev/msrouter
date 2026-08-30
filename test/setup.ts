@@ -26,6 +26,7 @@ if (process.env['INTEGRATION'] === '1') {
     OPENROUTER_KEY2: 'sk-or-test-key-2222',
     OPENAI_API_KEY: 'sk-openai-test',
     ZAI_API_KEY: 'sk-zai-test',
+    TOKENROUTER_API_KEY: 'sk-tokenrouter-test',
     // OpenCode pool: numbered keys (collected ascending, deduped). The chain
     // builds (model, key) triples from these, so two keys exercise the pool.
     OPENCODE_KEY1: 'sk-opencode-test-1',
