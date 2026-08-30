@@ -61,8 +61,8 @@ describe('shortCircuit', () => {
   });
 
   it('parses direct:laptop/<model> (colon model ids preserved)', () => {
-    const r = shortCircuit('direct:laptop/qwen3.5:0.8b');
-    expect(r).toEqual({ provider: 'laptop', model: 'qwen3.5:0.8b' });
+    const r = shortCircuit('direct:laptop/qwen3.5:2b');
+    expect(r).toEqual({ provider: 'laptop', model: 'qwen3.5:2b' });
   });
 
   it('is case-insensitive for prefix detection', () => {

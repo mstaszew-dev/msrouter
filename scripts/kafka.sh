@@ -24,6 +24,29 @@ PIDFILE=".run/kafka.pid"
 
 mkdir -p .run
 
+# Fast, JVM-free port probe. The old readiness loop called kafka-topics.sh
+# 20x against a possibly-dead broker; each JVM call hung ~15s, turning the
+# "20s" wait into minutes and stalling the Director's recovery tab.
+port_open() { (exec 3<>"/dev/tcp/127.0.0.1/${KAFKA_PORT}") 2>/dev/null; }
+
+# Generate the port-overridden broker properties (idempotent).
+generate_props() {
+  local props=".run/kafka-server.properties"
+  sed -e "s/:9092/:${KAFKA_PORT}/g" \
+    "$KAFKA_HOME/config/kraft/server.properties" > "$props"
+  printf '%s' "$props"
+}
+
+# KRaft storage health: log.dirs must hold meta.properties. A wiped/corrupt
+# dir makes the broker die instantly with 'No readable meta.properties files
+# found' - detectable BEFORE starting, so the caller can format first.
+storage_ok() {
+  local props log_dirs
+  props="$(generate_props)"
+  log_dirs="$(grep '^log.dirs=' "$props" | cut -d= -f2- || true)"
+  [[ -n "$log_dirs" && -f "$log_dirs/meta.properties" ]]
+}
+
 log()  { printf '\033[1;34m[kafka]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m[ok]\033[0m  %s\n' "$*"; }
 die()  { printf '\033[1;31m[err]\033[0m %s\n' "$*" >&2; exit 1; }
@@ -35,9 +58,8 @@ is_running() {
 start() {
   if is_running; then die "Kafka already running (pid $(cat "$PIDFILE"))"; fi
   # Override ports in KRaft config so the broker listens on KAFKA_PORT.
-  local props=".run/kafka-server.properties"
-  sed -e "s/:9092/:${KAFKA_PORT}/g" \
-      "$KAFKA_HOME/config/kraft/server.properties" > "$props"
+  local props
+  props="$(generate_props)"
   log "starting Kafka broker in KRaft mode on port ${KAFKA_PORT}"
   nohup "$KAFKA_HOME/bin/kafka-server-start.sh" \
     "$props" \
@@ -46,16 +68,22 @@ start() {
   ok "kafka pid $(cat "$PIDFILE")"
 
   log "waiting for broker on ${KAFKA_BOOTSTRAP}"
-  for i in $(seq 1 20); do
-    if "$KAFKA_HOME/bin/kafka-topics.sh" --bootstrap-server "$KAFKA_BOOTSTRAP" --list >/dev/null 2>&1; then
+  # Fast port probe first (instant fail against a dead broker), then a single
+  # kafka-topics.sh call to confirm the topic API once the port accepts.
+  local tries="${KAFKA_READINESS_TRIES:-20}"
+  local sleep_s="${KAFKA_READINESS_SLEEP:-1}"
+  local i
+  for i in $(seq 1 "$tries"); do
+    if port_open && \
+      "$KAFKA_HOME/bin/kafka-topics.sh" --bootstrap-server "$KAFKA_BOOTSTRAP" --list >/dev/null 2>&1; then
       ok "broker ready"
       return 0
     fi
-    sleep 1
+    sleep "$sleep_s"
   done
   echo "--- kafka log ---" >&2
   tail -n 20 .run/kafka.log >&2 || true
-  echo "broker did not become ready in 20s" >&2
+  echo "broker did not become ready (${tries} tries)" >&2
   return 1
 }
 
@@ -93,6 +121,13 @@ reinit_kraft() {
 
 # Try to start; if broker fails to come up, reinitialize KRaft and retry once.
 start_or_init() {
+  # Preflight: format the KRaft storage BEFORE starting when metadata is
+  # missing/corrupt, so the broker doesn't die instantly on every attempt
+  # (and the Director doesn't spawn duplicate recovery tabs).
+  if ! storage_ok; then
+    log "KRaft storage unhealthy (meta.properties missing); formatting before start"
+    reinit_kraft
+  fi
   if start; then
     return 0
   fi

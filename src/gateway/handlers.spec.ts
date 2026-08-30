@@ -110,21 +110,21 @@ describe('buildModelList - local (llama-server) model advertisement', () => {
 });
 
 describe('laptop (tailnet qwen) gateway wiring', () => {
-  it('resolveModel passes qwen3.5:0.8b through as a known model', () => {
-    loadEnv({ LAPTOP_MODEL: 'qwen3.5:0.8b' });
-    expect(resolveModel('qwen3.5:0.8b')).toBe('qwen3.5:0.8b');
+  it('resolveModel passes qwen3.5:2b through as a known model', () => {
+    loadEnv({ LAPTOP_MODEL: 'qwen3.5:2b' });
+    expect(resolveModel('qwen3.5:2b')).toBe('qwen3.5:2b');
   });
 
-  it('buildModelList advertises qwen3.5:0.8b when LAPTOP_ENABLED=true', () => {
-    loadEnv({ LAPTOP_ENABLED: 'true', LAPTOP_MODEL: 'qwen3.5:0.8b' });
-    const laptop = buildModelList().find((m) => m.id === 'qwen3.5:0.8b');
+  it('buildModelList advertises qwen3.5:2b when LAPTOP_ENABLED=true', () => {
+    loadEnv({ LAPTOP_ENABLED: 'true', LAPTOP_MODEL: 'qwen3.5:2b' });
+    const laptop = buildModelList().find((m) => m.id === 'qwen3.5:2b');
     expect(laptop).toBeDefined();
     expect(laptop?.owned_by).toBe('laptop');
   });
 
   it('buildModelList omits the laptop model when LAPTOP_ENABLED is false (default)', () => {
-    loadEnv({ LAPTOP_ENABLED: 'false', LAPTOP_MODEL: 'qwen3.5:0.8b' });
+    loadEnv({ LAPTOP_ENABLED: 'false', LAPTOP_MODEL: 'qwen3.5:2b' });
     const ids = buildModelList().map((m) => m.id);
-    expect(ids).not.toContain('qwen3.5:0.8b');
+    expect(ids).not.toContain('qwen3.5:2b');
   });
 });

@@ -68,7 +68,7 @@ const schema = z.object({
   // fallbacks are exhausted).
   LAPTOP_ENABLED: flag('false'),
   LAPTOP_BASE_URL: z.string().url().default('https://laptop-a64sv2el.taila0a683.ts.net/v1'),
-  LAPTOP_MODEL: z.string().default('qwen3.5:0.8b'),
+  LAPTOP_MODEL: z.string().default('qwen3.5:2b'),
   OPENCODE_API_KEY: z.string().optional(),
   OPENCODE_BASE_URL: z.string().url().default('https://opencode.ai/zen/v1'),
   OPENCODE_MODEL: z.string().default('big-pickle'),

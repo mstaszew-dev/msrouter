@@ -702,7 +702,7 @@ describe('ProviderChain - local (llama-server) entry', () => {
       LOCAL_ENABLED: 'true',
       LMSTUDIO_ENABLED: 'true',
       LAPTOP_ENABLED: 'true',
-      LAPTOP_MODEL: 'qwen3.5:0.8b',
+      LAPTOP_MODEL: 'qwen3.5:2b',
     });
     const p = makeProviders({ openrouterKeys: 1 });
     const chain = new ProviderChain(p, silentLogger);
@@ -713,7 +713,7 @@ describe('ProviderChain - local (llama-server) entry', () => {
   });
 
   it('omits the laptop entry when LAPTOP_ENABLED is false (default)', () => {
-    loadEnv({ ...DEFAULT_ENV, LAPTOP_MODEL: 'qwen3.5:0.8b' });
+    loadEnv({ ...DEFAULT_ENV, LAPTOP_MODEL: 'qwen3.5:2b' });
     const p = makeProviders({ openrouterKeys: 1 });
     const chain = new ProviderChain(p, silentLogger);
     expect(chain.queueSnapshot().some((e) => e.provider === 'laptop')).toBe(false);
@@ -723,7 +723,7 @@ describe('ProviderChain - local (llama-server) entry', () => {
     loadEnv({
       ...DEFAULT_ENV,
       LAPTOP_ENABLED: 'true',
-      LAPTOP_MODEL: 'qwen3.5:0.8b',
+      LAPTOP_MODEL: 'qwen3.5:2b',
     });
     const p = makeProviders({
       openrouterKeys: 1,
@@ -732,7 +732,7 @@ describe('ProviderChain - local (llama-server) entry', () => {
     });
     const chain = new ProviderChain(p, silentLogger);
     const res = await chain.handle(
-      { ...baseBody, model: 'direct:laptop/qwen3.5:0.8b' },
+      { ...baseBody, model: 'direct:laptop/qwen3.5:2b' },
       new AbortController().signal,
     );
     expect(res.servedBy.provider).toBe('laptop');
@@ -740,11 +740,11 @@ describe('ProviderChain - local (llama-server) entry', () => {
     const laptopAttempt = p.laptop as unknown as { attempt: ReturnType<typeof vi.fn> };
     expect(laptopAttempt.attempt).toHaveBeenCalledTimes(1);
     const opts = laptopAttempt.attempt.mock.calls[0]![2] as { model: string };
-    expect(opts.model).toBe('qwen3.5:0.8b');
+    expect(opts.model).toBe('qwen3.5:2b');
   });
 
-  it('sends qwen3.5:0.8b verbatim on the explicit-model path (no :free rewrite)', async () => {
-    loadEnv({ ...DEFAULT_ENV, LAPTOP_ENABLED: 'true', LAPTOP_MODEL: 'qwen3.5:0.8b' });
+  it('sends qwen3.5:2b verbatim on the explicit-model path (no :free rewrite)', async () => {
+    loadEnv({ ...DEFAULT_ENV, LAPTOP_ENABLED: 'true', LAPTOP_MODEL: 'qwen3.5:2b' });
     const p = makeProviders({
       openrouterKeys: 1,
       openrouterResults: [{ kind: 'KEY_FAILURE', status: 404, message: 'no such model' }],
@@ -752,13 +752,13 @@ describe('ProviderChain - local (llama-server) entry', () => {
     });
     const chain = new ProviderChain(p, silentLogger);
     const res = await chain.handle(
-      { ...baseBody, model: 'qwen3.5:0.8b' },
+      { ...baseBody, model: 'qwen3.5:2b' },
       new AbortController().signal,
     );
     expect(res.servedBy.provider).toBe('laptop');
     const laptopAttempt = p.laptop as unknown as { attempt: ReturnType<typeof vi.fn> };
     const opts = laptopAttempt.attempt.mock.calls[0]![2] as { model: string };
-    expect(opts.model).toBe('qwen3.5:0.8b');
+    expect(opts.model).toBe('qwen3.5:2b');
   });
 });
 

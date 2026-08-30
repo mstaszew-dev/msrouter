@@ -107,6 +107,7 @@ MOCK
   chmod +x "${KAFKA_HOME}/bin/kafka-topics.sh"
 
   source scripts/kafka.sh </dev/null 2>/dev/null || true
+  port_open() { return 0; }
   start
 
   # The generated properties file should exist.
@@ -271,6 +272,7 @@ MOCK
   chmod +x "${KAFKA_HOME}/bin/kafka-topics.sh"
 
   source scripts/kafka.sh </dev/null 2>/dev/null || true
+  port_open() { return 0; }
   run start_or_init
 
   [ "$status" -eq 0 ]
@@ -314,6 +316,7 @@ MOCK
   chmod +x "${KAFKA_HOME}/bin/kafka-storage.sh"
 
   source scripts/kafka.sh </dev/null 2>/dev/null || true
+  port_open() { return 0; }
   run start_or_init
 
   [ "$status" -eq 0 ]
@@ -355,4 +358,110 @@ MOCK
   [ "$status" -eq 0 ]
   [ ! -f "$kraft_data/meta.properties" ]
   grep -q "FORMATTED-CLEAN" "${KAFKA_HOME}/.format_ok"
+}
+
+# ---------------------------------------------------------------------------
+# Robustness: KRaft storage preflight + fast readiness (2026-08-31)
+# The 'No readable meta.properties files found' failure made the broker die
+# instantly while the old 20x kafka-topics.sh readiness loop hung for minutes
+# on dead-broker JVM calls - and the Director spawned a duplicate tab.
+# ---------------------------------------------------------------------------
+
+# Shared mock setup: storage/topics/server-start mocks recording a call order.
+setup_robust() {
+  mkdir -p "${TEST_TMPDIR}/kraft-logs"   # no meta.properties => unhealthy
+  cat > "${KAFKA_HOME}/config/kraft/server.properties" <<PROPS
+log.dirs=${TEST_TMPDIR}/kraft-logs
+PROPS
+
+  : > "${TEST_TMPDIR}/call-order"
+
+  cat > "${KAFKA_HOME}/bin/kafka-storage.sh" <<MOCK
+#!/bin/bash
+echo "storage:\$1" >> "${TEST_TMPDIR}/call-order"
+echo "recovered-uuid"
+exit 0
+MOCK
+  chmod +x "${KAFKA_HOME}/bin/kafka-storage.sh"
+
+  cat > "${KAFKA_HOME}/bin/kafka-server-start.sh" <<MOCK
+#!/bin/bash
+echo "server-start" >> "${TEST_TMPDIR}/call-order"
+exit 0
+MOCK
+  chmod +x "${KAFKA_HOME}/bin/kafka-server-start.sh"
+
+  printf '#!/bin/bash\nexit 0\n' > "${KAFKA_HOME}/bin/kafka-topics.sh"
+  chmod +x "${KAFKA_HOME}/bin/kafka-topics.sh"
+
+  export KAFKA_READINESS_TRIES=2
+  export KAFKA_READINESS_SLEEP=0
+}
+
+@test "storage_ok is false when KRaft log.dirs lacks meta.properties" {
+  mkdir -p "${TEST_TMPDIR}/kraft-logs"
+  cat > "${KAFKA_HOME}/config/kraft/server.properties" <<PROPS
+log.dirs=${TEST_TMPDIR}/kraft-logs
+PROPS
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  run storage_ok
+  [ "$status" -ne 0 ]
+}
+
+@test "storage_ok is true when meta.properties exists" {
+  mkdir -p "${TEST_TMPDIR}/kraft-logs"
+  touch "${TEST_TMPDIR}/kraft-logs/meta.properties"
+  cat > "${KAFKA_HOME}/config/kraft/server.properties" <<PROPS
+log.dirs=${TEST_TMPDIR}/kraft-logs
+PROPS
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  run storage_ok
+  [ "$status" -eq 0 ]
+}
+
+@test "start_or_init formats unhealthy storage BEFORE the first server start" {
+  setup_robust
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  port_open() { return 0; }
+  run start_or_init
+  [ "$status" -eq 0 ]
+
+  local order="${TEST_TMPDIR}/call-order"
+  local first_start first_format
+  first_start=$(grep -n '^server-start$' "$order" | head -1 | cut -d: -f1)
+  first_format=$(grep -n '^storage:' "$order" | head -1 | cut -d: -f1)
+  [ -n "$first_start" ]
+  [ -n "$first_format" ]
+  [ "$first_format" -lt "$first_start" ]
+}
+
+@test "start_or_init does NOT reformat when storage is healthy" {
+  setup_robust
+  touch "${TEST_TMPDIR}/kraft-logs/meta.properties"   # healthy storage
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  port_open() { return 0; }
+  run start_or_init
+  [ "$status" -eq 0 ]
+  ! grep -q '^storage:' "${TEST_TMPDIR}/call-order"
+}
+
+@test "start fails fast via port probe when the broker dies instantly" {
+  mkdir -p "${TEST_TMPDIR}/kraft-logs"
+  touch "${TEST_TMPDIR}/kraft-logs/meta.properties"   # healthy: no reinit
+  cat > "${KAFKA_HOME}/config/kraft/server.properties" <<PROPS
+log.dirs=${TEST_TMPDIR}/kraft-logs
+PROPS
+
+  # Broker dies immediately after nohup (simulates the meta.properties crash).
+  printf '#!/bin/bash\nexit 1\n' > "${KAFKA_HOME}/bin/kafka-server-start.sh"
+  chmod +x "${KAFKA_HOME}/bin/kafka-server-start.sh"
+  printf '#!/bin/bash\nexit 0\n' > "${KAFKA_HOME}/bin/kafka-topics.sh"
+  chmod +x "${KAFKA_HOME}/bin/kafka-topics.sh"
+
+  export KAFKA_READINESS_TRIES=2
+  export KAFKA_READINESS_SLEEP=0
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  run start
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"did not become ready"* ]]
 }
