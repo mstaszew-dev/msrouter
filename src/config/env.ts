@@ -95,7 +95,7 @@ const schema = z.object({
   OPENROUTER_MODEL: z.string().default('openrouter/free'),
   // Additional OpenRouter models (comma-separated). Each model × each key
   // creates a routing entry, so the chain tries all combinations.
-  // ox-alpha free tier ended 2026-08; additional models now opt-in only.
+  // Empty default: retired one-off free models are never re-added by default.
   OPENROUTER_MODELS: csv.default(''),
   // The alias(es) that mean "walk every provider with its own default model".
   // Comma-separated; canonical ones are "mst/free" and "free".

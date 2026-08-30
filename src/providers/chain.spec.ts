@@ -165,7 +165,7 @@ describe('ProviderChain - routing-entry queue construction', () => {
   });
 });
 
-describe('ProviderChain - post ox-alpha default (no additional models)', () => {
+describe('ProviderChain - default (no additional models)', () => {
   it('builds the production queue with OPENROUTER_MODELS empty', () => {
     loadEnv({ OPENROUTER_MODELS: '' });
     const p = makeProviders({

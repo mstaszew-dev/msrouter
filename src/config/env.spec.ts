@@ -165,7 +165,7 @@ describe('loadEnv - OpenCode key pool', () => {
 });
 
 describe('loadEnv - OPENROUTER_MODELS', () => {
-  it('defaults to [] when unset (ox-alpha retired)', () => {
+  it('defaults to [] when unset (retired one-off models never re-added)', () => {
     const cfg = loadEnv({});
     expect(cfg.env.OPENROUTER_MODELS).toEqual([]);
   });
