@@ -100,9 +100,9 @@ export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
 
 /**
  * True when the model id is a configured per-provider default (e.g. the
- * TokenRouter glm-5.3-free, ZAI glm-4.6). Such ids are advertised verbatim in
+ * TokenRouter z-ai/glm-5.3-free, ZAI glm-4.6). Such ids are advertised verbatim in
  * /v1/models and accepted by resolveModel, so the explicit-model path must not
- * FORCE_FREE-rewrite them into an id no upstream accepts ('glm-5.3-free:free').
+ * FORCE_FREE-rewrite them into an id no upstream accepts ('z-ai/glm-5.3-free:free').
  */
 export function isProviderDefaultModel(model: string): boolean {
   const e = env();

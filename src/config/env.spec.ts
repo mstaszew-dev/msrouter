@@ -27,10 +27,10 @@ describe('loadEnv', () => {
 });
 
 describe('loadEnv - TokenRouter config', () => {
-  it('defaults TOKENROUTER_BASE_URL to api.tokenrouter.com/v1 and model to glm-5.3-free', () => {
+  it('defaults TOKENROUTER_BASE_URL to api.tokenrouter.com/v1 and model to z-ai/glm-5.3-free', () => {
     const cfg = loadEnv({});
     expect(cfg.env.TOKENROUTER_BASE_URL).toBe('https://api.tokenrouter.com/v1');
-    expect(cfg.env.TOKENROUTER_MODEL).toBe('glm-5.3-free');
+    expect(cfg.env.TOKENROUTER_MODEL).toBe('z-ai/glm-5.3-free');
     expect(cfg.env.TOKENROUTER_API_KEY).toBeUndefined();
   });
 
@@ -38,10 +38,10 @@ describe('loadEnv - TokenRouter config', () => {
     const cfg = loadEnv({
       TOKENROUTER_API_KEY: 'sk-tokenrouter-test',
       TOKENROUTER_BASE_URL: 'https://api.tokenrouter.com/v1',
-      TOKENROUTER_MODEL: 'glm-5.3-free',
+      TOKENROUTER_MODEL: 'z-ai/glm-5.3-free',
     });
     expect(cfg.env.TOKENROUTER_API_KEY).toBe('sk-tokenrouter-test');
-    expect(cfg.env.TOKENROUTER_MODEL).toBe('glm-5.3-free');
+    expect(cfg.env.TOKENROUTER_MODEL).toBe('z-ai/glm-5.3-free');
   });
 });
 

@@ -41,13 +41,13 @@ describe('shortCircuit', () => {
   });
 
   it('parses direct:tokenrouter/<model>', () => {
-    const r = shortCircuit('direct:tokenrouter/glm-5.3-free');
-    expect(r).toEqual({ provider: 'tokenrouter', model: 'glm-5.3-free' });
+    const r = shortCircuit('direct:tokenrouter/z-ai/glm-5.3-free');
+    expect(r).toEqual({ provider: 'tokenrouter', model: 'z-ai/glm-5.3-free' });
   });
 
   it('is case-insensitive for the tokenrouter prefix', () => {
-    const r = shortCircuit('DIRECT:TokenRouter/glm-5.3-free');
-    expect(r).toEqual({ provider: 'tokenrouter', model: 'glm-5.3-free' });
+    const r = shortCircuit('DIRECT:TokenRouter/z-ai/glm-5.3-free');
+    expect(r).toEqual({ provider: 'tokenrouter', model: 'z-ai/glm-5.3-free' });
   });
 
   it('parses direct:local/<model>', () => {

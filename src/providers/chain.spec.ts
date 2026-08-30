@@ -196,16 +196,16 @@ describe('ProviderChain - tokenrouter entry', () => {
   afterEach(() => loadEnv(DEFAULT_ENV));
 
   it('uses TOKENROUTER_MODEL for the entry model', () => {
-    loadEnv({ ...DEFAULT_ENV, TOKENROUTER_MODEL: 'glm-5.3-free' });
+    loadEnv({ ...DEFAULT_ENV, TOKENROUTER_MODEL: 'z-ai/glm-5.3-free' });
     const p = makeProviders({ openrouterKeys: 1 });
     const chain = new ProviderChain(p, silentLogger);
     const entry = chain.queueSnapshot().find((c) => c.provider === 'tokenrouter');
     expect(entry).toBeDefined();
-    expect(entry!.model).toBe('glm-5.3-free');
+    expect(entry!.model).toBe('z-ai/glm-5.3-free');
   });
 
   it('walks to tokenrouter when OpenRouter/OpenAI/ZAI all fail (KEY_FAILURE demotes it)', async () => {
-    loadEnv({ ...DEFAULT_ENV, TOKENROUTER_MODEL: 'glm-5.3-free' });
+    loadEnv({ ...DEFAULT_ENV, TOKENROUTER_MODEL: 'z-ai/glm-5.3-free' });
     const p = makeProviders({
       openrouterKeys: 1,
       openrouterResults: [{ kind: 'KEY_FAILURE', status: 429, message: 'rl' }],
@@ -222,17 +222,17 @@ describe('ProviderChain - tokenrouter entry', () => {
   });
 
   it('omits the tokenrouter entry when the provider is unavailable', () => {
-    loadEnv({ ...DEFAULT_ENV, TOKENROUTER_MODEL: 'glm-5.3-free' });
+    loadEnv({ ...DEFAULT_ENV, TOKENROUTER_MODEL: 'z-ai/glm-5.3-free' });
     const p = makeProviders({ openrouterKeys: 1 });
     (p.tokenrouter as unknown as { available: boolean }).available = false;
     const chain = new ProviderChain(p, silentLogger);
     expect(chain.queueSnapshot().some((e) => e.provider === 'tokenrouter')).toBe(false);
   });
 
-  it('sends glm-5.3-free verbatim on the explicit-model path (no :free rewrite)', async () => {
-    // /v1/models advertises glm-5.3-free and resolveModel passes it through;
-    // the upstream id must not be mangled to glm-5.3-free:free by FORCE_FREE.
-    loadEnv({ ...DEFAULT_ENV, TOKENROUTER_MODEL: 'glm-5.3-free' });
+  it('sends z-ai/glm-5.3-free verbatim on the explicit-model path (no :free rewrite)', async () => {
+    // /v1/models advertises z-ai/glm-5.3-free and resolveModel passes it through;
+    // the upstream id must not be mangled to z-ai/glm-5.3-free:free by FORCE_FREE.
+    loadEnv({ ...DEFAULT_ENV, TOKENROUTER_MODEL: 'z-ai/glm-5.3-free' });
     const p = makeProviders({
       openrouterKeys: 1,
       openrouterResults: [{ kind: 'KEY_FAILURE', status: 404, message: 'no such model' }],
@@ -242,14 +242,14 @@ describe('ProviderChain - tokenrouter entry', () => {
     (p.zai as unknown as { available: boolean }).available = false;
     const chain = new ProviderChain(p, silentLogger);
     const res = await chain.handle(
-      { ...baseBody, model: 'glm-5.3-free' },
+      { ...baseBody, model: 'z-ai/glm-5.3-free' },
       new AbortController().signal,
     );
     expect(res.servedBy.provider).toBe('tokenrouter');
     expect(p.tokenrouter.attempt).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
-      expect.objectContaining({ model: 'glm-5.3-free' }),
+      expect.objectContaining({ model: 'z-ai/glm-5.3-free' }),
     );
   });
 });

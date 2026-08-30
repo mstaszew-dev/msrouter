@@ -44,7 +44,7 @@ const schema = z.object({
   // (the .io/.me domains want tr_-prefixed keys - this one is a .com key).
   TOKENROUTER_API_KEY: z.string().optional(),
   TOKENROUTER_BASE_URL: z.string().url().default('https://api.tokenrouter.com/v1'),
-  TOKENROUTER_MODEL: z.string().default('glm-5.3-free'),
+  TOKENROUTER_MODEL: z.string().default('z-ai/glm-5.3-free'),
 
   // Local llama-server: OpenAI /v1/chat/completions on a patched 128K GGUF.
   LOCAL_ENABLED: flag('false'),
