@@ -179,6 +179,9 @@ export function resolveModel(requested: string): string {
     cfg.ZAI_MODEL,
     cfg.TOKENROUTER_MODEL,
     cfg.OPENCODE_MODEL,
+    cfg.LOCAL_MODEL,
+    cfg.LMSTUDIO_MODEL,
+    cfg.LAPTOP_MODEL,
   ]);
   if (known.has(requested)) return requested;
   // Unknown: default to the alias walk.
@@ -201,6 +204,7 @@ export function buildModelList(): Array<{ id: string; object: string; owned_by: 
   }
   if (cfg.LOCAL_ENABLED) data.push({ id: cfg.LOCAL_MODEL, object: 'model', owned_by: 'local' });
   if (cfg.LMSTUDIO_ENABLED) data.push({ id: cfg.LMSTUDIO_MODEL, object: 'model', owned_by: 'lmstudio' });
+  if (cfg.LAPTOP_ENABLED) data.push({ id: cfg.LAPTOP_MODEL, object: 'model', owned_by: 'laptop' });
   if (config().opencodeKeys.length > 0) {
     data.push({ id: cfg.OPENCODE_MODEL, object: 'model', owned_by: 'opencode-bigpickle' });
     data.push({ id: cfg.OPENCODE_NEMOTRON_MODEL, object: 'model', owned_by: 'opencode-nemotron' });

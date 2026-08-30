@@ -29,6 +29,9 @@ export interface Providers {
   /** LM Studio (Bionic) local provider; always built, only routed when
    *  LMSTUDIO_ENABLED=true (chain-routing gates the entry). */
   lmstudio: LmStudioProvider;
+  /** Laptop (tailnet) qwen via Ollama+Tailscale; routed ABSOLUTE LAST when
+   *  LAPTOP_ENABLED=true (weakest model in the chain). */
+  laptop: LocalProvider;
 }
 
 /** OpenCode Zen model variants, ordered by capability (strongest first).
@@ -122,6 +125,19 @@ export function buildProviders(log: Logger): Providers {
         defaultModel: env.LMSTUDIO_MODEL,
       },
       env.LMSTUDIO_TIMEOUT_MS,
+      log,
+    ),
+    // Laptop (tailnet) qwen: Ollama behind Tailscale on the user's other
+    // machine. OpenAI-compatible /v1, no API key. 32K prompt guard: Ollama's
+    // effective context is modest and oversized prompts would truncate there.
+    laptop: new LocalProvider(
+      {
+        id: 'laptop',
+        baseUrl: env.LAPTOP_BASE_URL,
+        defaultModel: env.LAPTOP_MODEL,
+        maxPromptTokens: 32_000,
+      },
+      timeoutMs,
       log,
     ),
   };

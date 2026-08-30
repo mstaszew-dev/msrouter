@@ -47,6 +47,7 @@ function makeProviders(
     opencodeKeys?: number;
     localResults?: ProviderCallResult[];
     lmstudioResults?: ProviderCallResult[];
+    laptopResults?: ProviderCallResult[];
   } = {},
 ): Providers {
   const orKeys = overrides.openrouterKeys ?? 2;
@@ -101,6 +102,11 @@ function makeProviders(
     );
   });
 
+  const laptopResults = overrides.laptopResults ?? [];
+  const laptopAttempt = vi.fn(async (): Promise<ProviderCallResult> => {
+    return laptopResults.shift() ?? { kind: 'TRANSIENT', status: 0, message: 'laptop stub' };
+  });
+
   return {
     openrouter: {
       id: 'openrouter',
@@ -125,6 +131,7 @@ function makeProviders(
     } as never,
     local: { id: 'local', available: true, attempt: localAttempt } as never,
     lmstudio: { id: 'lmstudio', available: true, attempt: lmstudioAttempt } as never,
+    laptop: { id: 'laptop', available: true, attempt: laptopAttempt } as never,
   };
 }
 
@@ -687,6 +694,71 @@ describe('ProviderChain - local (llama-server) entry', () => {
     const p = makeProviders({ openrouterKeys: 1 });
     const chain = new ProviderChain(p, silentLogger);
     expect(chain.queueSnapshot().some((e) => e.provider === 'lmstudio')).toBe(false);
+  });
+
+  it('places the laptop entry ABSOLUTE LAST when LAPTOP_ENABLED=true (weakest model)', () => {
+    loadEnv({
+      ...DEFAULT_ENV,
+      LOCAL_ENABLED: 'true',
+      LMSTUDIO_ENABLED: 'true',
+      LAPTOP_ENABLED: 'true',
+      LAPTOP_MODEL: 'qwen3.5:0.8b',
+    });
+    const p = makeProviders({ openrouterKeys: 1 });
+    const chain = new ProviderChain(p, silentLogger);
+    const labels = chain.queueSnapshot().map((e) => e.label);
+    expect(labels[labels.length - 1]).toBe('laptop');
+    expect(labels[labels.length - 2]).toBe('lmstudio');
+    expect(labels[labels.length - 3]).toBe('local');
+  });
+
+  it('omits the laptop entry when LAPTOP_ENABLED is false (default)', () => {
+    loadEnv({ ...DEFAULT_ENV, LAPTOP_MODEL: 'qwen3.5:0.8b' });
+    const p = makeProviders({ openrouterKeys: 1 });
+    const chain = new ProviderChain(p, silentLogger);
+    expect(chain.queueSnapshot().some((e) => e.provider === 'laptop')).toBe(false);
+  });
+
+  it('direct:laptop/<model> pins the laptop provider without fallback', async () => {
+    loadEnv({
+      ...DEFAULT_ENV,
+      LAPTOP_ENABLED: 'true',
+      LAPTOP_MODEL: 'qwen3.5:0.8b',
+    });
+    const p = makeProviders({
+      openrouterKeys: 1,
+      openrouterResults: [{ kind: 'OK', response: okResponse() }], // must NOT be called
+      laptopResults: [{ kind: 'OK', response: okResponse() }],
+    });
+    const chain = new ProviderChain(p, silentLogger);
+    const res = await chain.handle(
+      { ...baseBody, model: 'direct:laptop/qwen3.5:0.8b' },
+      new AbortController().signal,
+    );
+    expect(res.servedBy.provider).toBe('laptop');
+    expect(p.openrouter.attempt).not.toHaveBeenCalled();
+    const laptopAttempt = p.laptop as unknown as { attempt: ReturnType<typeof vi.fn> };
+    expect(laptopAttempt.attempt).toHaveBeenCalledTimes(1);
+    const opts = laptopAttempt.attempt.mock.calls[0]![2] as { model: string };
+    expect(opts.model).toBe('qwen3.5:0.8b');
+  });
+
+  it('sends qwen3.5:0.8b verbatim on the explicit-model path (no :free rewrite)', async () => {
+    loadEnv({ ...DEFAULT_ENV, LAPTOP_ENABLED: 'true', LAPTOP_MODEL: 'qwen3.5:0.8b' });
+    const p = makeProviders({
+      openrouterKeys: 1,
+      openrouterResults: [{ kind: 'KEY_FAILURE', status: 404, message: 'no such model' }],
+      laptopResults: [{ kind: 'OK', response: okResponse() }],
+    });
+    const chain = new ProviderChain(p, silentLogger);
+    const res = await chain.handle(
+      { ...baseBody, model: 'qwen3.5:0.8b' },
+      new AbortController().signal,
+    );
+    expect(res.servedBy.provider).toBe('laptop');
+    const laptopAttempt = p.laptop as unknown as { attempt: ReturnType<typeof vi.fn> };
+    const opts = laptopAttempt.attempt.mock.calls[0]![2] as { model: string };
+    expect(opts.model).toBe('qwen3.5:0.8b');
   });
 });
 

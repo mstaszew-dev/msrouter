@@ -36,6 +36,7 @@ function main(): void {
         zai: providers.zai.available,
         tokenrouter: providers.tokenrouter.available,
         opencode: providers.opencode.available,
+        laptop: env.LAPTOP_ENABLED,
       },
       'gateway listening',
     );

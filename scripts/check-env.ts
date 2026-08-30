@@ -12,6 +12,7 @@ console.log(
       openai: !!c.env.OPENAI_API_KEY,
       zai: !!c.env.ZAI_API_KEY,
       tokenrouter: !!c.env.TOKENROUTER_API_KEY,
+      laptop: c.env.LAPTOP_ENABLED,
       opencode: !!c.env.OPENCODE_API_KEY,
       opencodeModel: c.env.OPENCODE_MODEL,
       walkAlias: c.env.WALK_ALIAS,

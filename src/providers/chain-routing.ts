@@ -18,7 +18,15 @@ import { withFree } from './openrouter.js';
 /** A single flat routing entry: which provider, which model, which key slot. */
 export interface RoutingEntry {
   /** Lookup key into `Providers`. */
-  provider: 'openrouter' | 'openai' | 'zai' | 'tokenrouter' | 'opencode' | 'local' | 'lmstudio';
+  provider:
+    | 'openrouter'
+    | 'openai'
+    | 'zai'
+    | 'tokenrouter'
+    | 'opencode'
+    | 'local'
+    | 'lmstudio'
+    | 'laptop';
   /** Display label for servedBy / logs. */
   label: string;
   /** Model id to send upstream (alias substitution applied at handle time). */
@@ -95,6 +103,11 @@ export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
   if (e.LMSTUDIO_ENABLED) {
     list.push({ provider: 'lmstudio', label: 'lmstudio', model: e.LMSTUDIO_MODEL, attemptIndex: 0 });
   }
+  // Laptop (tailnet) qwen goes ABSOLUTE LAST: the 0.8B model is the weakest
+  // in the chain, so it only serves when everything else is exhausted.
+  if (e.LAPTOP_ENABLED) {
+    list.push({ provider: 'laptop', label: 'laptop', model: e.LAPTOP_MODEL, attemptIndex: 0 });
+  }
   return list;
 }
 
@@ -112,7 +125,8 @@ export function isProviderDefaultModel(model: string): boolean {
     model === e.TOKENROUTER_MODEL ||
     model === e.OPENCODE_MODEL ||
     model === e.LOCAL_MODEL ||
-    model === e.LMSTUDIO_MODEL
+    model === e.LMSTUDIO_MODEL ||
+    model === e.LAPTOP_MODEL
   );
 }
 
@@ -143,6 +157,9 @@ export function shortCircuit(model: string): { provider: ChainProvider; model: s
   }
   if (restLower.startsWith('lmstudio/')) {
     return { provider: 'lmstudio', model: rest.slice('lmstudio/'.length) };
+  }
+  if (restLower.startsWith('laptop/')) {
+    return { provider: 'laptop', model: rest.slice('laptop/'.length) };
   }
   return null;
 }

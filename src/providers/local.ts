@@ -72,20 +72,29 @@ function estimatePromptTokens(messages: unknown[], tools?: unknown[]): number {
 export interface LocalConfig {
   baseUrl: string;
   defaultModel: string;
+  /** Provider id / chain lookup key. Defaults to 'local' (llama-server);
+   *  secondary instances use their own id (e.g. 'laptop'). */
+  id?: string;
+  /** Prompt-token ceiling for the guard. Defaults to 128K (local GGUF);
+   *  smaller-window endpoints pass a lower value. */
+  maxPromptTokens?: number;
 }
 
 export class LocalProvider implements Provider {
-  readonly id = 'local';
+  readonly id: string;
   private readonly baseUrl: string;
   private readonly defaultModel: string;
+  private readonly maxPromptTokens: number;
 
   constructor(
     cfg: LocalConfig,
     private readonly timeoutMs: number,
     private readonly log: Logger,
   ) {
+    this.id = cfg.id ?? 'local';
     this.baseUrl = cfg.baseUrl;
     this.defaultModel = cfg.defaultModel;
+    this.maxPromptTokens = cfg.maxPromptTokens ?? LOCAL_MAX_PROMPT_TOKENS;
   }
 
   /** Always available when the entry is routed (chain-routing gates on
@@ -108,11 +117,11 @@ export class LocalProvider implements Provider {
       Array.isArray(body.messages) ? body.messages : [],
       Array.isArray(body.tools) ? body.tools : undefined,
     );
-    if (promptTokens > LOCAL_MAX_PROMPT_TOKENS) {
+    if (promptTokens > this.maxPromptTokens) {
       return {
         kind: 'BAD_REQUEST',
         status: 400,
-        message: `local: prompt ~${promptTokens} tokens exceeds model context window (max ${LOCAL_MAX_PROMPT_TOKENS}); use a remote provider`,
+        message: `${this.id}: prompt ~${promptTokens} tokens exceeds model context window (max ${this.maxPromptTokens}); use a remote provider`,
       };
     }
     // Verbatim passthrough: only rewrite model to the chain-resolved id. The
@@ -125,10 +134,10 @@ export class LocalProvider implements Provider {
     // a required header value, so send a harmless placeholder. No real key.
     return postChatCompletion(outbound, {
       baseUrl: this.baseUrl,
-      authorization: 'Bearer local',
+      authorization: `Bearer ${this.id}`,
       signal,
       timeoutMs: this.timeoutMs,
-      keyTag: 'local',
+      keyTag: this.id,
     });
   }
 }

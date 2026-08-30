@@ -60,6 +60,11 @@ describe('shortCircuit', () => {
     expect(r).toEqual({ provider: 'lmstudio', model: 'some-model' });
   });
 
+  it('parses direct:laptop/<model> (colon model ids preserved)', () => {
+    const r = shortCircuit('direct:laptop/qwen3.5:0.8b');
+    expect(r).toEqual({ provider: 'laptop', model: 'qwen3.5:0.8b' });
+  });
+
   it('is case-insensitive for prefix detection', () => {
     const r = shortCircuit('DIRECT:OpenAI/gpt-4o');
     expect(r).toEqual({ provider: 'openai', model: 'gpt-4o' });
