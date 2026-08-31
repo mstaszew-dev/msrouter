@@ -1,7 +1,6 @@
 /**
  * orchestrator.ts: Unified startup. Starts the gateway + Director + Slack poller
- * in a single Node process. Replaces the old multi-process architecture
- * (director-worker.ts, director-kafka-poller.ts, director-slack-sender.ts).
+ * in a single Node process.
  *
  * Flow:
  *   main.ts → createGatewayServer() + startOrchestrator()

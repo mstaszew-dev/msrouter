@@ -84,14 +84,16 @@ const schema = z.object({
   OPENCODE_NEMOTRON_MODEL: z.string().default('nemotron-3-ultra-free'),
   OPENCODE_DEEPSEEK_FLASH_MODEL: z.string().default('deepseek-v4-flash-free'),
   OPENCODE_MIMO_MODEL: z.string().default('mimo-v2.5-free'),
-  OPENCODE_NORTH_MINI_CODE_MODEL: z.string().default('north-mini-code-free'),
   OPENCODE_LAGUNA_MODEL: z.string().default('laguna-s-2.1-free'),
-  OPENCODE_LING_MODEL: z.string().default('ling-3.0-flash-free'),
-  // Exact model IDs verified against the OpenCode Zen catalog
-  // (GET /zen/v1/models): qwen3.6-plus and minimax-m3 have NO "-free" variant
-  // (only some models do). The old "-free" suffixes returned 401 on every key.
-  OPENCODE_QWEN_MODEL: z.string().default('qwen3.6-plus'),
-  OPENCODE_MINIMAX_MODEL: z.string().default('minimax-m3'),
+  // 2026-08-31 OpenCode catalog reshuffle: qwen3.6-plus, minimax-m3, and
+  // north-mini-code-free were removed (paid-only or gone), kimi-k3 /
+  // gemini-3.7-flash / grok-4.6 / muse-spark-1.2 demand a payment method
+  // (401 CreditsError on every key), and ling-3.0-flash-free was renamed to
+  // ling-3.0-flash-fin-free. These two var names are historical; they now
+  // carry the strongest surviving free all-rounders.
+  OPENCODE_MINIMAX_MODEL: z.string().default('nemotron-3.5-lightning-free'),
+  OPENCODE_QWEN_MODEL: z.string().default('muse-spark-1.2-contributor-free'),
+  OPENCODE_LING_MODEL: z.string().default('ling-3.0-flash-fin-free'),
 
   // Slack (Director surface)
   SLACK_BOT_TOKEN: z.string().optional(),
@@ -139,7 +141,9 @@ const schema = z.object({
   DIRECTOR_RUNNER: z.string().default(HERMES_RUNNER),
   // When false the Director never spawns/kills/restarts the campaign worker
   // (observe-only supervision): the user starts the agent manually from the
-  // GUI. Observation, classification, Slack and Kafka stay active.
+  // GUI. Observation, classification, Slack and Kafka stay active. VPN IP
+  // rotation (periodic + stall-triggered) still runs without its paired
+  // worker restart; the manual worker's retry loop tolerates the ~30s flap.
   DIRECTOR_AUTOSTART: flag('true'),
   // Vestigial: pgrep-based detection replaced pidfile tracking; kept for config compat.
   DIRECTOR_PIDFILE: z.string().default('~/.campaign-agent/job-search-agent.pid'),

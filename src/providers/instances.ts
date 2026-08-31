@@ -37,7 +37,10 @@ export interface Providers {
 /** OpenCode Zen model variants, ordered by capability (strongest first).
  *  Preferred models come first; weaker free-tier models are last as fallback
  *  so the gateway doesn't stall if all preferred models are demoted.
- *  Order is preserved in the rotation queue (model-major, key-minor). */
+ *  Order is preserved in the rotation queue (model-major, key-minor).
+ *  2026-08-31 catalog reshuffle: qwen3.6-plus/minimax-m3/north-mini-code-free
+ *  were removed upstream (paid-only or gone); kimi-k3/gemini-3.7-flash/
+ *  grok-4.6/muse-spark-1.2 demand a payment method - never route them. */
 const OPENCODE_MODELS = (e: {
   OPENCODE_MODEL: string;
   OPENCODE_MINIMAX_MODEL: string;
@@ -45,18 +48,16 @@ const OPENCODE_MODELS = (e: {
   OPENCODE_NEMOTRON_MODEL: string;
   OPENCODE_MIMO_MODEL: string;
   OPENCODE_DEEPSEEK_FLASH_MODEL: string;
-  OPENCODE_NORTH_MINI_CODE_MODEL: string;
   OPENCODE_LAGUNA_MODEL: string;
   OPENCODE_LING_MODEL: string;
 }): readonly string[] => [
   e.OPENCODE_MODEL, // big-pickle (fast default, demoted if empty)
-  e.OPENCODE_MINIMAX_MODEL, // strongest all-rounder
-  e.OPENCODE_QWEN_MODEL, // good coding + technical reasoning
-  e.OPENCODE_NEMOTRON_MODEL, // good coding + technical reasoning
+  e.OPENCODE_MINIMAX_MODEL, // nemotron-3.5-lightning-free (strongest current all-rounder)
+  e.OPENCODE_QWEN_MODEL, // muse-spark-1.2-contributor-free (coding + technical reasoning)
+  e.OPENCODE_NEMOTRON_MODEL, // nemotron-3-ultra-free (good coding + technical reasoning)
   e.OPENCODE_MIMO_MODEL, // decent for large-codebase/refactoring
   // Fallback: weaker free-tier models, only reached if all above are demoted
   e.OPENCODE_DEEPSEEK_FLASH_MODEL,
-  e.OPENCODE_NORTH_MINI_CODE_MODEL,
   e.OPENCODE_LAGUNA_MODEL,
   e.OPENCODE_LING_MODEL,
 ];
