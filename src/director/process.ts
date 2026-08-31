@@ -6,15 +6,19 @@ import type { SuperviseOpts, SuperviseState } from './restart.js';
 
 /**
  * Detect running campaign processes: the launcher parent (entryCommand
- * basename, e.g. job-search-agent) AND the python agent child
- * (campaign_agent.main). The python child can outlive its launcher parent
- * (orphaned) when the parent is SIGTERMed without forwarding the signal; it
- * must be detected so a restart never leaves a live duplicate running.
+ * basename, e.g. job-search-agent-hermes) AND the hermes runner child
+ * (python -m jobhermes --loop). The launcher execs into the runner, so the
+ * runner cmdline is what survives post-exec; both patterns are matched so a
+ * restart never leaves a live duplicate running. The invocation form
+ * ' -m jobhermes' (leading space) is used so dev tooling that merely
+ * MENTIONS jobhermes (rg, tail on the lock file) is never matched and
+ * never SIGKILLed by stopWorker. The retired python agent
+ * (campaign_agent.main) is intentionally NOT detected.
  */
 export function detectWorker(entryCommand: string): number[] {
-  const base = entryCommand.split('/').pop() ?? 'job-search-agent';
+  const base = entryCommand.split('/').pop() ?? 'job-search-agent-hermes';
   const pids = detectProcess(base);
-  for (const p of detectProcess('campaign_agent.main')) {
+  for (const p of detectProcess(' -m jobhermes')) {
     if (!pids.includes(p)) pids.push(p);
   }
   return pids;
@@ -109,7 +113,7 @@ export async function stopTree(pids: number[], _log: unknown, graceMs = 2000): P
 }
 
 /** Stop the campaign: SIGTERM/SIGKILL the whole process tree (launcher +
- *  python agent + MCP children). */
+ *  hermes runner + MCP children). */
 export async function stopWorker(opts: SuperviseOpts): Promise<{ killed: number[] }> {
   const pids = detectWorker(opts.entryCommand);
   const killed = await stopTree(pids, opts.log);

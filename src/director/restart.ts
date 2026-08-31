@@ -152,7 +152,7 @@ export async function restartWorker(
   startWorkerInIterm(opts);
   const up = await waitForStartup(opts, opts.cdpTimeoutMs ?? 30_000);
   if (!up) {
-    opts.log.warn('job-search-agent did not register via pgrep within timeout');
+    opts.log.warn('campaign worker did not register via pgrep within timeout');
   }
   const cdp = await pollCdp(opts.cdpUrl, opts.cdpTimeoutMs ?? 30_000);
   if (!cdp) {

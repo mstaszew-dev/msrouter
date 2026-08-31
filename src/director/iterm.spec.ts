@@ -89,7 +89,7 @@ describe('startWorkerInIterm - best-effort start-lock write', () => {
     // The launch proceeded despite the failed lock bookkeeping.
     expect(silent.info).toHaveBeenCalledWith(
       expect.objectContaining({ workspace: '/test/workspace' }),
-      'started job-search-agent in iTerm2',
+      'started campaign worker in iTerm2',
     );
     const { execFileSync } = await import('node:child_process');
     expect(vi.mocked(execFileSync)).toHaveBeenCalledWith(

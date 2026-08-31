@@ -45,7 +45,7 @@ const silent = {
 } as unknown as pino.Logger;
 
 const kafkaOpts = {
-  entryCommand: 'job-search-agent',
+  entryCommand: '/Users/mst/ZCodeProject/openclaw-job-search/hermes_agent/install/job-search-agent-hermes',
   workspace: '/test/workspace',
   cdpUrl: 'http://127.0.0.1:9222',
   log: silent,
@@ -524,7 +524,9 @@ describe('startWorkerInIterm', () => {
     const osaCalls = calls.filter((c) => c[0] === 'osascript');
     expect(osaCalls.length).toBe(1);
     const workerScript = osaCalls[0]![1]![1]!;
-    expect(workerScript).toContain('job-search-agent');
+    expect(workerScript).toContain(
+      '/Users/mst/ZCodeProject/openclaw-job-search/hermes_agent/install/job-search-agent-hermes',
+    );
   });
 
   it('skips when the startup lock is held', () => {
@@ -640,14 +642,14 @@ describe('restartWorker', () => {
       if (file === 'pgrep') {
         // First detectWorker call sees pid 4242; every later poll sees none
         // (the tree was just killed), so stopTree/waitForStartup resolve fast.
-        if (cmdArgs[1] === 'job-search-agent') {
+        if (cmdArgs[1] === 'job-search-agent-hermes' || cmdArgs[1] === 'jobhermes') {
           if (!workerArmed) {
             workerArmed = true;
             return '4242\n';
           }
           return '';
         }
-        return ''; // campaign_agent.main and friends
+        return ''; // unrelated patterns
       }
       if (file === 'osascript') return '';
       throw new Error(`unexpected exec ${file}`);
@@ -668,7 +670,7 @@ describe('restartWorker', () => {
     );
     // The worker never registered via pgrep within the tiny timeout...
     expect(silent.warn).toHaveBeenCalledWith(
-      'job-search-agent did not register via pgrep within timeout',
+      'campaign worker did not register via pgrep within timeout',
     );
     // ...and CDP never came up either.
     expect(silent.warn).toHaveBeenCalledWith(

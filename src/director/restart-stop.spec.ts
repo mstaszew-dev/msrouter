@@ -114,11 +114,11 @@ describe('detectWorker', () => {
     mockedExec.mockImplementation(((file: string, args: string[]) => {
       if (file !== 'pgrep') throw new Error('no');
       const pattern = args[1] ?? '';
-      if (pattern.includes('job-search-agent')) return '100\n';
-      if (pattern.includes('campaign_agent.main')) return '200\n';
+      if (pattern.includes('job-search-agent-hermes')) return '100\n';
+      if (pattern.includes('jobhermes')) return '200\n';
       throw new Error('pgrep: no match');
     }) as never);
-    expect(detectWorker('/x/job-search-agent')).toEqual([100, 200]);
+    expect(detectWorker('/x/job-search-agent-hermes')).toEqual([100, 200]);
   });
 
   it('dedupes overlapping pids', () => {

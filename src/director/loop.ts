@@ -18,6 +18,7 @@ import { promisify } from 'node:util';
 
 import type { Logger } from 'pino';
 
+import { HERMES_RUNNER } from '../config/env.js';
 import type { Env } from '../config/env.js';
 import type { ProviderChain } from '../providers/chain.js';
 
@@ -41,6 +42,9 @@ import {
 } from './restart.js';
 import type { Checkpoint, DirectorRunResult, DirectorSurface } from './types.js';
 import type { DecisionClassification } from './types.js';
+
+const DEFAULT_RUNNER = HERMES_RUNNER
+
 
 const MODULE_DIR = dirname(new URL(import.meta.url).pathname);
 
@@ -149,7 +153,7 @@ export class DirectorLoop {
     }
     try {
       startKafkaInIterm({
-        entryCommand: this.opts.env.DIRECTOR_RUNNER || 'job-search-agent',
+        entryCommand: this.opts.env.DIRECTOR_RUNNER || DEFAULT_RUNNER,
         workspace: this.opts.env.DIRECTOR_OPENCLAW_WORKSPACE,
         log: this.opts.log,
       });
@@ -225,7 +229,7 @@ export class DirectorLoop {
       return;
     }
     const state = snapshotWorker({
-      entryCommand: this.opts.env.DIRECTOR_RUNNER || 'job-search-agent',
+      entryCommand: this.opts.env.DIRECTOR_RUNNER || DEFAULT_RUNNER,
       workspace: this.opts.env.DIRECTOR_OPENCLAW_WORKSPACE,
       cdpUrl: this.opts.env.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
       log: this.opts.log,
@@ -237,7 +241,7 @@ export class DirectorLoop {
         'Agent is orphaned (PPID 1); killing and restarting in iTerm',
       );
       await stopWorker({
-        entryCommand: this.opts.env.DIRECTOR_RUNNER || 'job-search-agent',
+        entryCommand: this.opts.env.DIRECTOR_RUNNER || DEFAULT_RUNNER,
         workspace: this.opts.env.DIRECTOR_OPENCLAW_WORKSPACE,
         cdpUrl: this.opts.env.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
         log: this.opts.log,
@@ -248,7 +252,7 @@ export class DirectorLoop {
       this.opts.log.info('Campaign not running; starting via iTerm');
       try {
         startWorkerInIterm({
-          entryCommand: this.opts.env.DIRECTOR_RUNNER || 'job-search-agent',
+          entryCommand: this.opts.env.DIRECTOR_RUNNER || DEFAULT_RUNNER,
           workspace: this.opts.env.DIRECTOR_OPENCLAW_WORKSPACE,
           log: this.opts.log,
         });
@@ -262,7 +266,7 @@ export class DirectorLoop {
     if (this.opts.env.KAFKA_ENABLED) {
       try {
         startKafkaInIterm({
-          entryCommand: this.opts.env.DIRECTOR_RUNNER || 'job-search-agent',
+          entryCommand: this.opts.env.DIRECTOR_RUNNER || DEFAULT_RUNNER,
           workspace: this.opts.env.DIRECTOR_OPENCLAW_WORKSPACE,
           log: this.opts.log,
         });
@@ -317,7 +321,7 @@ export class DirectorLoop {
       await ensureCdpRunning(e.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222');
       // 0a. Ensure infrastructure (Playwright MCP, OpenClaw gateway) is healthy
       const restarted = await ensureInfrastructureHealthy({
-        entryCommand: e.DIRECTOR_RUNNER || 'job-search-agent',
+        entryCommand: e.DIRECTOR_RUNNER || DEFAULT_RUNNER,
         workspace: e.DIRECTOR_OPENCLAW_WORKSPACE,
         cdpUrl: e.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
         log: this.opts.log,
@@ -353,7 +357,7 @@ export class DirectorLoop {
           if (ok) {
             this.opts.log.info('Proton VPN IP rotated successfully; restarting agent');
             await restartWorker({
-              entryCommand: e.DIRECTOR_RUNNER || 'job-search-agent',
+              entryCommand: e.DIRECTOR_RUNNER || DEFAULT_RUNNER,
               workspace: e.DIRECTOR_OPENCLAW_WORKSPACE,
               cdpUrl: e.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
               log: this.opts.log,
@@ -419,7 +423,7 @@ export class DirectorLoop {
         }
         // Restart the agent so it picks up the new IP on fresh connections
         await restartWorker({
-          entryCommand: e.DIRECTOR_RUNNER || 'job-search-agent',
+          entryCommand: e.DIRECTOR_RUNNER || DEFAULT_RUNNER,
           workspace: e.DIRECTOR_OPENCLAW_WORKSPACE,
           cdpUrl: e.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
           log: this.opts.log,

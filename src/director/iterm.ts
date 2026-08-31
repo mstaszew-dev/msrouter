@@ -114,7 +114,7 @@ export function startWorkerInIterm(opts: iTermOpts): void {
     execFileSync('osascript', ['-e', script], { encoding: 'utf8', stdio: 'ignore' });
     opts.log.info(
       { workspace: opts.workspace, command: opts.entryCommand },
-      'started job-search-agent in iTerm2',
+      'started campaign worker in iTerm2',
     );
   } catch (e) {
     opts.log.error(
@@ -122,7 +122,7 @@ export function startWorkerInIterm(opts: iTermOpts): void {
       'failed to launch in iTerm2',
     );
     throw new Error(
-      'iTerm2 launch failed (is iTerm2 installed and running?). Launch job-search-agent manually.',
+      'iTerm2 launch failed (is iTerm2 installed and running?). Launch the campaign worker manually.',
     );
   }
 }

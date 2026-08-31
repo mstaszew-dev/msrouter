@@ -27,6 +27,14 @@ const flag = (def: string) =>
     .default(def)
     .transform((s) => s === 'true' || s === '1');
 
+/**
+ * Hermes campaign launcher (2026-08-31 switch): the Director spawns THIS and
+ * never the retired python launcher (job-search-agent). Single source of
+ * truth for both the zod default and the loop.ts fallback.
+ */
+export const HERMES_RUNNER =
+  '/Users/mst/ZCodeProject/openclaw-job-search/hermes_agent/install/job-search-agent-hermes';
+
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   PORT: z.coerce.number().int().positive().default(8787),
@@ -126,8 +134,10 @@ const schema = z.object({
   // Campaign agent workspace (where the launcher + campaign_agent/ live).
   DIRECTOR_OPENCLAW_WORKSPACE: z.string().default('/Users/mst/ZCodeProject/openclaw-job-search'),
   // Launcher wrapper the Director invokes to restart the worker.
-  DIRECTOR_RUNNER: z.string().default('job-search-agent'),
-  // Pidfile the launcher writes; Director reads/kills via this.
+  // The campaign runs under the Hermes agent (2026-08-31 switch); the
+  // retired python launcher (job-search-agent) must never be spawned.
+  DIRECTOR_RUNNER: z.string().default(HERMES_RUNNER),
+  // Vestigial: pgrep-based detection replaced pidfile tracking; kept for config compat.
   DIRECTOR_PIDFILE: z.string().default('~/.campaign-agent/job-search-agent.pid'),
   // The single patch target the Director edits on approval.
   DIRECTOR_OVERRIDES: z.string().default('~/.campaign-agent/director-overrides.env'),
