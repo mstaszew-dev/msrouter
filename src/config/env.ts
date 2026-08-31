@@ -28,21 +28,16 @@ const flag = (def: string) =>
     .transform((s) => s === 'true' || s === '1');
 
 /**
- * Hermes campaign launcher (absolute path; usable manually or as
- * DIRECTOR_RUNNER override). Single source of truth for tests and docs.
+ * Hermes campaign launcher: the Director's default spawn target. Single
+ * source of truth for the zod default and the loop.ts fallback.
  */
 export const HERMES_RUNNER =
   '/Users/mst/ZCodeProject/openclaw-job-search/hermes_agent/install/job-search-agent-hermes';
 
 /**
- * Python campaign launcher: the Director's default spawn target again since
- * 2026-08-31 evening. The hermes agent was reverted after it (a) could not
- * run at all - hermes CLI v0.20.5 removed --run-budget/--max-turns, so every
- * tick exited 2 - and (b) agent sessions driving the shared Chrome CDP were
- * observed fabricating applicant identity data (e.g. an email not present in
- * applicant.json or either CV). The python agent's rules pin form data to
- * applicant.json fields. ~/bin/job-search-agent is a PATH symlink; the script
- * resolves its real directory internally.
+ * Python campaign launcher: alternative DIRECTOR_RUNNER override (the
+ * 2026-08-31 evening default, reverted later the same day). Kept exported so
+ * the detection specs and docs reference one constant.
  */
 export const PYTHON_RUNNER = '/Users/mst/bin/job-search-agent';
 
@@ -147,9 +142,11 @@ const schema = z.object({
   // Campaign agent workspace (where the launcher + campaign_agent/ live).
   DIRECTOR_OPENCLAW_WORKSPACE: z.string().default('/Users/mst/ZCodeProject/openclaw-job-search'),
   // Launcher wrapper the Director invokes to restart the worker.
-  // Default: the python runner (reverted from hermes on 2026-08-31 evening
-  // after the hermes CLI flag removal + invented-identity incidents).
-  DIRECTOR_RUNNER: z.string().default(PYTHON_RUNNER),
+  // Default: the hermes runner (returned to on 2026-08-31 after the hermes
+  // CLI flag fix landed and both agents began inlining an IDENTITY block;
+  // forensics had cleared hermes of the invented-email incident). The python
+  // runner remains available via DIRECTOR_RUNNER override.
+  DIRECTOR_RUNNER: z.string().default(HERMES_RUNNER),
   // When false the Director never spawns/kills/restarts the campaign worker
   // (observe-only supervision): the user starts the agent manually from the
   // GUI. Observation, classification, Slack and Kafka stay active. VPN IP

@@ -86,11 +86,13 @@ describe('loadEnv - Director config', () => {
     expect(cfg.env.DIRECTOR_CDP_URL).toBe('http://127.0.0.1:9222');
     // Autostart defaults on: observe-only mode is opt-in via =false.
     expect(cfg.env.DIRECTOR_AUTOSTART).toBe(true);
-    // Back on the python runner since 2026-08-31 evening: hermes fabricated
-    // applicant identity data on PL forms (and every hermes attempt had been
-    // dying on the v0.20.5 CLI flag removal anyway). The python agent is the
-    // supervised default; hermes stays available for manual runs.
-    expect(cfg.env.DIRECTOR_RUNNER).toBe('/Users/mst/bin/job-search-agent');
+    // Back on the hermes runner (2026-08-31, second switch): hermes CLI
+    // flags are fixed (openclaw 963586e) and both agents now inline an
+    // IDENTITY block, closing the invented-email gap. The python runner
+    // stays available via DIRECTOR_RUNNER override.
+    expect(cfg.env.DIRECTOR_RUNNER).toBe(
+      '/Users/mst/ZCodeProject/openclaw-job-search/hermes_agent/install/job-search-agent-hermes',
+    );
   });
 
   it('parses DIRECTOR_AUTOSTART=false (observe-only supervision)', () => {
