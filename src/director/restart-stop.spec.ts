@@ -110,15 +110,22 @@ describe('isOrphaned', () => {
 });
 
 describe('detectWorker', () => {
-  it('unions the launcher basename and the python agent child pattern', () => {
+  it('unions the launcher basename, hermes runner child, and python agent child patterns', () => {
+    // The Director must supervise whichever agent is running (python runner
+    // is the default again since 2026-08-31 evening; hermes remains usable
+    // manually). Detecting both prevents spawning a duplicate when the
+    // OTHER agent is live.
     mockedExec.mockImplementation(((file: string, args: string[]) => {
       if (file !== 'pgrep') throw new Error('no');
       const pattern = args[1] ?? '';
-      if (pattern.includes('job-search-agent-hermes')) return '100\n';
+      if (pattern.includes('job-search-agent')) return '100\n';
       if (pattern.includes('jobhermes')) return '200\n';
+      if (pattern.includes('campaign_agent.main')) return '300\n';
       throw new Error('pgrep: no match');
     }) as never);
-    expect(detectWorker('/x/job-search-agent-hermes')).toEqual([100, 200]);
+    // Union order: launcher basename, python child, hermes child.
+    expect(detectWorker('/x/job-search-agent-hermes')).toEqual([100, 300, 200]);
+    expect(detectWorker('/x/job-search-agent')).toEqual([100, 300, 200]);
   });
 
   it('dedupes overlapping pids', () => {

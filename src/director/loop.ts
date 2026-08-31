@@ -18,7 +18,7 @@ import { promisify } from 'node:util';
 
 import type { Logger } from 'pino';
 
-import { HERMES_RUNNER } from '../config/env.js';
+import { PYTHON_RUNNER } from '../config/env.js';
 import type { Env } from '../config/env.js';
 import type { ProviderChain } from '../providers/chain.js';
 
@@ -43,7 +43,7 @@ import {
 import type { Checkpoint, DirectorRunResult, DirectorSurface } from './types.js';
 import type { DecisionClassification } from './types.js';
 
-const DEFAULT_RUNNER = HERMES_RUNNER;
+const DEFAULT_RUNNER = PYTHON_RUNNER;
 
 /**
  * Autostart gate for worker supervision. DIRECTOR_AUTOSTART=false puts the

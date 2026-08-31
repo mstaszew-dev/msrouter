@@ -419,7 +419,7 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
     expect(result.reason).toBe('ok');
     expect(vi.mocked(startWorkerInIterm)).toHaveBeenCalledWith(
       expect.objectContaining({
-        entryCommand: '/Users/mst/ZCodeProject/openclaw-job-search/hermes_agent/install/job-search-agent-hermes',
+        entryCommand: '/Users/mst/bin/job-search-agent',
       }),
     );
   });
@@ -477,7 +477,7 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
 
     expect(vi.mocked(restartWorker)).toHaveBeenCalledWith(
       expect.objectContaining({
-        entryCommand: '/Users/mst/ZCodeProject/openclaw-job-search/hermes_agent/install/job-search-agent-hermes',
+        entryCommand: '/Users/mst/bin/job-search-agent',
         cdpUrl: 'http://127.0.0.1:9222',
       }),
     );
@@ -496,7 +496,7 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
     expect(result.reason).toBe('ok');
     expect(vi.mocked(restartWorker)).toHaveBeenCalledWith(
       expect.objectContaining({
-        entryCommand: '/Users/mst/ZCodeProject/openclaw-job-search/hermes_agent/install/job-search-agent-hermes',
+        entryCommand: '/Users/mst/bin/job-search-agent',
         cdpUrl: 'http://127.0.0.1:9222',
       }),
     );

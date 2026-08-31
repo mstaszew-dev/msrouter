@@ -28,12 +28,23 @@ const flag = (def: string) =>
     .transform((s) => s === 'true' || s === '1');
 
 /**
- * Hermes campaign launcher (2026-08-31 switch): the Director spawns THIS and
- * never the retired python launcher (job-search-agent). Single source of
- * truth for both the zod default and the loop.ts fallback.
+ * Hermes campaign launcher (absolute path; usable manually or as
+ * DIRECTOR_RUNNER override). Single source of truth for tests and docs.
  */
 export const HERMES_RUNNER =
   '/Users/mst/ZCodeProject/openclaw-job-search/hermes_agent/install/job-search-agent-hermes';
+
+/**
+ * Python campaign launcher: the Director's default spawn target again since
+ * 2026-08-31 evening. The hermes agent was reverted after it (a) could not
+ * run at all - hermes CLI v0.20.5 removed --run-budget/--max-turns, so every
+ * tick exited 2 - and (b) agent sessions driving the shared Chrome CDP were
+ * observed fabricating applicant identity data (e.g. an email not present in
+ * applicant.json or either CV). The python agent's rules pin form data to
+ * applicant.json fields. ~/bin/job-search-agent is a PATH symlink; the script
+ * resolves its real directory internally.
+ */
+export const PYTHON_RUNNER = '/Users/mst/bin/job-search-agent';
 
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -136,9 +147,9 @@ const schema = z.object({
   // Campaign agent workspace (where the launcher + campaign_agent/ live).
   DIRECTOR_OPENCLAW_WORKSPACE: z.string().default('/Users/mst/ZCodeProject/openclaw-job-search'),
   // Launcher wrapper the Director invokes to restart the worker.
-  // The campaign runs under the Hermes agent (2026-08-31 switch); the
-  // retired python launcher (job-search-agent) must never be spawned.
-  DIRECTOR_RUNNER: z.string().default(HERMES_RUNNER),
+  // Default: the python runner (reverted from hermes on 2026-08-31 evening
+  // after the hermes CLI flag removal + invented-identity incidents).
+  DIRECTOR_RUNNER: z.string().default(PYTHON_RUNNER),
   // When false the Director never spawns/kills/restarts the campaign worker
   // (observe-only supervision): the user starts the agent manually from the
   // GUI. Observation, classification, Slack and Kafka stay active. VPN IP

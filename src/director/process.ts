@@ -6,18 +6,21 @@ import type { SuperviseOpts, SuperviseState } from './restart.js';
 
 /**
  * Detect running campaign processes: the launcher parent (entryCommand
- * basename, e.g. job-search-agent-hermes) AND the hermes runner child
- * (python -m jobhermes --loop). The launcher execs into the runner, so the
- * runner cmdline is what survives post-exec; both patterns are matched so a
- * restart never leaves a live duplicate running. The invocation form
- * ' -m jobhermes' (leading space) is used so dev tooling that merely
- * MENTIONS jobhermes (rg, tail on the lock file) is never matched and
- * never SIGKILLed by stopWorker. The retired python agent
- * (campaign_agent.main) is intentionally NOT detected.
+ * basename, e.g. job-search-agent or job-search-agent-hermes) AND either
+ * agent child. The python runner child matches 'campaign_agent.main'; the
+ * hermes runner child matches ' -m jobhermes' (leading space prevents dev
+ * tooling that merely MENTIONS jobhermes from being matched and SIGKILLed).
+ * The hermes launcher execs into the runner, so its child can appear without
+ * a zsh parent; any child can also outlive an orphaned parent. Both children
+ * are detected so a restart never leaves a live duplicate of EITHER agent
+ * running.
  */
 export function detectWorker(entryCommand: string): number[] {
-  const base = entryCommand.split('/').pop() ?? 'job-search-agent-hermes';
+  const base = entryCommand.split('/').pop() ?? 'job-search-agent';
   const pids = detectProcess(base);
+  for (const p of detectProcess('campaign_agent.main')) {
+    if (!pids.includes(p)) pids.push(p);
+  }
   for (const p of detectProcess(' -m jobhermes')) {
     if (!pids.includes(p)) pids.push(p);
   }
@@ -113,7 +116,7 @@ export async function stopTree(pids: number[], _log: unknown, graceMs = 2000): P
 }
 
 /** Stop the campaign: SIGTERM/SIGKILL the whole process tree (launcher +
- *  hermes runner + MCP children). */
+ *  agent child + MCP children). */
 export async function stopWorker(opts: SuperviseOpts): Promise<{ killed: number[] }> {
   const pids = detectWorker(opts.entryCommand);
   const killed = await stopTree(pids, opts.log);
