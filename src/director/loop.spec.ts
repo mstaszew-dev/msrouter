@@ -10,7 +10,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as itermModule from './iterm.js';
 import { kafkaProduce } from './kafka.js';
 import { DirectorLoop } from './loop.js';
-import { rotateVpnIp, snapshot as snapshotWorker, startWorkerInIterm } from './restart.js';
+import {
+  ensureInfrastructureHealthy,
+  restartWorker,
+  rotateVpnIp,
+  snapshot as snapshotWorker,
+  startWorkerInIterm,
+  stopWorker,
+} from './restart.js';
 import type { DirectorSurface } from './types.js';
 
 const itermSpies = vi.hoisted(() => ({
@@ -36,6 +43,7 @@ vi.mock('./restart.js', async (importOriginal) => {
     snapshot: vi.fn(() => ({ pids: [], running: true, orphaned: false })),
     startWorkerInIterm: vi.fn(),
     startKafkaInIterm: itermSpies.startKafkaInIterm,
+    stopWorker: vi.fn(async () => ({ killed: [] })),
     restartWorker: vi.fn(async () => ({ iterm: true, state: { pids: [], running: true, orphaned: false } })),
     rotateVpnIp: vi.fn(async () => false),
   };
@@ -536,5 +544,108 @@ describe('ensureKafkaRunning headless failure arm', () => {
     expect(
       execFileMock.mock.calls.filter((c) => (c[1] as string[])?.[1] === 'start-or-init'),
     ).toHaveLength(1);
+  });
+});
+
+describe('DIRECTOR_AUTOSTART=false: observe-only supervision', () => {
+  function autostartLoop(stateDir: string, campaign: string, envOver: Record<string, unknown> = {}) {
+    return new DirectorLoop({
+      env: makeEnv({
+        DIRECTOR_AUTOSTART: false,
+        DIRECTOR_CAMPAIGN_DIR: campaign,
+        DIRECTOR_LEDGER: join(stateDir, 'l.jsonl'),
+        ...envOver,
+      }) as never,
+      chain: {
+        handle: vi.fn(async () => ({
+          response: new Response('{"choices":[{"message":{"content":"{\\"patches\\":[]}"}}]}'),
+          servedBy: {},
+        })),
+      } as never,
+      surface: nullSurface(),
+      log: silent,
+      checkpointPath: join(stateDir, 'cp.json'),
+    });
+  }
+
+  beforeEach(() => {
+    // Isolate from earlier describes: reset supervision spies AND any
+    // persistent mockReturnValue left on the shared snapshot mock.
+    vi.mocked(snapshotWorker).mockReset();
+    vi.mocked(snapshotWorker).mockReturnValue({ pids: [], running: false, orphaned: false });
+    vi.mocked(startWorkerInIterm).mockClear();
+    vi.mocked(restartWorker).mockClear();
+    vi.mocked(stopWorker).mockClear();
+    vi.mocked(ensureInfrastructureHealthy).mockClear();
+    vi.mocked(rotateVpnIp).mockReset();
+    vi.mocked(rotateVpnIp).mockResolvedValue(false);
+  });
+
+  it('never spawns the worker when it is not running', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'director-noauto-'));
+
+    await autostartLoop(stateDir, makeCampaign()).runOnce(new AbortController().signal);
+
+    expect(vi.mocked(startWorkerInIterm)).not.toHaveBeenCalled();
+    expect(vi.mocked(restartWorker)).not.toHaveBeenCalled();
+  });
+
+  it('never kills or respawns an orphaned worker', async () => {
+    // The user starts the agent manually from the GUI; the Director must not
+    // kill a process it did not spawn just because its PPID is 1.
+    const stateDir = mkdtempSync(join(tmpdir(), 'director-noauto-'));
+    vi.mocked(snapshotWorker).mockReturnValue({ pids: [123], running: true, orphaned: true });
+
+    await autostartLoop(stateDir, makeCampaign()).runOnce(new AbortController().signal);
+
+    expect(vi.mocked(stopWorker)).not.toHaveBeenCalled();
+    expect(vi.mocked(restartWorker)).not.toHaveBeenCalled();
+    expect(vi.mocked(startWorkerInIterm)).not.toHaveBeenCalled();
+  });
+
+  it('skips the infrastructure restart path entirely', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'director-noauto-'));
+
+    await autostartLoop(stateDir, makeCampaign()).runOnce(new AbortController().signal);
+
+    expect(vi.mocked(ensureInfrastructureHealthy)).not.toHaveBeenCalled();
+  });
+
+  it('does not restart the worker even when VPN rotation succeeds', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'director-noauto-'));
+    vi.mocked(rotateVpnIp).mockResolvedValue(true);
+
+    await autostartLoop(stateDir, makeCampaign(), {
+      VPN_ROTATION_INTERVAL_MINUTES: 30,
+    }).runOnce(new AbortController().signal);
+
+    expect(vi.mocked(rotateVpnIp)).toHaveBeenCalled();
+    expect(vi.mocked(restartWorker)).not.toHaveBeenCalled();
+    expect(vi.mocked(startWorkerInIterm)).not.toHaveBeenCalled();
+  });
+
+  it('still observes the campaign (supervision remains observe-only, not off)', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'director-noauto-'));
+    const surface = nullSurface();
+    const loop = new DirectorLoop({
+      env: makeEnv({
+        DIRECTOR_AUTOSTART: false,
+        DIRECTOR_CAMPAIGN_DIR: makeCampaign(),
+        DIRECTOR_LEDGER: join(stateDir, 'l.jsonl'),
+      }) as never,
+      chain: {
+        handle: vi.fn(async () => ({
+          response: new Response('{"choices":[{"message":{"content":"{\\"patches\\":[]}"}}]}'),
+          servedBy: {},
+        })),
+      } as never,
+      surface,
+      log: silent,
+      checkpointPath: join(stateDir, 'cp.json'),
+    });
+
+    await loop.runOnce(new AbortController().signal);
+
+    expect(surface.postObservation).toHaveBeenCalled();
   });
 });

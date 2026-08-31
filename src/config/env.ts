@@ -137,6 +137,10 @@ const schema = z.object({
   // The campaign runs under the Hermes agent (2026-08-31 switch); the
   // retired python launcher (job-search-agent) must never be spawned.
   DIRECTOR_RUNNER: z.string().default(HERMES_RUNNER),
+  // When false the Director never spawns/kills/restarts the campaign worker
+  // (observe-only supervision): the user starts the agent manually from the
+  // GUI. Observation, classification, Slack and Kafka stay active.
+  DIRECTOR_AUTOSTART: flag('true'),
   // Vestigial: pgrep-based detection replaced pidfile tracking; kept for config compat.
   DIRECTOR_PIDFILE: z.string().default('~/.campaign-agent/job-search-agent.pid'),
   // The single patch target the Director edits on approval.

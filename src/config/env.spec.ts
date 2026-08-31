@@ -84,11 +84,21 @@ describe('loadEnv - Director config', () => {
     expect(cfg.env.DIRECTOR_PIDFILE).toBe('~/.campaign-agent/job-search-agent.pid');
     expect(cfg.env.DIRECTOR_OVERRIDES).toBe('~/.campaign-agent/director-overrides.env');
     expect(cfg.env.DIRECTOR_CDP_URL).toBe('http://127.0.0.1:9222');
+    // Autostart defaults on: observe-only mode is opt-in via =false.
+    expect(cfg.env.DIRECTOR_AUTOSTART).toBe(true);
     // Campaign runs under the Hermes agent since 2026-08-31; the Director
     // must never spawn the retired python launcher again.
     expect(cfg.env.DIRECTOR_RUNNER).toBe(
       '/Users/mst/ZCodeProject/openclaw-job-search/hermes_agent/install/job-search-agent-hermes',
     );
+  });
+
+  it('parses DIRECTOR_AUTOSTART=false (observe-only supervision)', () => {
+    // flag() is exact-match: only 'true'/'1' enable; anything else disables.
+    expect(loadEnv({ DIRECTOR_AUTOSTART: 'false' }).env.DIRECTOR_AUTOSTART).toBe(false);
+    expect(loadEnv({ DIRECTOR_AUTOSTART: '0' }).env.DIRECTOR_AUTOSTART).toBe(false);
+    expect(loadEnv({ DIRECTOR_AUTOSTART: 'true' }).env.DIRECTOR_AUTOSTART).toBe(true);
+    expect(loadEnv({ DIRECTOR_AUTOSTART: '1' }).env.DIRECTOR_AUTOSTART).toBe(true);
   });
 
   it('accepts overrides for all DIRECTOR_* vars', () => {

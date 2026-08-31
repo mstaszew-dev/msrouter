@@ -43,7 +43,19 @@ import {
 import type { Checkpoint, DirectorRunResult, DirectorSurface } from './types.js';
 import type { DecisionClassification } from './types.js';
 
-const DEFAULT_RUNNER = HERMES_RUNNER
+const DEFAULT_RUNNER = HERMES_RUNNER;
+
+/**
+ * Autostart gate for worker supervision. DIRECTOR_AUTOSTART=false puts the
+ * Director in observe-only mode: it never spawns, kills, or restarts the
+ * campaign worker (the user starts it manually from the GUI). Compared with
+ * `!== false` so hand-built env objects that bypass schema defaults (tests)
+ * keep the legacy always-on behavior; production env always carries the
+ * schema default (true).
+ */
+function autostartEnabled(env: Env): boolean {
+  return env.DIRECTOR_AUTOSTART !== false;
+}
 
 
 const MODULE_DIR = dirname(new URL(import.meta.url).pathname);
@@ -219,8 +231,16 @@ export class DirectorLoop {
   /** Check if the campaign is running and start it via iTerm if not.
    *  Suppressed when the campaign target is already met: the agent exits on
    *  purpose in that state, so respawning it would open an iTerm tab every
-   *  tick that immediately logs "Campaign complete" and quits. */
+   *  tick that immediately logs "Campaign complete" and quits. Also
+   *  suppressed entirely by DIRECTOR_AUTOSTART=false (observe-only mode:
+   *  the user starts the agent manually, the Director never spawns or kills
+   *  a worker it does not own). */
   async ensureCampaignRunning(): Promise<void> {
+    // Autostart gate: observe-only supervision never touches the worker.
+    if (!autostartEnabled(this.opts.env)) {
+      this.opts.log.info('DIRECTOR_AUTOSTART=false; leaving worker supervision to the user');
+      return;
+    }
     // Completion guard: never respawn a finished campaign. isCampaignComplete
     // never throws (defaults to false on missing/unparseable tracker), so the
     // safe failure mode is to keep supervising as before.
@@ -319,25 +339,29 @@ export class DirectorLoop {
       this.opts.log.info('Phase 1: Campaign supervision');
       // 0. Ensure Chrome CDP is running (Playwright MCP depends on it)
       await ensureCdpRunning(e.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222');
-      // 0a. Ensure infrastructure (Playwright MCP, OpenClaw gateway) is healthy
-      const restarted = await ensureInfrastructureHealthy({
-        entryCommand: e.DIRECTOR_RUNNER || DEFAULT_RUNNER,
-        workspace: e.DIRECTOR_OPENCLAW_WORKSPACE,
-        cdpUrl: e.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
-        log: this.opts.log,
-        campaignDir: e.DIRECTOR_CAMPAIGN_DIR,
-      });
-      if (restarted) {
-        this.opts.log.info(
-          'Campaign was restarted due to infrastructure issues; waiting for next tick',
-        );
-        return {
-          observed: 0,
-          classifications: 0,
-          proposed: 0,
-          applied: 0,
-          reason: 'infra-restart',
-        };
+      // 0a. Ensure infrastructure (Playwright MCP, OpenClaw gateway) is healthy.
+      // Skipped in observe-only mode: its only remedy is a worker restart,
+      // which would kill a worker the user started manually.
+      if (autostartEnabled(e)) {
+        const restarted = await ensureInfrastructureHealthy({
+          entryCommand: e.DIRECTOR_RUNNER || DEFAULT_RUNNER,
+          workspace: e.DIRECTOR_OPENCLAW_WORKSPACE,
+          cdpUrl: e.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
+          log: this.opts.log,
+          campaignDir: e.DIRECTOR_CAMPAIGN_DIR,
+        });
+        if (restarted) {
+          this.opts.log.info(
+            'Campaign was restarted due to infrastructure issues; waiting for next tick',
+          );
+          return {
+            observed: 0,
+            classifications: 0,
+            proposed: 0,
+            applied: 0,
+            reason: 'infra-restart',
+          };
+        }
       }
       // 0b. Periodically rotate Proton VPN IP (if configured). After a
       // successful rotation, restart the agent so it reconnects on the new IP
@@ -354,7 +378,7 @@ export class DirectorLoop {
           // so leaving lastVpnRotation unset would retry it every tick and
           // keep breaking in-flight fetches (Slack polls, agent requests).
           checkpoint.lastVpnRotation = new Date().toISOString();
-          if (ok) {
+          if (ok && autostartEnabled(e)) {
             this.opts.log.info('Proton VPN IP rotated successfully; restarting agent');
             await restartWorker({
               entryCommand: e.DIRECTOR_RUNNER || DEFAULT_RUNNER,
@@ -362,6 +386,10 @@ export class DirectorLoop {
               cdpUrl: e.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
               log: this.opts.log,
             });
+          } else if (ok) {
+            this.opts.log.info(
+              'Proton VPN IP rotated successfully; DIRECTOR_AUTOSTART=false so the worker is not restarted',
+            );
           } else {
             this.opts.log.warn('Proton VPN IP rotation failed (may already be at new IP)');
           }
@@ -422,12 +450,16 @@ export class DirectorLoop {
           this.opts.log.warn('VPN rotation failed during stall recovery');
         }
         // Restart the agent so it picks up the new IP on fresh connections
-        await restartWorker({
-          entryCommand: e.DIRECTOR_RUNNER || DEFAULT_RUNNER,
-          workspace: e.DIRECTOR_OPENCLAW_WORKSPACE,
-          cdpUrl: e.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
-          log: this.opts.log,
-        });
+        if (autostartEnabled(e)) {
+          await restartWorker({
+            entryCommand: e.DIRECTOR_RUNNER || DEFAULT_RUNNER,
+            workspace: e.DIRECTOR_OPENCLAW_WORKSPACE,
+            cdpUrl: e.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
+            log: this.opts.log,
+          });
+        } else {
+          this.opts.log.info('DIRECTOR_AUTOSTART=false; skipping stale-campaign worker restart');
+        }
       }
 
       // Publish observation event to Kafka (only when data changed)
