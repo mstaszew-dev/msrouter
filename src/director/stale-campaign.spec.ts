@@ -11,7 +11,7 @@
  * VPN-rotation + proposal phases, which loop.spec's shared mock environment
  * does not cover; here every side-effectful module is mocked explicitly.
  */
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -19,6 +19,7 @@ import type pino from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ProviderChain } from '../providers/chain.js';
+
 
 vi.mock('./kafka.js', () => ({ kafkaProduce: vi.fn(async () => {}) }));
 vi.mock('./restart.js', async (importOriginal) => {
@@ -42,6 +43,7 @@ vi.mock('./restart.js', async (importOriginal) => {
 
 import { DirectorLoop } from './loop.js';
 import { rotateVpnIp } from './restart.js';
+import type { DirectorSurface } from './types.js';
 
 const silent = {
   warn: vi.fn(),
@@ -72,6 +74,15 @@ function makeLoop(campaign: string, checkpointSeed?: string) {
   const stateDir = mkdtempSync(join(tmpdir(), 'stale-state-'));
   const checkpointPath = join(stateDir, 'cp.json');
   if (checkpointSeed) writeFileSync(checkpointPath, checkpointSeed);
+  const surface = {
+    postProposal: vi.fn(),
+    postDecision: vi.fn(),
+    postApplied: vi.fn(),
+    postObservation: vi.fn(),
+    postRestart: vi.fn(),
+    pollSlackMessages: vi.fn(async () => ({ decisions: [], latestTs: undefined })),
+    flushOutbox: vi.fn(async () => 0),
+  };
   return {
     loop: new DirectorLoop({
       env: {
@@ -87,18 +98,11 @@ function makeLoop(campaign: string, checkpointSeed?: string) {
           servedBy: { provider: 'test', model: 'test' },
         })),
       } as unknown as ProviderChain,
-      surface: {
-        postProposal: vi.fn(),
-        postDecision: vi.fn(),
-        postApplied: vi.fn(),
-        postObservation: vi.fn(),
-        postRestart: vi.fn(),
-        pollSlackMessages: vi.fn(async () => ({ decisions: [], latestTs: undefined })),
-        flushOutbox: vi.fn(async () => 0),
-      },
+      surface,
       log: silent,
       checkpointPath,
     }),
+    surface: surface as unknown as DirectorSurface,
     stateDir,
   };
 }
@@ -140,5 +144,41 @@ describe('stale-campaign detection (idle worker)', () => {
     const { loop } = makeLoop(makeIdleCampaign(3 * 60 * 60_000));
     await loop.runOnce(new AbortController().signal);
     expect(vi.mocked(rotateVpnIp)).toHaveBeenCalledTimes(1);
+  });
+
+  it('posts the observation only ONCE for a persistently stale campaign', async () => {
+    // 2026-09-01 regression: once stale-campaign fires, classifications > 0
+    // every tick, and the observation gate (subChanged || hasClassifications)
+    // published + re-posted an identical snapshot to Slack and the ledger on
+    // EVERY tick (live: same 1366/2000 observation posted at 01:06 Aug 31 and
+    // again 01:38 Sep 1). Dedup must key on the observation CONTENT, not just
+    // the proposal hash: the snapshot must actually change to re-observe.
+    const { loop, surface } = makeLoop(makeIdleCampaign(3 * 60 * 60_000));
+    await loop.runOnce(new AbortController().signal);
+    await loop.runOnce(new AbortController().signal);
+    await loop.runOnce(new AbortController().signal);
+    expect(vi.mocked(surface.postObservation)).toHaveBeenCalledTimes(1);
+  });
+
+  it('posts a NEW observation when the snapshot changes', async () => {
+    // A real submission changes submitted -> that must re-publish even while
+    // classifications repeat.
+    const campaign = makeIdleCampaign(3 * 60 * 60_000);
+    const { loop, surface } = makeLoop(campaign);
+    await loop.runOnce(new AbortController().signal);
+    // Simulate a submission between ticks: rewrite the tracker + event.
+    const tracker = JSON.parse(
+      readFileSync(join(campaign, 'tracker.json'), 'utf8'),
+    ) as { submittedCount: number; stats: { submitted: number }; updatedAt: string };
+    tracker.submittedCount = 6;
+    tracker.stats.submitted = 6;
+    tracker.updatedAt = new Date().toISOString();
+    writeFileSync(join(campaign, 'tracker.json'), JSON.stringify(tracker));
+    writeFileSync(
+      join(campaign, 'events.jsonl'),
+      JSON.stringify({ at: new Date().toISOString(), action: 'submitted', record: { id: 'y', company: 'New', companyKey: 'new', roleTitle: 'Dev', status: 'submitted' } }) + '\n',
+    );
+    await loop.runOnce(new AbortController().signal);
+    expect(vi.mocked(surface.postObservation)).toHaveBeenCalledTimes(2);
   });
 });

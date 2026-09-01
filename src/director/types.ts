@@ -109,6 +109,10 @@ export interface Checkpoint {
   /** True when a stale-campaign warning was sent and the campaign is still idle.
    *  Cleared when new events arrive. Prevents re-sending the same warning every tick. */
   staleWarningActive?: boolean;
+  /** Hash of the last published observation payload (submitted/target).
+   *  Suppresses duplicate observation events while classifications repeat
+   *  every tick (e.g. a persistently stale campaign re-classifying hourly). */
+  lastObservationHash?: string;
   /** ISO timestamp of last Proton VPN IP rotation. */
   lastVpnRotation?: string;
 }

@@ -117,11 +117,15 @@ export class DirectorLoop {
 
   /** Rebuild the campaign RAG index after new submissions. */
   private async rebuildRag(): Promise<void> {
-    const workspace = this.opts.env.DIRECTOR_OPENCLAW_WORKSPACE;
-    const ragDir = join(workspace, 'rag');
-    const pythonPath = join(ragDir, '.venv', 'bin', 'python');
-    const builder = join(ragDir, 'index_builder.py');
+    // Path joins live INSIDE the try: join() throws synchronously on a
+    // missing/non-string env var, and an uncaught throw here used to kill the
+    // whole tick through the outer catch - which skipped saveCheckpoint and
+    // reset every dedupe key (2026-09-01 duplicate-observation incident).
     try {
+      const workspace = this.opts.env.DIRECTOR_OPENCLAW_WORKSPACE;
+      const ragDir = join(workspace, 'rag');
+      const pythonPath = join(ragDir, '.venv', 'bin', 'python');
+      const builder = join(ragDir, 'index_builder.py');
       this.opts.log.info('Rebuilding campaign RAG index...');
       const { stdout } = await execFileP(pythonPath, [builder], {
         cwd: ragDir,
@@ -409,6 +413,7 @@ export class DirectorLoop {
       next.lastSubmitted = checkpoint.lastSubmitted;
       next.lastProposalHash = checkpoint.lastProposalHash;
       next.staleWarningActive = checkpoint.staleWarningActive;
+      next.lastObservationHash = checkpoint.lastObservationHash;
       next.lastVpnRotation = checkpoint.lastVpnRotation;
       checkpoint = next;
       observed = snapshot.recentEvents.length;
@@ -468,29 +473,34 @@ export class DirectorLoop {
         }
       }
 
-      // Publish observation event to Kafka (only when data changed)
+      // Publish observation event to Kafka only when the OBSERVABLE STATE
+      // changed. subChanged alone was not enough: once stale-campaign fires,
+      // classifications > 0 every tick, and the old subChanged||hasClassifications
+      // gate republished + reposted to Slack an identical snapshot every tick
+      // (2026-09-01 live: same 1366/2000 observation posted repeatedly). The
+      // hash keys on the payload content, so a real submission still republishes.
       const subChanged = snapshot.tracker.submitted !== checkpoint.lastSubmitted;
-      const hasClassifications = classificationsCount > 0;
-      if (subChanged || hasClassifications) {
+      const observationPayload = JSON.stringify({
+        kind: 'observation',
+        snapshot: {
+          submitted: snapshot.tracker.submitted,
+          target: snapshot.tracker.target,
+        },
+        classifications: classificationsCount,
+      });
+      const observationHash = createHash('md5').update(observationPayload).digest('hex');
+      const observationChanged = observationHash !== checkpoint.lastObservationHash;
+      if (subChanged || observationChanged) {
         checkpoint.lastSubmitted = snapshot.tracker.submitted;
-        await this.publishEvent(
-          `obs-${Date.now()}`,
-          JSON.stringify({
-            kind: 'observation',
-            snapshot: {
-              submitted: snapshot.tracker.submitted,
-              target: snapshot.tracker.target,
-            },
-            classifications: classificationsCount,
-          }),
-        );
+        checkpoint.lastObservationHash = observationHash;
+        await this.publishEvent(`obs-${Date.now()}`, observationPayload);
         // Also post to Slack (surface handles ledger + Slack message)
         await this.opts.surface.postObservation({
           submitted: snapshot.tracker.submitted,
           target: snapshot.tracker.target,
         });
         this.opts.log.debug(
-          { subChanged, hasClassifications },
+          { subChanged, observationChanged },
           'Observation event published',
         );
       }
