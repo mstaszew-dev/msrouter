@@ -423,10 +423,16 @@ export class DirectorLoop {
 
       // 3. Classify decisions
       this.opts.log.info('Phase 3: Classifying decisions');
+      // Staleness must be measured against the campaign's LAST REAL
+      // activity. With no recent events, tracker.updatedAt is the last
+      // campaign write; falling back to checkpoint.lastTickAt (the previous
+      // director tick's own time) made idleMinutes ~= interval forever and
+      // stale-campaign never fired on a dead worker (2026-09-01 incident:
+      // 18h idle, classifications: 0, LLM never consulted).
       const lastEventAt =
         snapshot.recentEvents.length > 0
           ? snapshot.recentEvents[snapshot.recentEvents.length - 1]!.at
-          : checkpoint.lastTickAt;
+          : snapshot.tracker.updatedAt || checkpoint.lastTickAt;
       const classifications = classify(snapshot, new Date().toISOString(), lastEventAt);
       classificationsCount = classifications.length;
       this.opts.log.debug(

@@ -87,6 +87,17 @@ describe('classify', () => {
     expect(out.find((c) => c.kind === 'stale-campaign')).toBeUndefined();
   });
 
+  it('does not flag stale-campaign when the campaign target is already met', () => {
+    // A completed campaign is done, not stuck: the agent exits on purpose.
+    // Flagging it stale would trigger VPN rotation + worker restarts forever
+    // (2026-09-01: the tracker.updatedAt fallback made completed campaigns
+    // look permanently idle).
+    const done = snap([]);
+    done.tracker = { submitted: 1215, target: 1200, updatedAt: '2026-07-27T12:00:00Z' };
+    const out = classify(done, now, '2026-07-27T10:00:00Z'); // 2h idle
+    expect(out.find((c) => c.kind === 'stale-campaign')).toBeUndefined();
+  });
+
   it('does not flag stale-campaign when idle time is under 60 minutes', () => {
     const recentEventAt = '2026-07-27T11:30:00Z'; // 30 min before now
     const out = classify(snap([]), now, recentEventAt);

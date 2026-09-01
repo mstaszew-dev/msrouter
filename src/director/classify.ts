@@ -91,7 +91,10 @@ export function classify(
 
   // Staleness detection: if no recent events and last activity was >60 min ago,
   // the campaign agent may be stuck (403 errors, LLM timeouts, etc.)
-  if (snapshot.recentEvents.length === 0 && lastEventAt) {
+  // A completed campaign is never stale: the agent exits on purpose, and
+  // flagging it would rotate VPN / restart the worker forever.
+  const complete = snapshot.tracker.submitted >= snapshot.tracker.target;
+  if (!complete && snapshot.recentEvents.length === 0 && lastEventAt) {
     const lastMs = new Date(lastEventAt).getTime();
     const nowMs = new Date(now).getTime();
     const idleMinutes = (nowMs - lastMs) / 60_000;

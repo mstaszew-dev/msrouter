@@ -65,7 +65,7 @@ function makeCampaign(): string {
       targetApplications: 1200,
       target: 1200,
       applyQueue: [],
-      updatedAt: '2026-07-27T12:00:00Z',
+      updatedAt: new Date().toISOString(),
       stats: {
         submitted: 5,
         skippedDuplicate: 0,
@@ -79,7 +79,7 @@ function makeCampaign(): string {
   writeFileSync(
     join(dir, 'events.jsonl'),
     JSON.stringify({
-      at: '2026-07-27T10:00:00Z',
+      at: new Date().toISOString(),
       action: 'skippedFilter',
       record: {
         reason: 'manual',
@@ -103,7 +103,7 @@ function makeCompletedCampaign(): string {
       targetApplications: 1200,
       target: 1200,
       applyQueue: [],
-      updatedAt: '2026-08-09T14:00:00Z',
+      updatedAt: new Date().toISOString(),
       stats: {
         submitted: 1215,
         skippedDuplicate: 0,
@@ -147,6 +147,8 @@ function nullSurface(): DirectorSurface {
     flushOutbox: vi.fn(async () => 0),
   };
 }
+
+
 
 describe('DirectorLoop.runOnce', () => {
   it('observes, classifies, and records the run in the checkpoint', async () => {
