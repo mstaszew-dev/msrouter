@@ -27,3 +27,26 @@ jobs:
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q bats
           bats test/
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Lint (no --fix; CI must not rewrite)
+        run: npm run lint:check
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test with coverage gates
+        run: npm run test:cov
+      - name: Build
+        run: npm run build
