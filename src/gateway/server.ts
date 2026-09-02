@@ -27,7 +27,7 @@ export function createGatewayServer(opts: ServerOptions): Server {
     applyCorrelationId(req, res);
 
     void (async () => {
-      // Read body for POST JSON endpoints. Cap at 2MB to bound memory.
+      // Read body for POST JSON endpoints. Cap at 10MB to bound memory.
       if (req.method === 'POST') {
         const ok = await readJsonBody(req, res, opts.log);
         if (!ok) return;
@@ -70,10 +70,10 @@ async function readJsonBody(
   for await (const c of req as unknown as AsyncIterable<Buffer>) {
     chunks.push(c);
     size += c.length;
-    if (size > 2 * 1024 * 1024) {
+    if (size > 10 * 1024 * 1024) {
       log.warn({ correlationId: req.id }, 'request body too large');
       sendJson(res, 413, {
-        error: { code: 'BAD_REQUEST', message: 'request body too large (max 2MB)' },
+        error: { code: 'BAD_REQUEST', message: 'request body too large (max 10MB)' },
       });
       return false;
     }
