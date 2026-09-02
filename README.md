@@ -53,14 +53,14 @@ client.chat.completions.create(model="mst/free", messages=[{"role":"user","conte
 
 ## Provider chain
 
-| Requested model       | Behavior                                                        |
-| --------------------- | --------------------------------------------------------------- |
-| `mst/free`            | Walk every OpenRouter key, then OpenAI, ZAI, OpenCode (per-provider defaults) |
-| `direct:openai/<id>`  | OpenAI only                                                     |
-| `direct:glm-*` / `direct:zai/*` | ZAI only                                                        |
-| `direct:opencode/<id>` | OpenCode Zen only                                              |
-| `openai/gpt-4o-mini`  | OpenRouter model (vendor/model id) -> default chain             |
-| any other             | OpenRouter pool (model + `:free` if `FORCE_FREE`), then OpenAI -> ZAI -> OpenCode |
+| Requested model                 | Behavior                                                                          |
+| ------------------------------- | --------------------------------------------------------------------------------- |
+| `mst/free`                      | Walk every OpenRouter key, then OpenAI, ZAI, OpenCode (per-provider defaults)     |
+| `direct:openai/<id>`            | OpenAI only                                                                       |
+| `direct:glm-*` / `direct:zai/*` | ZAI only                                                                          |
+| `direct:opencode/<id>`          | OpenCode Zen only                                                                 |
+| `openai/gpt-4o-mini`            | OpenRouter model (vendor/model id) -> default chain                               |
+| any other                       | OpenRouter pool (model + `:free` if `FORCE_FREE`), then OpenAI -> ZAI -> OpenCode |
 
 > **Why `direct:`?** OpenRouter uses `vendor/model` ids (`openai/gpt-4o`,
 > `google/gemma-...`). A bare `openai/...` is therefore an OpenRouter model, not
@@ -69,6 +69,46 @@ client.chat.completions.create(model="mst/free", messages=[{"role":"user","conte
 
 Result classification: `KEY_FAILURE` (401/402/429) rotates; `TRANSIENT`
 (408/502/503) retries with backoff; `BAD_REQUEST` (400/422) rejects.
+
+## Web console
+
+A React 18 + Vite + TypeScript dashboard lives in [`web/`](web/) and is served
+by a separate admin API (`src/admin/`, port 8790) that never touches routing:
+
+- **Login** - users live in the flat file `data/users.json` (scrypt-hashed
+  passwords, per-user salt, constant-time compare). Sessions are JWTs signed
+  HS256 (symmetric, single service). Roles: `admin` (full console) and
+  `viewer` (read-only).
+- **Dashboard** - read-only observability: gateway live/ready + models,
+  Director checkpoint + ledger tail, Kafka broker probe, Slack and RAG status.
+  Polls every 5s; never mutates.
+- **Users & SQL** - a quasi-SQL console (AlaSQL) over the users array,
+  parser-verified to be a single read-only `SELECT ... FROM ?`; admin forms
+  for adding columns (schema evolution with backfill) and creating users.
+- **Profile** - update your own email/display name and change password.
+- **About** - the architecture documentation page.
+
+One zod schema (`src/shared/schema.ts`) defines every request/response/persisted
+shape for both server and client.
+
+Run it:
+
+```bash
+npm run seed:users        # (re)generate data/users.json with demo accounts
+npm run web:build         # build the SPA into web/dist
+npm run admin:dev         # serve API + console on http://127.0.0.1:8790
+# dev mode with HMR: npm run admin:dev  +  npm run web   (Vite on :5173)
+```
+
+Demo accounts (also printed on the login page): `demo / demo1234` (admin) and
+`viewer / viewer1234` (read-only). Set `JWT_SECRET` in `.env` for stable
+sessions; see `.env.example` (`ADMIN_PORT`, `USERS_FILE`, `WEB_DIST`,
+`GATEWAY_URL`, `JWT_TTL_SECONDS`). Known trade-offs, accepted for a local
+single-service demo: HS256 access tokens are stateless (a password change does
+not revoke outstanding tokens) and live in localStorage (CSP restricts scripts
+to self-origin as mitigation). The production hardening path - RS256, rotating
+refresh tokens, per-user token versions - is documented on the console's About
+page.
 
 ## Configuration
 
@@ -91,11 +131,14 @@ every variable. Key ones:
 src/
   config/     env (zod), pino logger
   common/     errors, http router, retry predicates
+  shared/     one zod schema for admin API + users file + console types
   providers/  types, openrouter (pool), single-key, openai/zai/opencode, chain
   gateway/    server (node:http), handlers, sse stream, validation
-  agent/      loop, tools (terminal/browser), goal detection
-  main.ts     gateway entrypoint
-  worker.ts   scheduler entrypoint
+  director/   supervise loop: observe/classify/propose/apply, slack, kafka, rag
+  admin/      web console API: jwt auth, users store, sql console, observability
+  main.ts     gateway + director entrypoint
+web/          React 18 + Vite console (login, dashboard, profile, about)
+data/         users.json (flat-file users store for the console)
 docs/adr/     0001 gateway surface, 0002 chain+alias, 0003 direct tools, 0004 scheduling
 ```
 
@@ -105,7 +148,9 @@ docs/adr/     0001 gateway surface, 0002 chain+alias, 0003 direct tools, 0004 sc
 - `AbortController` + timeout on every upstream call; SSE streamed, never buffered.
 - Secrets only from env; `LOG_REDACT` redacts `openrouter_key`, api keys, `authorization`.
 - vitest specs cover the chain logic (alias walk, short-circuit, all-fail),
-  retry predicates, env parsing, and tool allowlisting.
+  retry predicates, env parsing, tool allowlisting, the admin API (real-server
+  integration tests incl. role isolation), and the web console (Testing
+  Library) with coverage gates in CI for both packages.
 - SIGTERM graceful shutdown on both processes.
 
 ## Out of scope (documented)
