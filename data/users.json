@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "columns": [
+    {
+      "name": "department",
+      "type": "string",
+      "defaultValue": "general"
+    },
+    {
+      "name": "logins",
+      "type": "number",
+      "defaultValue": 0
+    }
+  ],
+  "users": [
+    {
+      "username": "demo",
+      "passwordHash": "scrypt$16384$8$1$d3f093f5156f3ffe0edda17ae048c570$3573ff056e9c03dbe385c2b5b4ae3f6b47faa1e2cc611c2d131f484641793df2e3e8ff097845fea2d2be70d6617d10e4b8910571d2a879c1a00680d7b55c040b",
+      "role": "admin",
+      "email": "demo@msrouter.local",
+      "displayName": "Demo Admin",
+      "active": true,
+      "createdAt": "2026-09-02T22:59:19.088Z",
+      "department": "platform",
+      "logins": 0
+    },
+    {
+      "username": "viewer",
+      "passwordHash": "scrypt$16384$8$1$ef1b7118bba6d90294c154b7f27005b9$e279d418dbc0a47bacc15263e22154b0749284b9cf5d422444a925d6b328d190d323bedf3b53a08d5aa4831114c09be9e27bc526ff862cf9e333c699cfd850fc",
+      "role": "viewer",
+      "email": "viewer@msrouter.local",
+      "displayName": "Read-only Viewer",
+      "active": true,
+      "createdAt": "2026-09-02T22:59:19.088Z",
+      "department": "support",
+      "logins": 0
+    }
+  ]
+}

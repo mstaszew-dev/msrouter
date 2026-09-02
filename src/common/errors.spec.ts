@@ -2,9 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
   BadRequestError,
+  ConflictError,
   DomainError,
   errorMessage,
+  ForbiddenError,
   NoProviderAvailableError,
+  NotFoundError,
+  RateLimitedError,
   toErrorBody,
   UnauthorizedError,
   ValidationError,
@@ -22,7 +26,25 @@ describe('toErrorBody', () => {
   it('maps each subclass to its canonical status', () => {
     expect(toErrorBody(new ValidationError('x')).status).toBe(400);
     expect(toErrorBody(new UnauthorizedError()).status).toBe(401);
+    expect(toErrorBody(new ForbiddenError()).status).toBe(403);
+    expect(toErrorBody(new NotFoundError('user')).status).toBe(404);
+    expect(toErrorBody(new ConflictError('exists')).status).toBe(409);
+    expect(toErrorBody(new RateLimitedError()).status).toBe(429);
     expect(toErrorBody(new NoProviderAvailableError()).status).toBe(502);
+  });
+
+  it('maps the new admin codes to stable error codes', () => {
+    expect(toErrorBody(new ForbiddenError('no')).body.error.code).toBe('FORBIDDEN');
+    expect(toErrorBody(new NotFoundError('user')).body.error.code).toBe('NOT_FOUND');
+    expect(toErrorBody(new ConflictError('dup')).body.error.code).toBe('CONFLICT');
+    expect(toErrorBody(new RateLimitedError()).body.error.code).toBe('RATE_LIMITED');
+  });
+
+  it('rate limit error carries a retry-after hint', () => {
+    const e = new RateLimitedError('Too many attempts', 45);
+    expect(e.retryAfterSeconds).toBe(45);
+    const { body } = toErrorBody(e);
+    expect(body.error.details).toEqual({ retryAfterSeconds: 45 });
   });
 
   it('attaches details when present', () => {

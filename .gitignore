@@ -25,3 +25,7 @@ kafka-data/
 src/director/rag/.pytest_cache/
 src/director/rag/.coverage
 src/director/rag/htmlcov/
+# web console (msrouter-web package)
+web/node_modules/
+web/dist/
+web/coverage/

@@ -27,11 +27,19 @@
     "test:rag": "bash -c 'cd /Users/mst/ZCodeProject/openclaw-job-search/rag && .venv/bin/python -m pytest tests -q'",
     "rag:rebuild": "bash -c 'cd /Users/mst/ZCodeProject/openclaw-job-search/rag && RAG_CAMPAIGN=/Users/mst/Downloads/job-search/job-apply .venv/bin/python index_builder.py'",
     "test:rag:cov": "bash -c 'cd /Users/mst/ZCodeProject/openclaw-job-search/rag && .venv/bin/python -m pytest tests --cov=. --cov-report=term-missing -q'",
-    "prepare": "husky || true"
+    "prepare": "husky || true",
+    "admin": "node dist/admin/main.js",
+    "admin:dev": "tsx src/admin/main.ts",
+    "web": "npm run dev --prefix web",
+    "web:build": "npm run build --prefix web",
+    "web:test": "npm test --prefix web",
+    "seed:users": "tsx scripts/seed-users.ts"
   },
   "dependencies": {
+    "alasql": "^4.19.0",
     "dotenv": "^16.6.1",
     "graphql": "^17.0.2",
+    "jsonwebtoken": "^9.0.3",
     "pino": "^9.5.0",
     "pino-pretty": "^11.3.0",
     "zod": "^3.24.1"
@@ -42,6 +50,7 @@
   "devDependencies": {
     "@commitlint/cli": "^19.6.0",
     "@commitlint/config-conventional": "^19.6.0",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20.17.10",
     "@typescript-eslint/eslint-plugin": "^8.18.2",
     "@typescript-eslint/parser": "^8.18.2",
@@ -57,8 +66,14 @@
     "vitest": "^2.1.8"
   },
   "lint-staged": {
-    "*.{ts,js}": [
+    "{src,scripts,test}/**/*.{ts,js}": [
       "eslint --fix",
+      "prettier --write"
+    ],
+    "web/src/**/*.{ts,tsx}": [
+      "prettier --write"
+    ],
+    "web/{vite.config.ts,eslint.config.js}": [
       "prettier --write"
     ],
     "*.{json,md,yml,yaml}": [

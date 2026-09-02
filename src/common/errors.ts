@@ -7,6 +7,10 @@
 export type ErrorCode =
   | 'VALIDATION_ERROR'
   | 'UNAUTHORIZED'
+  | 'FORBIDDEN'
+  | 'NOT_FOUND'
+  | 'CONFLICT'
+  | 'RATE_LIMITED'
   | 'BAD_REQUEST'
   | 'UPSTREAM_ERROR'
   | 'NO_PROVIDER_AVAILABLE'
@@ -34,6 +38,33 @@ export class ValidationError extends DomainError {
 export class UnauthorizedError extends DomainError {
   constructor(message = 'Unauthorized') {
     super(message, 'UNAUTHORIZED', 401);
+  }
+}
+
+export class ForbiddenError extends DomainError {
+  constructor(message = 'Forbidden') {
+    super(message, 'FORBIDDEN', 403);
+  }
+}
+
+export class NotFoundError extends DomainError {
+  constructor(what = 'resource') {
+    super(`${what} not found`, 'NOT_FOUND', 404);
+  }
+}
+
+export class ConflictError extends DomainError {
+  constructor(message = 'Conflict') {
+    super(message, 'CONFLICT', 409);
+  }
+}
+
+export class RateLimitedError extends DomainError {
+  constructor(
+    message = 'Too many attempts',
+    public readonly retryAfterSeconds = 60,
+  ) {
+    super(message, 'RATE_LIMITED', 429, { retryAfterSeconds });
   }
 }
 

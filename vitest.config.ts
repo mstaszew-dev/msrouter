@@ -28,6 +28,8 @@ export default defineConfig({
         '**/.venv/**',
         'src/main.ts',
         'src/worker.ts',
+        // Admin console entrypoint (process wiring, exercised by e2e).
+        'src/admin/main.ts',
         // One-shot diagnostic script, not app code.
         'scripts/**',
         // HTTP/network wiring exercised by integration tests, not unit tests.
