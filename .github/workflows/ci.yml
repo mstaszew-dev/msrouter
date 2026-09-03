@@ -40,6 +40,12 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
+      # The web package compiles the shared schema from src/shared, whose zod
+      # import resolves up to the ROOT node_modules - which a web-only install
+      # never creates. Prod deps at root are tiny (zod is the point of it).
+      - name: Install root prod deps
+        working-directory: ${{ github.workspace }}
+        run: npm ci --omit=dev
       - name: Install
         run: npm ci
       - name: Lint (no --fix; CI must not rewrite)
