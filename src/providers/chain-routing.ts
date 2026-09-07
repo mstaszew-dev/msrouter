@@ -24,6 +24,7 @@ export interface RoutingEntry {
     | 'zai'
     | 'tokenrouter'
     | 'opencode'
+    | 'opencodego'
     | 'local'
     | 'lmstudio'
     | 'laptop';
@@ -97,6 +98,16 @@ export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
       });
     }
   }
+  // OpenCode Go: single-key sibling of the OPENCODE pool (same vendor
+  // family), routed after the OPENCODE triples.
+  if (providers.opencodego.available) {
+    list.push({
+      provider: 'opencodego',
+      label: 'opencodego',
+      model: e.OPENCODEGO_MODEL,
+      attemptIndex: 0,
+    });
+  }
   if (e.LOCAL_ENABLED) {
     list.push({ provider: 'local', label: 'local', model: e.LOCAL_MODEL, attemptIndex: 0 });
   }
@@ -124,6 +135,7 @@ export function isProviderDefaultModel(model: string): boolean {
     model === e.ZAI_MODEL ||
     model === e.TOKENROUTER_MODEL ||
     model === e.OPENCODE_MODEL ||
+    model === e.OPENCODEGO_MODEL ||
     model === e.LOCAL_MODEL ||
     model === e.LMSTUDIO_MODEL ||
     model === e.LAPTOP_MODEL
@@ -141,6 +153,9 @@ export function shortCircuit(model: string): { provider: ChainProvider; model: s
   }
   if (restLower.startsWith('opencode/')) {
     return { provider: 'opencode', model: rest.slice('opencode/'.length).toLowerCase() };
+  }
+  if (restLower.startsWith('opencodego/')) {
+    return { provider: 'opencodego', model: rest.slice('opencodego/'.length).toLowerCase() };
   }
   if (restLower.startsWith('zai/') || restLower.startsWith('glm-')) {
     return { provider: 'zai', model: rest };

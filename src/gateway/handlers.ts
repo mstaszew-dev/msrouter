@@ -179,6 +179,7 @@ export function resolveModel(requested: string): string {
     cfg.ZAI_MODEL,
     cfg.TOKENROUTER_MODEL,
     cfg.OPENCODE_MODEL,
+    cfg.OPENCODEGO_MODEL,
     cfg.LOCAL_MODEL,
     cfg.LMSTUDIO_MODEL,
     cfg.LAPTOP_MODEL,
@@ -201,6 +202,9 @@ export function buildModelList(): Array<{ id: string; object: string; owned_by: 
   if (cfg.ZAI_API_KEY) data.push({ id: cfg.ZAI_MODEL, object: 'model', owned_by: 'zai' });
   if (cfg.TOKENROUTER_API_KEY) {
     data.push({ id: cfg.TOKENROUTER_MODEL, object: 'model', owned_by: 'tokenrouter' });
+  }
+  if (cfg.OPENCODEGO_API_KEY) {
+    data.push({ id: cfg.OPENCODEGO_MODEL, object: 'model', owned_by: 'opencodego' });
   }
   if (cfg.LOCAL_ENABLED) data.push({ id: cfg.LOCAL_MODEL, object: 'model', owned_by: 'local' });
   if (cfg.LMSTUDIO_ENABLED) data.push({ id: cfg.LMSTUDIO_MODEL, object: 'model', owned_by: 'lmstudio' });

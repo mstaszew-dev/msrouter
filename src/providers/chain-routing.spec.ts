@@ -50,6 +50,16 @@ describe('shortCircuit', () => {
     expect(r).toEqual({ provider: 'tokenrouter', model: 'z-ai/glm-5.3-free' });
   });
 
+  it('parses direct:opencodego/<model> (lowercased)', () => {
+    const r = shortCircuit('direct:opencodego/GLM-5.3-Flash');
+    expect(r).toEqual({ provider: 'opencodego', model: 'glm-5.3-flash' });
+  });
+
+  it('is case-insensitive for the opencodego prefix', () => {
+    const r = shortCircuit('DIRECT:OpenCodeGo/glm-5.3-flash');
+    expect(r).toEqual({ provider: 'opencodego', model: 'glm-5.3-flash' });
+  });
+
   it('parses direct:local/<model>', () => {
     const r = shortCircuit('direct:local/qwen3:14b-32k');
     expect(r).toEqual({ provider: 'local', model: 'qwen3:14b-32k' });

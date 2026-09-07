@@ -14,6 +14,7 @@ console.log(
       tokenrouter: !!c.env.TOKENROUTER_API_KEY,
       laptop: c.env.LAPTOP_ENABLED,
       opencode: !!c.env.OPENCODE_API_KEY,
+      opencodego: !!c.env.OPENCODEGO_API_KEY,
       opencodeModel: c.env.OPENCODE_MODEL,
       walkAlias: c.env.WALK_ALIAS,
       forceFree: c.env.FORCE_FREE,

@@ -77,6 +77,17 @@ describe('resolveModel - unknown model defaults to the alias walk', () => {
     loadEnv({ TOKENROUTER_API_KEY: 'sk-tokenrouter-test', TOKENROUTER_MODEL: 'z-ai/glm-5.3-free' });
     expect(resolveModel('z-ai/glm-5.3-free')).toBe('z-ai/glm-5.3-free');
   });
+
+  it('passes the opencodego default model through when its key is configured', () => {
+    loadEnv({ OPENCODEGO_API_KEY: 'sk-opencodego-test', OPENCODEGO_MODEL: 'glm-5.3-flash' });
+    expect(resolveModel('glm-5.3-flash')).toBe('glm-5.3-flash');
+  });
+
+  it('passes the opencodego default model through even without a key (config-declared default)', () => {
+    // resolveModel's known set is key-independent for provider defaults.
+    loadEnv({ OPENCODEGO_MODEL: 'glm-5.3-flash' });
+    expect(resolveModel('glm-5.3-flash')).toBe('glm-5.3-flash');
+  });
 });
 
 describe('buildModelList - tokenrouter model advertisement', () => {
@@ -91,6 +102,20 @@ describe('buildModelList - tokenrouter model advertisement', () => {
     loadEnv({ TOKENROUTER_API_KEY: undefined, TOKENROUTER_MODEL: 'z-ai/glm-5.3-free' });
     const ids = buildModelList().map((m) => m.id);
     expect(ids).not.toContain('z-ai/glm-5.3-free');
+  });
+});
+
+describe('buildModelList - opencodego model advertisement', () => {
+  it('includes glm-5.3-flash with owned_by=opencodego when OPENCODEGO_API_KEY is set', () => {
+    loadEnv({ OPENCODEGO_API_KEY: 'sk-opencodego-test', OPENCODEGO_MODEL: 'glm-5.3-flash' });
+    const tr = buildModelList().find((m) => m.id === 'glm-5.3-flash' && m.owned_by === 'opencodego');
+    expect(tr).toBeDefined();
+  });
+
+  it('omits the opencodego model when OPENCODEGO_API_KEY is unset', () => {
+    loadEnv({ OPENCODEGO_MODEL: 'glm-5.3-flash' });
+    const ids = buildModelList().filter((m) => m.owned_by === 'opencodego').map((m) => m.id);
+    expect(ids).toEqual([]);
   });
 });
 

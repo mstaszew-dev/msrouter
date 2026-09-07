@@ -26,6 +26,34 @@ describe('loadEnv', () => {
   });
 });
 
+describe('loadEnv - OpenCode Go config', () => {
+  it('defaults OPENCODEGO_BASE_URL to opencode.ai/zen/go/v1 and model to glm-5.3-flash', () => {
+    const cfg = loadEnv({});
+    expect(cfg.env.OPENCODEGO_BASE_URL).toBe('https://opencode.ai/zen/go/v1');
+    expect(cfg.env.OPENCODEGO_MODEL).toBe('glm-5.3-flash');
+    expect(cfg.env.OPENCODEGO_API_KEY).toBeUndefined();
+  });
+
+  it('accepts OPENCODEGO_* overrides', () => {
+    const cfg = loadEnv({
+      OPENCODEGO_API_KEY: 'sk-opencodego-test',
+      OPENCODEGO_BASE_URL: 'https://opencode.ai/zen/go/v1',
+      OPENCODEGO_MODEL: 'glm-5.3-flash',
+    });
+    expect(cfg.env.OPENCODEGO_API_KEY).toBe('sk-opencodego-test');
+    expect(cfg.env.OPENCODEGO_BASE_URL).toBe('https://opencode.ai/zen/go/v1');
+    expect(cfg.env.OPENCODEGO_MODEL).toBe('glm-5.3-flash');
+  });
+
+  it('does NOT swallow OPENCODEGO_* into the OPENCODE numbered-key pool', () => {
+    const cfg = loadEnv({
+      OPENCODEGO_API_KEY: 'sk-opencodego-test',
+      OPENCODE_KEY1: 'sk-opencode-test',
+    });
+    expect(cfg.opencodeKeys).toEqual(['sk-opencode-test']);
+  });
+});
+
 describe('loadEnv - TokenRouter config', () => {
   it('defaults TOKENROUTER_BASE_URL to api.tokenrouter.com/v1 and model to z-ai/glm-5.3-free', () => {
     const cfg = loadEnv({});

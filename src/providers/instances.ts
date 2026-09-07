@@ -6,6 +6,8 @@
  * (model, key) triple. All OpenCode model variants live on this one provider.
  */
 
+import { randomUUID } from 'node:crypto';
+
 import type { Logger } from 'pino';
 
 import { config } from '../config/env.js';
@@ -20,9 +22,11 @@ export interface Providers {
   openrouter: OpenRouterProvider;
   openai: SingleKeyProvider;
   zai: SingleKeyProvider;
-  /** TokenRouter (tokenrouter.com): OpenAI-compatible single-key aggregator. */
-  tokenrouter: SingleKeyProvider;
+  /** TokenRouter (tokenrouter.com): OpenAI-compatible single-key aggregator. */  tokenrouter: SingleKeyProvider;
   opencode: OpenCodeProvider;
+  /** OpenCode Go ("go" endpoint): single-key provider for glm-5.3-flash.
+   *  Distinct key pool from OPENCODE_*; routed after the OPENCODE triples. */
+  opencodego: SingleKeyProvider;
   /** Local (llama-server) provider; always built, only routed when
    *  LOCAL_ENABLED=true (chain-routing gates the entry). */
   local: LocalProvider;
@@ -105,6 +109,23 @@ export function buildProviders(log: Logger): Providers {
       timeoutMs,
       log,
     }),
+    // OpenCode Go: single-key provider (distinct OPENCODEGO_* pool), routed
+    // after the OPENCODE triples in chain-routing.ts (same vendor family).
+    // The /go endpoint requires x-opencode-session: the factory auto-generates
+    // a stable per-process id (OPENCODEGO_SESSION_ID overrides it).
+    opencodego: new SingleKeyProvider(
+      {
+        id: 'opencodego',
+        baseUrl: env.OPENCODEGO_BASE_URL,
+        apiKey: env.OPENCODEGO_API_KEY,
+        defaultModel: env.OPENCODEGO_MODEL,
+        extraHeaders: env.OPENCODEGO_API_KEY
+          ? { 'x-opencode-session': env.OPENCODEGO_SESSION_ID || randomUUID() }
+          : undefined,
+      },
+      timeoutMs,
+      log,
+    ),
     // Local llama-server: speaks its OpenAI-compatible /v1/chat/completions
     // endpoint (the ollama daemon is NOT in use; llama-server does not implement
     // /api/chat). Routed last when LOCAL_ENABLED=true (see chain-routing.ts) as

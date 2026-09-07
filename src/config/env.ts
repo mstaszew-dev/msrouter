@@ -100,6 +100,11 @@ const schema = z.object({
   OPENCODE_MINIMAX_MODEL: z.string().default('nemotron-3.5-lightning-free'),
   OPENCODE_QWEN_MODEL: z.string().default('muse-spark-1.2-contributor-free'),
   OPENCODE_LING_MODEL: z.string().default('ling-3.0-flash-fin-free'),
+  // OpenCode Go: single-key glm-5.3-flash provider (never routed into the OPENCODE pool; SESSION_ID feeds the x-opencode-session header).
+  OPENCODEGO_API_KEY: z.string().optional(),
+  OPENCODEGO_BASE_URL: z.string().url().default('https://opencode.ai/zen/go/v1'),
+  OPENCODEGO_MODEL: z.string().default('glm-5.3-flash'),
+  OPENCODEGO_SESSION_ID: z.string().optional(),
 
   // Slack (Director surface)
   SLACK_BOT_TOKEN: z.string().optional(),
@@ -212,14 +217,16 @@ export function loadEnv(raw: NodeJS.ProcessEnv = process.env): ResolvedConfig {
   // gateway has nothing to route to.
   const hasOpenRouter = openrouterKeys.length > 0;
   const hasOpenCode = opencodeKeys.length > 0;
+  const hasOpenCodeGo = !!parsed.data.OPENCODEGO_API_KEY;
   const hasAnyFallback =
     !!parsed.data.OPENAI_API_KEY ||
     !!parsed.data.ZAI_API_KEY ||
     !!parsed.data.TOKENROUTER_API_KEY ||
-    hasOpenCode;
+    hasOpenCode ||
+    hasOpenCodeGo;
   if (parsed.data.NODE_ENV === 'production' && !hasOpenRouter && !hasAnyFallback) {
     throw new Error(
-      'No provider configured: set at least one OPENROUTER_KEY* or OPENAI/ZAI/TOKENROUTER/OPENCODE API key',
+      'No provider configured: set at least one OPENROUTER_KEY* or OPENAI/ZAI/TOKENROUTER/OPENCODE/OPENCODEGO API key',
     );
   }
   cached = { env: parsed.data, openrouterKeys, opencodeKeys };

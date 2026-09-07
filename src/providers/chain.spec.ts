@@ -43,6 +43,8 @@ function makeProviders(
     openrouterResults?: ProviderCallResult[];
     openaiResults?: ProviderCallResult[];
     tokenrouterResults?: ProviderCallResult[];
+    opencodegoResults?: ProviderCallResult[];
+    opencodegoAvailable?: boolean;
     opencodeModels?: string[];
     opencodeKeys?: number;
     localResults?: ProviderCallResult[];
@@ -102,6 +104,14 @@ function makeProviders(
     );
   });
 
+  const opencodegoResults = overrides.opencodegoResults ?? [];
+  const opencodegoAvailable = overrides.opencodegoAvailable ?? false;
+  const opencodegoAttempt = vi.fn(async (): Promise<ProviderCallResult> => {
+    return (
+      opencodegoResults.shift() ?? { kind: 'KEY_FAILURE', status: 429, message: 'opencodego stub' }
+    );
+  });
+
   const laptopResults = overrides.laptopResults ?? [];
   const laptopAttempt = vi.fn(async (): Promise<ProviderCallResult> => {
     return laptopResults.shift() ?? { kind: 'TRANSIENT', status: 0, message: 'laptop stub' };
@@ -117,6 +127,11 @@ function makeProviders(
     openai: { id: 'openai', available: true, attempt: openaiAttempt } as never,
     zai: { id: 'zai', available: true, attempt: zaiAttempt } as never,
     tokenrouter: { id: 'tokenrouter', available: true, attempt: tokenrouterAttempt } as never,
+    opencodego: {
+      id: 'opencodego',
+      available: opencodegoAvailable,
+      attempt: opencodegoAttempt,
+    } as never,
     opencode: {
       id: 'opencode',
       available: ocKeys > 0,
@@ -927,5 +942,76 @@ describe('ProviderChain - local provider success-based demotion', () => {
     const labels = chain.queueSnapshot().map((e) => e.label);
     const lmstudioIndex = labels.findIndex((l) => l.includes('lmstudio'));
     expect(lmstudioIndex).toBeLessThan(labels.length - 1);
+  });
+});
+
+
+describe('ProviderChain - opencodego routing', () => {
+  const DEFAULT_ENV = {
+    NODE_ENV: 'test',
+    PORT: '8788',
+    OPENROUTER_KEY1: 'sk-or-test-key-1111',
+    FORCE_FREE: 'true',
+    SCHEDULE_INTERVAL_MINUTES: '-1',
+    UPSTREAM_TIMEOUT_MS: '5000',
+    OPENROUTER_MODELS: '',
+    LMSTUDIO_ENABLED: 'false',
+  };
+
+  afterEach(() => loadEnv(DEFAULT_ENV));
+
+  it('adds the opencodego entry after the OPENCODE triples when available', () => {
+    loadEnv({ ...DEFAULT_ENV, OPENCODEGO_API_KEY: 'sk-opencodego-test' });
+    const p = makeProviders({
+      openrouterKeys: 1,
+      opencodeKeys: 1,
+      opencodeModels: ['big-pickle'],
+      opencodegoAvailable: true,
+    });
+    const chain = new ProviderChain(p, silentLogger);
+    const labels = chain.queueSnapshot().map((e) => e.label);
+    expect(labels).toEqual([
+      'openrouter[key1/openrouter/free]',
+      'openai',
+      'zai',
+      'tokenrouter',
+      'opencode[key1/big-pickle]',
+      'opencodego',
+    ]);
+  });
+
+  it('walks to opencodego with its default model when earlier entries fail', async () => {
+    const p = makeProviders({
+      openrouterKeys: 1,
+      opencodegoAvailable: true,
+      opencodegoResults: [{ kind: 'OK', response: okResponse('{"ok":true}') }],
+    });
+    const chain = new ProviderChain(p, silentLogger);
+    const res = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    expect(res.servedBy).toEqual({ provider: 'opencodego', model: 'glm-5.3-flash' });
+  });
+
+  it('pins direct:opencodego/<model> with no fallback', async () => {
+    const p = makeProviders({
+      opencodegoAvailable: true,
+      opencodegoResults: [{ kind: 'OK', response: okResponse('{"ok":true}') }],
+    });
+    const chain = new ProviderChain(p, silentLogger);
+    const res = await chain.handle(
+      { ...baseBody, model: 'direct:opencodego/glm-5.3-flash' },
+      new AbortController().signal,
+    );
+    expect(res.servedBy.provider).toBe('opencodego');
+  });
+
+  it('keeps the walk resilient when opencodego is unavailable', async () => {
+    const p = makeProviders({
+      openrouterKeys: 1,
+      openrouterResults: [{ kind: 'OK', response: okResponse('{"ok":true}') }],
+      opencodegoAvailable: false,
+    });
+    const chain = new ProviderChain(p, silentLogger);
+    const res = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    expect(res.servedBy.provider).toBe('openrouter[key1/openrouter/free]');
   });
 });
