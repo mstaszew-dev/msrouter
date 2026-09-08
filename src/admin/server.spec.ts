@@ -93,15 +93,23 @@ describe('admin server: JSON body handling', () => {
   it('rejects a body over 1MB with 413 (or the connection reset that carries it)', async () => {
     await startServer();
     // The server responds 413 and sets connection: close while the client is
-    // still streaming the oversized body; the client may see EPIPE before it
-    // can read the response. Either outcome proves the 1MB cap is enforced.
-    await expect(
-      fetch(`${baseUrl}/api/v1/auth/login`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'x'.repeat(2 * 1024 * 1024), password: 'y' }),
-      }),
-    ).rejects.toMatchObject({ cause: { code: 'EPIPE' } });
+    // still streaming the oversized body. Whether the client sees the 413 or
+    // an EPIPE before it finishes writing is a platform/socket-buffer race
+    // (macOS rejects with EPIPE, Linux resolves with the 413) - both outcomes
+    // prove the 1MB cap is enforced, so accept either.
+    const outcome = await fetch(`${baseUrl}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'x'.repeat(2 * 1024 * 1024), password: 'y' }),
+    }).then(
+      (res): { via: 'response'; status: number } => ({ via: 'response', status: res.status }),
+      (err: unknown): { via: 'error'; err: unknown } => ({ via: 'error', err }),
+    );
+    if (outcome.via === 'response') {
+      expect(outcome.status).toBe(413);
+    } else {
+      expect((outcome.err as { cause?: { code?: string } }).cause?.code).toBe('EPIPE');
+    }
   });
 
   it('rejects invalid JSON with 400', async () => {
