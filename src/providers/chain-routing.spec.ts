@@ -24,9 +24,15 @@ describe('shortCircuit', () => {
     expect(r).toEqual({ provider: 'opencode', model: 'big-pickle' });
   });
 
-  it('parses direct:zai/<model>', () => {
+  it('parses direct:zai/<model> and STRIPS the zai/ prefix', () => {
+    // 2026-09-09: the prefix was never stripped, so the upstream got model
+    // "zai/glm-4.6" and Z.ai rejected it with 400. The model must be clean.
     const r = shortCircuit('direct:zai/glm-4.6');
-    expect(r).toEqual({ provider: 'zai', model: 'zai/glm-4.6' });
+    expect(r).toEqual({ provider: 'zai', model: 'glm-4.6' });
+    expect(shortCircuit('direct:zai/glm-5.3-flash')).toEqual({
+      provider: 'zai',
+      model: 'glm-5.3-flash',
+    });
   });
 
   it('parses direct:glm-<model> (alias without zai/ prefix)', () => {

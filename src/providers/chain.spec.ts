@@ -549,6 +549,29 @@ describe('ProviderChain - 429 cooldown parking (rate-limit storms)', () => {
     expect(res.servedBy.provider).toContain('openrouter'); // served from the parked remainder
     vi.useRealTimers();
   });
+
+  it('direct:zai/<model> sends the STRIPPED model upstream (no zai/ prefix)', async () => {
+    // 2026-09-09: Z.ai 400s on model "zai/glm-5.3-flash" - shortCircuit must
+    // strip the provider prefix before dispatch.
+    const p = makeProviders({});
+    const zaiEntry = p.zai as unknown as { attempt: ReturnType<typeof vi.fn> };
+    zaiEntry.attempt.mockResolvedValue({ kind: 'OK', response: okResponse() });
+    const chain = new ProviderChain(p, silentLogger);
+
+    const res = await chain.handle(
+      { ...baseBody, model: 'direct:zai/glm-5.3-flash' },
+      new AbortController().signal,
+    );
+    expect(res.servedBy.provider).toBe('zai');
+    // The STRIPPED model arrives via opts.model - the real SingleKeyProvider
+    // sends body = { ...body, model: opts.model } upstream.
+    expect(zaiEntry.attempt).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.any(AbortSignal),
+      { model: 'glm-5.3-flash' },
+    );
+    vi.useRealTimers();
+  });
 });
 
 describe('ProviderChain - adaptive demotion', () => {

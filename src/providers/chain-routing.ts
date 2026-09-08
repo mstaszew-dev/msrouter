@@ -157,7 +157,12 @@ export function shortCircuit(model: string): { provider: ChainProvider; model: s
   if (restLower.startsWith('opencodego/')) {
     return { provider: 'opencodego', model: rest.slice('opencodego/'.length).toLowerCase() };
   }
-  if (restLower.startsWith('zai/') || restLower.startsWith('glm-')) {
+  if (restLower.startsWith('zai/')) {
+    // Strip the prefix: the upstream must receive the bare model id
+    // ("glm-5.3-flash"), not "zai/glm-5.3-flash" (Z.ai 400s on it).
+    return { provider: 'zai', model: rest.slice('zai/'.length) };
+  }
+  if (restLower.startsWith('glm-')) {
     return { provider: 'zai', model: rest };
   }
   if (restLower.startsWith('tokenrouter/')) {
