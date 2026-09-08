@@ -60,6 +60,30 @@ describe('loadEnv - OpenCode Go config', () => {
   });
 });
 
+describe('loadEnv - ZAI (GLM) config', () => {
+  it('defaults ZAI_BASE_URL to the intl API endpoint and model to glm-4.6', () => {
+    const cfg = loadEnv({});
+    expect(cfg.env.ZAI_BASE_URL).toBe('https://api.z.ai/api/paas/v4');
+    expect(cfg.env.ZAI_MODEL).toBe('glm-4.6');
+    expect(cfg.env.ZAI_API_KEY).toBeUndefined();
+  });
+
+  it('accepts ZAI_* overrides: coding-plan subscription endpoint + glm-5.3-flash', () => {
+    const cfg = loadEnv({
+      ZAI_API_KEY: '63ddd4f5dc3f4c218b9a170be3179249.test-secret',
+      ZAI_BASE_URL: 'https://api.z.ai/api/coding/paas/v4',
+      ZAI_MODEL: 'glm-5.3-flash',
+    });
+    expect(cfg.env.ZAI_API_KEY).toBe('63ddd4f5dc3f4c218b9a170be3179249.test-secret');
+    expect(cfg.env.ZAI_BASE_URL).toBe('https://api.z.ai/api/coding/paas/v4');
+    expect(cfg.env.ZAI_MODEL).toBe('glm-5.3-flash');
+  });
+
+  it('rejects a non-URL ZAI_BASE_URL (fail-fast)', () => {
+    expect(() => loadEnv({ ZAI_BASE_URL: 'not-a-url' })).toThrow(/Invalid environment/);
+  });
+});
+
 describe('loadEnv - TokenRouter config', () => {
   it('defaults TOKENROUTER_BASE_URL to api.tokenrouter.com/v1 and model to z-ai/glm-5.3-free', () => {
     const cfg = loadEnv({});
