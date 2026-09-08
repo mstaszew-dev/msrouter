@@ -5,12 +5,13 @@
  * `<model, provider, keyIndex>` (delegated to chain-routing.ts) and wraps it in
  * a RotationQueue. Every `handle()` call iterates the queue from the front:
  *   - OK       -> return the response.
- *   - KEY_FAILURE (401/402/403/429) -> demote this entry to the back, try next.
+ *   - KEY_FAILURE (401/402/403/429) -> demote to back; 429 also PARKS the
+ *     entry for RATE_LIMIT_COOLDOWN_MS (walks skip parked entries, so a
+ *     rate-limit storm does not re-hammer every limited key per request).
  *   - TRANSIENT (5xx/408/425)      -> backoff-retry in place up to MAX_TRANSIENT_RETRIES.
  *   - BAD_REQUEST (other 4xx)      -> skip to next entry (do not demote).
  *
- * Demotion is permanent for the life of the process (no TTL, in-memory only).
- * Restart rebuilds the queue from env in the original declared order.
+ * Demotion/parking is in-memory only; restart rebuilds from env order.
  *
  * Aliases "mst/free" and "free" walk the SAME entry list using each entry's
  * provider-default model. Prefix "direct:<provider>/<model>" pins a single
@@ -59,28 +60,12 @@ export class ProviderChain {
 
   async handle(body: ChatRequestBody, signal: AbortSignal): Promise<ChainResult> {
     const requested = body.model;
-    if (env().WALK_ALIAS.includes(requested)) {
-      return this.walkAll(body, signal);
-    }
+    if (env().WALK_ALIAS.includes(requested)) return this.iterate(body, signal, {});
     const sc = shortCircuit(requested);
     if (sc) return this.runSingle(sc.provider, sc.model, body, signal);
-    return this.runChain(body, signal, { explicitModel: requested });
-  }
-
-  /** Walk every entry using each provider's default model. */
-  private async walkAll(body: ChatRequestBody, signal: AbortSignal): Promise<ChainResult> {
-    return this.iterate(body, signal, {});
-  }
-
-  /** Walk every entry using the client's explicit model. */
-  private async runChain(
-    body: ChatRequestBody,
-    signal: AbortSignal,
-    opts: { explicitModel: string },
-  ): Promise<ChainResult> {
-    const explicit = isProviderDefaultModel(opts.explicitModel)
-      ? opts.explicitModel
-      : withFree(opts.explicitModel, env().FORCE_FREE);
+    const explicit = isProviderDefaultModel(requested)
+      ? requested
+      : withFree(requested, env().FORCE_FREE);
     return this.iterate(body, signal, { explicitModel: explicit });
   }
 
@@ -119,24 +104,35 @@ export class ProviderChain {
     throw new NoProviderAvailableError(`${provider} failed: ${failures.join('; ')}`);
   }
 
-  /** Core flat-queue iteration, shared by walkAll and runChain. */
+  /** Core flat-queue iteration, shared by the alias walk and the explicit-
+   *  model path. First pass walks ELIGIBLE entries only (429-parked ones
+   *  skip their cooldown; see park()); if it fails while entries were
+   *  parked, a second pass retries the parked remainder so a hopeless-but-
+   *  never-parked entry (401 key, unavailable provider) cannot defeat the
+   *  fallback and a parked entry that has recovered is still reachable. */
   private async iterate(
     body: ChatRequestBody,
     signal: AbortSignal,
     opts: { explicitModel?: string },
   ): Promise<ChainResult> {
     const failures: string[] = [];
-    const order = this.queue.snapshot();
-    for (const entry of order) {
-      if (signal.aborted) throw new NoProviderAvailableError('aborted');
-      // Pass model separately so tryEntry demotes the ORIGINAL entry reference
-      // (spreading here would break identity and silently no-op demote).
-      const model = opts.explicitModel ?? entry.model;
-      const res = await this.tryEntry(entry, model, body, signal, failures, {
-        demoteOnKeyFailure: true,
-      });
-      if (res) return res;
-    }
+    const pass = async (entries: readonly RoutingEntry[]): Promise<ChainResult | undefined> => {
+      for (const entry of entries) {
+        if (signal.aborted) throw new NoProviderAvailableError('aborted');
+        const res = await this.tryEntry(entry, opts.explicitModel ?? entry.model, body, signal, failures, {
+          demoteOnKeyFailure: true,
+        });
+        if (res) return res;
+      }
+      return undefined;
+    };
+    const order = this.queue.eligible();
+    const served =
+      (await pass(order)) ??
+      (order.length < this.queue.length
+        ? await pass(this.queue.snapshot().filter((e) => !order.includes(e)))
+        : undefined);
+    if (served) return served;
     this.log.error({ failures, model: body.model }, 'all routing entries failed');
     throw new NoProviderAvailableError(`all routing entries failed: ${failures.join('; ')}`);
   }
@@ -162,15 +158,13 @@ export class ProviderChain {
       if (signal.aborted) return undefined;
       const res: ProviderCallResult = await this.callProvider(entry, model, body, signal);
       if (res.kind === 'OK') {
-        // Use the resolved model from the provider if available (e.g., LM Studio
-        // resolved a requested alias to the actual loaded GGUF path). Fall back
-        // to the requested model for providers that don't report resolution.
+        // resolvedModel: the provider may resolve an alias to a concrete id
+        // (e.g. LM Studio resolves to the loaded GGUF path).
         const resolvedModel = res.resolvedModel ?? model;
         const servedByModel =
           entry.provider === 'openrouter' ? `${resolvedModel}[key${entry.attemptIndex + 1}]` : resolvedModel;
-
-        // Track consecutive successes; demote local provider to back of queue
-        // after limit (prevents local model from monopolizing the chain).
+        // Consecutive-success demotion: local providers rotate to the back
+        // after SUCCESS_DEMOTE_LIMIT so they never monopolize the chain.
         const count = (this.consecutiveSuccesses.get(entry.label) ?? 0) + 1;
         this.consecutiveSuccesses.set(entry.label, count);
         const isLocal = entry.provider === 'lmstudio' || entry.provider === 'local';
@@ -207,6 +201,14 @@ export class ProviderChain {
           { provider: entry.label, label: 'chain', status: res.status },
           'chain entry demoted to back of queue',
         );
+        // 429 also parks the entry for the cooldown window (RATE_LIMIT_
+        // COOLDOWN_MS): a demoted-only entry is retried on the very next
+        // request, which re-hammered the whole limited pool each request
+        // (2-8 min walks, 2026-09-08). Non-429 key failures (401/402/403)
+        // demote only: a bad key is not cooling down.
+        if (res.status === 429 && env().RATE_LIMIT_COOLDOWN_MS > 0) {
+          this.queue.park(entry, env().RATE_LIMIT_COOLDOWN_MS, `429 (${entry.label})`);
+        }
       }
       break;
     }

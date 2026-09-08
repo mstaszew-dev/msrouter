@@ -24,6 +24,12 @@ describe('loadEnv', () => {
   it('throws on an invalid value (fail-fast)', () => {
     expect(() => loadEnv({ PORT: 'not-a-number' })).toThrow(/Invalid environment/);
   });
+
+  it('defaults RATE_LIMIT_COOLDOWN_MS to 60s and accepts overrides', () => {
+    expect(loadEnv({}).env.RATE_LIMIT_COOLDOWN_MS).toBe(60_000);
+    expect(loadEnv({ RATE_LIMIT_COOLDOWN_MS: '0' }).env.RATE_LIMIT_COOLDOWN_MS).toBe(0);
+    expect(loadEnv({ RATE_LIMIT_COOLDOWN_MS: '120000' }).env.RATE_LIMIT_COOLDOWN_MS).toBe(120_000);
+  });
 });
 
 describe('loadEnv - OpenCode Go config', () => {

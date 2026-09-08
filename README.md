@@ -120,7 +120,7 @@ every variable. Key ones:
 - `OPENROUTER_MODEL`, `OPENAI_MODEL`, `ZAI_MODEL`, `OPENCODE_MODEL` - per-provider defaults for the alias.
 - `WALK_ALIAS` - the model id(s) that mean "walk all" (default `mst/free`).
 - `FORCE_FREE=true` - append `:free` to OpenRouter models.
-- `UPSTREAM_TIMEOUT_MS`, `MAX_TRANSIENT_RETRIES` - upstream call behavior.
+- `UPSTREAM_TIMEOUT_MS`, `MAX_TRANSIENT_RETRIES`, `RATE_LIMIT_COOLDOWN_MS` (429 parking window; 0 disables) - upstream call behavior.
 - `SCHEDULE_INTERVAL_MINUTES`, `AGENT_PROMPT`, `AGENT_GOAL`, `AGENT_MAX_STEPS` - the scheduled agent.
 - `CDP_URL`, `TERMINAL_ALLOWLIST` - agent tools.
 - `LOG_LEVEL`, `LOG_REDACT` - structured logging with secret redaction.

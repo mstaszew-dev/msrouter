@@ -118,6 +118,8 @@ const schema = z.object({
   UPSTREAM_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
   MAX_TRANSIENT_RETRIES: z.coerce.number().int().min(0).default(2),
   TRANSIENT_BACKOFF_MS: z.coerce.number().int().positive().default(1_000),
+  // 429 cooldown: a rate-limited entry is parked (skipped by walks) this long.
+  RATE_LIMIT_COOLDOWN_MS: z.coerce.number().int().min(0).default(60_000),
   // Demote provider to back of queue after N consecutive successes (prevents
   // local model from monopolizing the chain when remote providers fail).
   SUCCESS_DEMOTE_LIMIT: z.coerce.number().int().positive().default(5),

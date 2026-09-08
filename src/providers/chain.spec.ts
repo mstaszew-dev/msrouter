@@ -11,7 +11,7 @@
  */
 
 import type pino from 'pino';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { NoProviderAvailableError } from '../common/errors.js';
 import { loadEnv } from '../config/env.js';
@@ -354,6 +354,199 @@ describe('ProviderChain - alias walk (mst/free and free)', () => {
     await expect(
       chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal),
     ).rejects.toBeInstanceOf(NoProviderAvailableError);
+  });
+});
+
+describe('ProviderChain - 429 cooldown parking (rate-limit storms)', () => {
+  const DEFAULT_ENV = {
+    NODE_ENV: 'test',
+    PORT: '8788',
+    OPENROUTER_KEY1: 'sk-or-test-key-1111',
+    FORCE_FREE: 'true',
+    SCHEDULE_INTERVAL_MINUTES: '-1',
+    UPSTREAM_TIMEOUT_MS: '5000',
+    OPENROUTER_MODELS: 'vendor/extra',
+  };
+
+  beforeEach(() => loadEnv({ ...DEFAULT_ENV, RATE_LIMIT_COOLDOWN_MS: '60000' }));
+  afterEach(() => {
+    loadEnv(DEFAULT_ENV);
+    vi.useRealTimers(); // a mid-test assertion failure must not leak frozen time
+  });
+
+  it('parks a 429-failed entry for the cooldown: the next walk skips it entirely', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-08T03:00:00Z'));
+    // Request 1: openrouter[key1] 429s on both its model entries (parked),
+    // openai/zai 429 (parked), tokenrouter serves. Request 2 within the
+    // cooldown window must NOT re-attempt any parked entry.
+    const p = makeProviders({
+      openrouterKeys: 1,
+      tokenrouterResults: [
+        { kind: 'OK', response: okResponse() },
+        { kind: 'OK', response: okResponse() },
+      ],
+    });
+    const chain = new ProviderChain(p, silentLogger);
+    const res1 = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    expect(res1.servedBy.provider).toBe('tokenrouter');
+
+    const res2 = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    expect(res2.servedBy.provider).toBe('tokenrouter');
+    // Both openrouter entries (2 models x key1) were attempted exactly once
+    // each in request 1 and NOT again in request 2 (parked for the cooldown).
+    const orEntry = p.openrouter as unknown as { attempt: ReturnType<typeof vi.fn> };
+    expect(orEntry.attempt).toHaveBeenCalledTimes(2);
+    const openaiEntry = p.openai as unknown as { attempt: ReturnType<typeof vi.fn> };
+    expect(openaiEntry.attempt).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it('a parked entry becomes eligible again after the cooldown expires', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-08T03:00:00Z'));
+    // openrouter 429s first (parked), openai serves; after the cooldown
+    // expires, openrouter recovers and is eligible again. NOTE: the stub
+    // factory indexes scripted results by keyIndex, so the "recovered" OK is
+    // installed via the mock itself (call 1 fails, later calls succeed).
+    const p = makeProviders({
+      openrouterKeys: 1,
+      openaiResults: [{ kind: 'OK', response: okResponse() }],
+    });
+    const orEntry = p.openrouter as unknown as { attempt: ReturnType<typeof vi.fn> };
+    orEntry.attempt
+      .mockResolvedValueOnce({ kind: 'KEY_FAILURE', status: 429, message: 'rl' })
+      .mockResolvedValueOnce({ kind: 'KEY_FAILURE', status: 429, message: 'rl' })
+      .mockResolvedValue({ kind: 'OK', response: okResponse() });
+    const chain = new ProviderChain(p, silentLogger);
+    const res1 = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    expect(res1.servedBy.provider).toBe('openai');
+
+    vi.advanceTimersByTime(61_000); // cooldown expired
+    const res2 = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    expect(res2.servedBy.provider).toContain('openrouter'); // eligible again
+    vi.useRealTimers();
+  });
+
+  it('non-429 KEY_FAILURE (401 bad key) does NOT park, only demotes', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-08T03:00:00Z'));
+    // Discriminating setup (review SHOULD-2): openrouter key1 has TWO entries
+    // (openrouter/free + vendor/extra:free). openai 401s once then 429s (so
+    // openai parks itself). Request 1: or/free 401 (demote), or/vendor 429
+    // (park), openai 401... then serves on its second scripted value? No -
+    // keep openai hopeless so the request fails. Request 2: the 401 entry is
+    // NOT parked, so it is attempted again (attempt count grows to 3) even
+    // though or/vendor stays parked (its attempt count stays 2). If a
+    // regression parked 401s too, the 401 entry would be skipped and its
+    // count would stay at 1.
+    const p = makeProviders({
+      openrouterKeys: 1,
+      openrouterResults: [], // unused: both or entries driven via mockResolvedValueOnce below
+      openaiResults: [],
+    });
+    const orEntry = p.openrouter as unknown as { attempt: ReturnType<typeof vi.fn> };
+    orEntry.attempt
+      .mockImplementationOnce(async () => ({
+        kind: 'KEY_FAILURE', status: 401, message: 'bad key',
+      }) as ProviderCallResult) // or/free: 401 -> demote only
+      .mockImplementationOnce(async () => ({
+        kind: 'KEY_FAILURE', status: 429, message: 'rl',
+      }) as ProviderCallResult) // or/vendor: 429 -> demote + park
+      .mockResolvedValue({ kind: 'OK', response: okResponse() } as ProviderCallResult);
+    const openaiEntry = p.openai as unknown as { attempt: ReturnType<typeof vi.fn> };
+    openaiEntry.attempt.mockResolvedValue({
+      kind: 'KEY_FAILURE', status: 403, message: 'forbidden',
+    } as ProviderCallResult);
+    const zaiEntry = p.zai as unknown as { attempt: ReturnType<typeof vi.fn> };
+    zaiEntry.attempt.mockResolvedValue({
+      kind: 'KEY_FAILURE', status: 403, message: 'forbidden',
+    } as ProviderCallResult);
+    const trEntry = p.tokenrouter as unknown as { attempt: ReturnType<typeof vi.fn> };
+    trEntry.attempt.mockResolvedValue({
+      kind: 'KEY_FAILURE', status: 403, message: 'forbidden',
+    } as ProviderCallResult);
+    const chain = new ProviderChain(p, silentLogger);
+
+    // Isolate the park-log assertion: the file-level logger mock accumulates
+    // calls across tests in this file.
+    (silentLogger.info as ReturnType<typeof vi.fn>).mockClear();
+
+    // Request 1: everything fails (or 401+429, openai/zai/tr 403).
+    await expect(
+      chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal),
+    ).rejects.toBeInstanceOf(NoProviderAvailableError);
+    expect(orEntry.attempt).toHaveBeenCalledTimes(2);
+    // THE discriminator: exactly ONE entry (the 429 one) was parked. A
+    // regression that parks 401s would park both openrouter entries here.
+    const parkCalls = (silentLogger.info as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => typeof c[1] === 'string' && c[1].includes('parked'),
+    );
+    expect(parkCalls).toHaveLength(1);
+    expect(parkCalls[0]![0]).toMatchObject({ reason: expect.stringContaining('429') });
+
+    // Request 2 (cooldowns still live): the 401 entry must be attempted again
+    // (not parked). It now returns OK (mockResolvedValue above), so the walk
+    // serves from openrouter via the previously-401ing entry.
+    const res2 = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    expect(res2.servedBy.provider).toContain('openrouter');
+    expect(orEntry.attempt).toHaveBeenCalledTimes(3);
+    vi.useRealTimers();
+  });
+
+  it('when everything is parked, the walk still attempts entries (all-parked fallback)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-08T03:00:00Z'));
+    // Every remote 429s on request 1 (all parked); request 2 must still walk
+    // and get served by one of them (here: tokenrouter recovers).
+    const p = makeProviders({
+      openrouterKeys: 1,
+      tokenrouterResults: [
+        { kind: 'KEY_FAILURE', status: 429, message: 'rl' },
+        { kind: 'OK', response: okResponse() },
+      ],
+    });
+    const chain = new ProviderChain(p, silentLogger);
+    await expect(
+      chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal),
+    ).rejects.toBeInstanceOf(NoProviderAvailableError);
+
+    const res2 = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    expect(res2.servedBy.provider).toBe('tokenrouter');
+    vi.useRealTimers();
+  });
+
+  it('a failed eligible walk falls back to the parked remainder (mixed 401+429 case)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-08T03:00:00Z'));
+    // Request 1: openrouter 429s (parked mid-walk), openai/zai/tokenrouter
+    // fail non-429 (never park) -> everything fails. Request 2 (same second,
+    // cooldowns live): the eligible walk is only the never-parked hopeless
+    // entries; when it fails, the parked openrouter remainder - which HAS
+    // recovered upstream - must get the second pass and serve.
+    const p = makeProviders({
+      openrouterKeys: 1,
+      openaiResults: [{ kind: 'KEY_FAILURE', status: 401, message: 'bad key' }],
+    });
+    const orEntry = p.openrouter as unknown as { attempt: ReturnType<typeof vi.fn> };
+    orEntry.attempt
+      .mockResolvedValueOnce({ kind: 'KEY_FAILURE', status: 429, message: 'rl' })
+      .mockResolvedValueOnce({ kind: 'KEY_FAILURE', status: 429, message: 'rl' })
+      .mockResolvedValue({ kind: 'OK', response: okResponse() });
+    const hopeless = { kind: 'KEY_FAILURE', status: 403, message: 'forbidden' } as const;
+    (p.zai as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt.mockResolvedValue(hopeless);
+    (
+      p.tokenrouter as unknown as { attempt: ReturnType<typeof vi.fn> }
+    ).attempt.mockResolvedValue(hopeless);
+    const chain = new ProviderChain(p, silentLogger);
+
+    await expect(
+      chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal),
+    ).rejects.toBeInstanceOf(NoProviderAvailableError);
+
+    const res = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    expect(res.servedBy.provider).toContain('openrouter'); // served from the parked remainder
+    vi.useRealTimers();
   });
 });
 
@@ -844,6 +1037,9 @@ describe('ProviderChain - local provider success-based demotion', () => {
     LMSTUDIO_MODEL: 'qwen3.5-4b',
     LMSTUDIO_BASE_URL: 'http://127.0.0.1:1234/v1',
     SUCCESS_DEMOTE_LIMIT: '3',
+    // This suite tests demotion mechanics in isolation: disable 429 parking
+    // so walks always attempt every entry (pre-cooldown semantics).
+    RATE_LIMIT_COOLDOWN_MS: '0',
   };
 
   afterEach(() => loadEnv(DEFAULT_ENV));

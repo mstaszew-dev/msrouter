@@ -1,5 +1,5 @@
 import type pino from 'pino';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { RotationQueue } from './rotation.js';
 
@@ -86,5 +86,71 @@ describe('RotationQueue', () => {
       expect.objectContaining({ label: 'opencode', pos: 0 }),
       expect.stringContaining('demoted'),
     );
+  });
+});
+
+describe('RotationQueue 429 cooldown (park)', () => {
+  afterEach(() => vi.useRealTimers()); // mid-test failure must not leak frozen time
+
+  it('park() excludes the item from eligible() until the cooldown expires', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-08T03:00:00Z'));
+    const q = new RotationQueue(['a', 'b', 'c'], { log: silent });
+    q.park('a', 60_000);
+    expect(q.eligible()).toEqual(['b', 'c']);
+    vi.advanceTimersByTime(61_000);
+    expect(q.eligible()).toEqual(['a', 'b', 'c']);
+    vi.useRealTimers();
+  });
+
+  it('park() keeps the item in snapshot() (queue order unchanged)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-08T03:00:00Z'));
+    const q = new RotationQueue(['a', 'b', 'c'], { log: silent });
+    q.park('a', 60_000);
+    expect(q.snapshot()).toEqual(['a', 'b', 'c']);
+    vi.useRealTimers();
+  });
+
+  it('eligible() returns everything when all items are parked (all-parked fallback)', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-08T03:00:00Z'));
+    const q = new RotationQueue(['a', 'b'], { log: silent });
+    q.park('a', 60_000);
+    q.park('b', 60_000);
+    // Nothing eligible -> fall back to the full queue rather than an empty walk.
+    expect(q.eligible()).toEqual(['a', 'b']);
+    vi.useRealTimers();
+  });
+
+  it('re-park extends the cooldown', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-08T03:00:00Z'));
+    const q = new RotationQueue(['a', 'b'], { log: silent });
+    q.park('a', 60_000);
+    vi.advanceTimersByTime(30_000);
+    q.park('a', 60_000); // new 429 mid-cooldown -> window restarts
+    vi.advanceTimersByTime(31_000); // past the FIRST park's expiry
+    expect(q.eligible()).toEqual(['b']); // still parked
+    vi.advanceTimersByTime(30_000); // past the second park's expiry
+    expect(q.eligible()).toEqual(['a', 'b']);
+    vi.useRealTimers();
+  });
+
+  it('demote() of a parked item keeps it parked', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-08T03:00:00Z'));
+    const q = new RotationQueue(['a', 'b', 'c'], { log: silent });
+    q.park('a', 60_000);
+    q.demote('a');
+    expect(q.snapshot()).toEqual(['b', 'c', 'a']);
+    expect(q.eligible()).toEqual(['b', 'c']);
+    vi.useRealTimers();
+  });
+
+  it('park() of an absent item is a silent no-op', () => {
+    const q = new RotationQueue(['a'], { log: silent });
+    q.park('zzz', 60_000);
+    expect(q.eligible()).toEqual(['a']);
   });
 });

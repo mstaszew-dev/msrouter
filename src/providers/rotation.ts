@@ -1,20 +1,23 @@
 /**
- * Generic demote-to-back queue. The single piece of adaptive-rotation state in
- * msrouter: any item that fails is moved to the tail and stays there for the
- * life of the process. No TTL, no persistence, no cooldown timer. Restart
+ * Generic demote-to-back queue with a 429 cooldown. The adaptive-rotation
+ * state in msrouter: any item that fails is moved to the tail, and items
+ * that fail with a rate-limit (429) are additionally PARKED - excluded from
+ * walks - until their cooldown window expires. No persistence; restart
  * rebuilds the queue from env (original declared order).
  *
- * Used by OpenRouterProvider (key pool), OpenCodeProvider ((model, key) pool),
- * and the chain (inter-provider walk). All three share one contract here.
+ * Used by OpenRouterProvider (key pool), OpenCodeProvider ((model, key)
+ * pool), and the chain (inter-provider walk). All three share one contract.
  *
- * Pure data structure: no I/O. The only side effect is an optional warn log on
- * demote, for observability.
+ * Pure data structure: no I/O, no timers. Cooldown expiry is evaluated
+ * lazily on read (eligible()); the clock is Date.now().
  */
 
 import type { Logger } from 'pino';
 
 export class RotationQueue<T> {
   private order: T[];
+  /** Items parked (rate-limited) until an absolute epoch-ms deadline. */
+  private parkedUntil = new Map<T, number>();
 
   constructor(
     items: readonly T[],
@@ -46,6 +49,47 @@ export class RotationQueue<T> {
     this.order.splice(pos, 1);
     this.order.push(item);
     this.opts.log?.debug({ label: this.opts.label ?? 'queue', pos }, 'queue item demoted to back');
+  }
+
+  /**
+   * Park `item` for `cooldownMs` (rate-limit cooldown): it stays in the
+   * queue but is excluded from eligible() until the window expires. A
+   * re-park mid-cooldown restarts the window (the upstream just told us
+   * it is still limited). Silent no-op if `item` is absent. Logs only on
+   * a NEW park (transition), not on every re-park - a rate-limit storm
+   * re-parks ~40 entries per request and that must not flood the log.
+   */
+  park(item: T, cooldownMs: number, reason?: string): void {
+    if (this.order.indexOf(item) === -1) return;
+    const existing = this.parkedUntil.get(item);
+    const transition = existing === undefined || existing <= Date.now();
+    this.parkedUntil.set(item, Date.now() + cooldownMs);
+    if (transition) {
+      this.opts.log?.info(
+        { label: this.opts.label ?? 'queue', cooldownMs, reason: reason ?? 'rate-limited' },
+        'queue item parked for cooldown',
+      );
+    }
+  }
+
+  /**
+   * Queue order with parked (cooling-down) items filtered out. If EVERYTHING
+   * is parked, returns the full order: an all-parked walk must still attempt
+   * entries rather than fail with an empty chain (one of them may have
+   * recovered, and the laptop/local tail is never rate-limited anyway).
+   */
+  eligible(): readonly T[] {
+    const now = Date.now();
+    const live = this.order.filter((item) => {
+      const until = this.parkedUntil.get(item);
+      if (until === undefined) return true;
+      if (until <= now) {
+        this.parkedUntil.delete(item); // expired: clean up lazily
+        return true;
+      }
+      return false;
+    });
+    return live.length > 0 ? live : [...this.order];
   }
 
   /** Current order, for tests and debug snapshots. */
