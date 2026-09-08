@@ -4,7 +4,7 @@
  * zod schema on load, mutated through small domain methods, and written back
  * atomically (temp file + rename) like the rest of msrouter's JSON files.
  */
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -110,6 +110,20 @@ describe('UserStore.save', () => {
     const store = new UserStore(seedDoc);
     await store.save(p);
     expect((await UserStore.load(p)).users()).toHaveLength(2);
+  });
+
+  it('cleans up the temp file and rethrows when rename fails', async () => {
+    // rename fails: the target is a non-empty DIRECTORY. The catch must
+    // unlink the .tmp-* sibling and rethrow (lines 128-130).
+    const p = await writeSeed();
+    const store = await UserStore.load(p);
+    const dirTarget = join(dir, 'users.json-dir');
+    await mkdir(dirTarget);
+    await writeFile(join(dirTarget, 'occupant.txt'), 'x');
+    await expect(store.save(dirTarget)).rejects.toThrow();
+    // The temp sibling was unlinked: no .tmp-* litter left behind.
+    const files = await readdir(dir);
+    expect(files.filter((f) => f.includes('.tmp'))).toEqual([]);
   });
 });
 

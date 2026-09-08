@@ -45,6 +45,12 @@ describe('verifyPassword', () => {
     await expect(verifyPassword('demo1234', tampered)).resolves.toBe(false);
   });
 
+  it('rejects impossible scrypt cost parameters (maxmem guard) as false', async () => {
+    // N=3 is an integer (cheap guards pass) but not a power of two > 1, so
+    // scrypt throws immediately -> the catch returns false (lines 70-71).
+    await expect(verifyPassword('x', 'scrypt$3$8$1$00$ff')).resolves.toBe(false);
+  }, 10_000);
+
   it('uses the documented scrypt parameters', () => {
     expect(SCRYPT_PARAMS).toEqual({ N: 16384, r: 8, p: 1, keyLength: 64 });
   });

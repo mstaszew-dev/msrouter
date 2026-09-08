@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 
 import { QueryResponse } from '../shared/schema.js';
 
+import { ValidationError } from '../common/errors.js';
 import { runUsersQuery } from './sql.js';
 
 const users = [
@@ -114,6 +115,15 @@ describe('runUsersQuery', () => {
 
   it('rejects malformed SQL with a validation error', async () => {
     await expect(runUsersQuery('SELEC * FRMO ?', users, [])).rejects.toThrow();
+  });
+
+  it('wraps alasql runtime failures in ValidationError (undefined function)', async () => {
+    // Parses cleanly as a SELECT (passes the read-only AST guard) but throws
+    // at execution time: no_such_fn() does not exist -> the catch at lines
+    // 36-37 must rethrow as ValidationError, not leak the raw alasql error.
+    await expect(
+      runUsersQuery('SELECT no_such_fn(username) FROM ?', users, []),
+    ).rejects.toThrow(ValidationError);
   });
 
   it('preserves the users array (read-only execution)', async () => {

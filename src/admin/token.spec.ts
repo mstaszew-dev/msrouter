@@ -76,4 +76,46 @@ describe('verifyToken', () => {
     })}.`;
     expect(verifyToken(forgery, SECRET)).toBeNull();
   });
+
+  it('rejects a structurally valid JWT whose payload is not a claims object', async () => {
+    // jwt.sign with a string payload: verify() returns the raw string, which
+    // the payload guard must reject (lines 63-64).
+    const enc = (o: object | string) => Buffer.from(JSON.stringify(o)).toString('base64url');
+    const header = enc({ alg: 'HS256', typ: 'JWT' });
+    const payload = enc('just-a-string');
+    const { createHmac } = await import('node:crypto');
+    const sig = createHmac('sha256', SECRET)
+      .update(`${header}.${payload}`)
+      .digest('base64url');
+    expect(verifyToken(`${header}.${payload}.${sig}`, SECRET)).toBeNull();
+  });
+
+  it('rejects claims with non-string sub / non-numeric iat / exp', async () => {
+    const enc = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
+    const { createHmac } = await import('node:crypto');
+    const mint = (claims: object) => {
+      const header = enc({ alg: 'HS256', typ: 'JWT' });
+      const payload = enc(claims);
+      const sig = createHmac('sha256', SECRET)
+        .update(`${header}.${payload}`)
+        .digest('base64url');
+      return `${header}.${payload}.${sig}`;
+    };
+    const base = {
+      iss: 'msrouter-admin',
+      aud: 'msrouter-web',
+      role: 'admin',
+    };
+    const now = Math.floor(Date.now() / 1000);
+    // Non-string sub (lines 65-66 type guard)
+    expect(verifyToken(mint({ ...base, sub: 123, iat: now, exp: now + 60 }), SECRET)).toBeNull();
+    // Non-numeric iat
+    expect(verifyToken(mint({ ...base, sub: 'demo', iat: 'x', exp: now + 60 }), SECRET)).toBeNull();
+    // Non-numeric exp
+    expect(verifyToken(mint({ ...base, sub: 'demo', iat: now, exp: 'y' }), SECRET)).toBeNull();
+    // Invalid role value (line 67)
+    expect(
+      verifyToken(mint({ ...base, sub: 'demo', role: 'superuser', iat: now, exp: now + 60 }), SECRET),
+    ).toBeNull();
+  });
 });

@@ -22,6 +22,10 @@ export default defineConfig({
         'node_modules/',
         'dist/',
         'coverage/',
+        // Separate package: web/ is the React console with its own vitest
+        // config (jsdom + testing-library) and its own 80% thresholds; its
+        // sources must not pollute the root (node) coverage totals.
+        'web/**',
         '**/*.spec.ts',
         // Tool configs and python-venv artifacts, not app code.
         '**/*.cjs',

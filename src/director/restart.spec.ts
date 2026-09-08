@@ -45,7 +45,7 @@ const silent = {
 } as unknown as pino.Logger;
 
 const kafkaOpts = {
-  entryCommand: '/Users/mst/ZCodeProject/openclaw-job-search/hermes_agent/install/job-search-agent-hermes',
+  entryCommand: '/Users/mst/bin/job-search-agent',
   workspace: '/test/workspace',
   cdpUrl: 'http://127.0.0.1:9222',
   log: silent,
@@ -525,7 +525,7 @@ describe('startWorkerInIterm', () => {
     expect(osaCalls.length).toBe(1);
     const workerScript = osaCalls[0]![1]![1]!;
     expect(workerScript).toContain(
-      '/Users/mst/ZCodeProject/openclaw-job-search/hermes_agent/install/job-search-agent-hermes',
+      '/Users/mst/bin/job-search-agent',
     );
   });
 
@@ -642,7 +642,8 @@ describe('restartWorker', () => {
       if (file === 'pgrep') {
         // First detectWorker call sees pid 4242; every later poll sees none
         // (the tree was just killed), so stopTree/waitForStartup resolve fast.
-        if (cmdArgs[1] === 'job-search-agent-hermes' || cmdArgs[1] === 'jobhermes') {
+        // detectWorker greps for the runner basename (python launcher now).
+        if (cmdArgs[1] === 'job-search-agent' || cmdArgs[1] === 'job-search-agent-hermes') {
           if (!workerArmed) {
             workerArmed = true;
             return '4242\n';

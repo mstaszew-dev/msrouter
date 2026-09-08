@@ -28,16 +28,9 @@ const flag = (def: string) =>
     .transform((s) => s === 'true' || s === '1');
 
 /**
- * Hermes campaign launcher: the Director's default spawn target. Single
+ * Python campaign launcher: the Director's default spawn target (since
+ * 2026-09-08, when hermes_agent/ was archived out of the tree). Single
  * source of truth for the zod default and the loop.ts fallback.
- */
-export const HERMES_RUNNER =
-  '/Users/mst/ZCodeProject/openclaw-job-search/hermes_agent/install/job-search-agent-hermes';
-
-/**
- * Python campaign launcher: alternative DIRECTOR_RUNNER override (the
- * 2026-08-31 evening default, reverted later the same day). Kept exported so
- * the detection specs and docs reference one constant.
  */
 export const PYTHON_RUNNER = '/Users/mst/bin/job-search-agent';
 
@@ -151,7 +144,7 @@ const schema = z.object({
   // CLI flag fix landed and both agents began inlining an IDENTITY block;
   // forensics had cleared hermes of the invented-email incident). The python
   // runner remains available via DIRECTOR_RUNNER override.
-  DIRECTOR_RUNNER: z.string().default(HERMES_RUNNER),
+  DIRECTOR_RUNNER: z.string().default(PYTHON_RUNNER),
   // When false the Director never spawns/kills/restarts the campaign worker
   // (observe-only supervision): the user starts the agent manually from the
   // GUI. Observation, classification, Slack and Kafka stay active. VPN IP

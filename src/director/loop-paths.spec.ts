@@ -347,6 +347,36 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
     expect(vi.mocked(restartWorker)).toHaveBeenCalledTimes(1);
   });
 
+  it('observe-only: skips the stale-campaign worker restart (logs instead)', async () => {
+    // Lines 472-473: with DIRECTOR_AUTOSTART=false the stall-triggered VPN
+    // rotation happens but the worker restart is suppressed with a log.
+    // (makeEnv bypasses the zod schema, so the boolean is required here.)
+    const { loop } = buildLoop({ DIRECTOR_AUTOSTART: false });
+    vi.mocked(classify).mockReturnValue(staleCritical);
+    vi.mocked(rotateVpnIp).mockResolvedValue(true);
+
+    const result = await loop.runOnce(freshSignal());
+
+    expect(result.reason).toBe('ok');
+    expect(vi.mocked(rotateVpnIp)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(restartWorker)).not.toHaveBeenCalled();
+  });
+
+  it('a crashing startWorkerInIterm never blocks the director tick', async () => {
+    // Line 285: the iTerm spawn is best-effort; a throw must be swallowed
+    // and the tick continue (Kafka ensure + observation still run).
+    const { loop } = buildLoop();
+    vi.mocked(snapshotWorker).mockReturnValue({ pids: [], running: false, orphaned: false });
+    vi.mocked(startWorkerInIterm).mockImplementation(() => {
+      throw new Error('osascript refused');
+    });
+
+    const result = await loop.runOnce(freshSignal());
+
+    expect(result.reason).toBe('ok');
+    expect(vi.mocked(startWorkerInIterm)).toHaveBeenCalled();
+  });
+
   it('clears the stale-campaign warning when new events arrive', async () => {
     const { loop, cpPath } = buildLoop({}, { staleWarningActive: true });
     const event: CampaignEvent = {
@@ -419,7 +449,7 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
     expect(result.reason).toBe('ok');
     expect(vi.mocked(startWorkerInIterm)).toHaveBeenCalledWith(
       expect.objectContaining({
-        entryCommand: '/Users/mst/ZCodeProject/openclaw-job-search/hermes_agent/install/job-search-agent-hermes',
+        entryCommand: '/Users/mst/bin/job-search-agent',
       }),
     );
   });
@@ -477,7 +507,7 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
 
     expect(vi.mocked(restartWorker)).toHaveBeenCalledWith(
       expect.objectContaining({
-        entryCommand: '/Users/mst/ZCodeProject/openclaw-job-search/hermes_agent/install/job-search-agent-hermes',
+        entryCommand: '/Users/mst/bin/job-search-agent',
         cdpUrl: 'http://127.0.0.1:9222',
       }),
     );
@@ -496,7 +526,7 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
     expect(result.reason).toBe('ok');
     expect(vi.mocked(restartWorker)).toHaveBeenCalledWith(
       expect.objectContaining({
-        entryCommand: '/Users/mst/ZCodeProject/openclaw-job-search/hermes_agent/install/job-search-agent-hermes',
+        entryCommand: '/Users/mst/bin/job-search-agent',
         cdpUrl: 'http://127.0.0.1:9222',
       }),
     );
