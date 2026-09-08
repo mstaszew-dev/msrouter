@@ -8,9 +8,9 @@
  */
 import { describe, expect, it } from 'vitest';
 
+import { ValidationError } from '../common/errors.js';
 import { QueryResponse } from '../shared/schema.js';
 
-import { ValidationError } from '../common/errors.js';
 import { runUsersQuery } from './sql.js';
 
 const users = [
