@@ -70,11 +70,11 @@ describe('loadEnv - ZAI (GLM) config', () => {
 
   it('accepts ZAI_* overrides: coding-plan subscription endpoint + glm-5.3-flash', () => {
     const cfg = loadEnv({
-      ZAI_API_KEY: '63ddd4f5dc3f4c218b9a170be3179249.test-secret',
+      ZAI_API_KEY: 'aaaa1111bbbb2222cccc3333dddd4444.test-secret',
       ZAI_BASE_URL: 'https://api.z.ai/api/coding/paas/v4',
       ZAI_MODEL: 'glm-5.3-flash',
     });
-    expect(cfg.env.ZAI_API_KEY).toBe('63ddd4f5dc3f4c218b9a170be3179249.test-secret');
+    expect(cfg.env.ZAI_API_KEY).toBe('aaaa1111bbbb2222cccc3333dddd4444.test-secret');
     expect(cfg.env.ZAI_BASE_URL).toBe('https://api.z.ai/api/coding/paas/v4');
     expect(cfg.env.ZAI_MODEL).toBe('glm-5.3-flash');
   });
