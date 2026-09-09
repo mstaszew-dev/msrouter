@@ -1101,6 +1101,43 @@ describe('ProviderChain - local provider success-based demotion', () => {
     expect(labels[labels.length - 1]).toContain('lmstudio');
   });
 
+  it('demotes LAPTOP after consecutive successes too (weak tail never gains preference)', async () => {
+    // 2026-09-09 user directive: laptop qwen3.5:2b is very weak and "always
+    // works", so the adaptive queue must never let it accumulate preference.
+    // It joins local/lmstudio in the success-based demotion.
+    loadEnv({
+      ...DEFAULT_ENV,
+      SUCCESS_DEMOTE_LIMIT: '2',
+      LAPTOP_ENABLED: 'true',
+      LAPTOP_MODEL: 'qwen3.5:2b',
+    });
+    const p = makeProviders({
+      openrouterKeys: 1,
+      openrouterResults: [{ kind: 'KEY_FAILURE', status: 429, message: 'rl' }],
+      laptopResults: [
+        { kind: 'OK', response: okResponse() },
+        { kind: 'OK', response: okResponse() },
+        { kind: 'OK', response: okResponse() },
+      ],
+    });
+    const chain = new ProviderChain(p, silentLogger);
+    (silentLogger.warn as ReturnType<typeof vi.fn>).mockClear();
+
+    for (let i = 0; i < 3; i++) {
+      const res = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+      expect(res.servedBy.provider).toContain('laptop');
+    }
+
+    // Two consecutive laptop successes hit the limit -> the demotion warn
+    // must fire for laptop specifically.
+    const demoteWarns = (silentLogger.warn as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (c) => typeof c[1] === 'string' && c[1].includes('local provider demoted'),
+    );
+    expect(
+      demoteWarns.filter((c) => JSON.stringify(c[0]).includes('laptop')),
+    ).toHaveLength(1);
+  });
+
   it('does not demote remote providers after successes', async () => {
     loadEnv({ ...DEFAULT_ENV, SUCCESS_DEMOTE_LIMIT: '2' });
     const p = makeProviders({

@@ -46,8 +46,6 @@ const schema = z.object({
   ZAI_API_KEY: z.string().optional(),
   ZAI_BASE_URL: z.string().url().default('https://api.z.ai/api/paas/v4'),
   ZAI_MODEL: z.string().default('glm-4.6'),
-  // Inject {"thinking":{"type":"disabled"}} into zai requests (reasoning cost).
-  ZAI_THINKING_DISABLED: flag('false'),
   // TokenRouter (tokenrouter.com): OpenAI-compatible aggregator. Single key,
   // free GLM tier. Key verified against api.tokenrouter.com 2026-08-30
   // (the .io/.me domains want tr_-prefixed keys - this one is a .com key).

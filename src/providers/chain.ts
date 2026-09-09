@@ -158,16 +158,18 @@ export class ProviderChain {
       if (signal.aborted) return undefined;
       const res: ProviderCallResult = await this.callProvider(entry, model, body, signal);
       if (res.kind === 'OK') {
-        // resolvedModel: the provider may resolve an alias to a concrete id
-        // (e.g. LM Studio resolves to the loaded GGUF path).
+        // resolvedModel: the provider may resolve an alias (LM Studio -> GGUF).
         const resolvedModel = res.resolvedModel ?? model;
         const servedByModel =
           entry.provider === 'openrouter' ? `${resolvedModel}[key${entry.attemptIndex + 1}]` : resolvedModel;
-        // Consecutive-success demotion: local providers rotate to the back
-        // after SUCCESS_DEMOTE_LIMIT so they never monopolize the chain.
+        // Consecutive-success demotion: the weak local tail rotates to the
+        // back at SUCCESS_DEMOTE_LIMIT so it never monopolizes the chain.
         const count = (this.consecutiveSuccesses.get(entry.label) ?? 0) + 1;
         this.consecutiveSuccesses.set(entry.label, count);
-        const isLocal = entry.provider === 'lmstudio' || entry.provider === 'local';
+        // Weak local tail (local/lmstudio/laptop): "always works", so it must
+        // never accumulate preference - rotate to the back at the limit.
+        const isLocal =
+          entry.provider === 'lmstudio' || entry.provider === 'local' || entry.provider === 'laptop';
         if (isLocal && count >= this.successDemoteLimit) {
           this.queue.demote(entry);
           this.consecutiveSuccesses.set(entry.label, 0);
@@ -176,17 +178,15 @@ export class ProviderChain {
             'local provider demoted after consecutive successes',
           );
         }
-
         return { response: res.response, servedBy: { provider: entry.label, model: servedByModel } };
       }
       failures.push(`${entry.label}:${res.kind}(${res.status})`);
-      const logLevel = res.kind === 'BAD_REQUEST' ? 'info' : 'debug';
-      this.log[logLevel](
+      const badReq = res.kind === 'BAD_REQUEST';
+      this.log[badReq ? 'info' : 'debug'](
         { provider: entry.label, kind: res.kind, status: res.status, msg: res.message },
-        res.kind === 'BAD_REQUEST' ? 'routing entry skipped (bad request)' : 'routing entry attempt failed',
+        badReq ? 'routing entry skipped (bad request)' : 'routing entry attempt failed',
       );
-      // Reset consecutive success counter on any failure
-      this.consecutiveSuccesses.set(entry.label, 0);
+      this.consecutiveSuccesses.set(entry.label, 0); // reset on any failure
       if (res.kind === 'TRANSIENT' && attempt < env().MAX_TRANSIENT_RETRIES) {
         attempt++;
         await sleep(backoffMs(attempt, env().TRANSIENT_BACKOFF_MS));

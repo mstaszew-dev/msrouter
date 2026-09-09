@@ -20,13 +20,6 @@ export interface SingleKeyConfig {
   defaultModel: string;
   /** Extra headers (e.g. none for OpenAI; OpenCode may add none either). */
   extraHeaders?: Record<string, string>;
-  /**
-   * Extra body fields merged into every outbound request (model always wins).
-   * ZAI uses this to inject {"thinking":{"type":"disabled"}}: glm-5.3-flash
-   * is a hybrid reasoning model and its hidden thinking pass over the
-   * campaign's ~100k-token contexts cost 5-7 min per call (2026-09-09).
-   */
-  extraBody?: Record<string, unknown>;
 }
 
 export class SingleKeyProvider implements Provider {
@@ -35,7 +28,6 @@ export class SingleKeyProvider implements Provider {
   private readonly apiKey?: string;
   private readonly defaultModel: string;
   private readonly extraHeaders?: Record<string, string>;
-  private readonly extraBody?: Record<string, unknown>;
 
   constructor(
     cfg: SingleKeyConfig,
@@ -47,7 +39,6 @@ export class SingleKeyProvider implements Provider {
     this.apiKey = cfg.apiKey;
     this.defaultModel = cfg.defaultModel;
     this.extraHeaders = cfg.extraHeaders;
-    this.extraBody = cfg.extraBody;
   }
 
   get available(): boolean {
@@ -67,13 +58,7 @@ export class SingleKeyProvider implements Provider {
     if (!this.apiKey) {
       return { kind: 'KEY_FAILURE', status: 0, message: `${this.id}: no api key configured` };
     }
-    // Merge order matters: extraBody is injected first, the resolved model
-    // ALWAYS wins (extraBody must not be able to override the model).
-    const outbound: ChatRequestBody = {
-      ...body,
-      ...(this.extraBody ?? {}),
-      model: opts.model,
-    };
+    const outbound: ChatRequestBody = { ...body, model: opts.model };
     this.log.debug({ provider: this.id, model: opts.model }, `${this.id} attempt`);
     return postChatCompletion(outbound, {
       baseUrl: this.baseUrl,

@@ -83,9 +83,8 @@ describe('loadEnv - ZAI (GLM) config', () => {
     expect(() => loadEnv({ ZAI_BASE_URL: 'not-a-url' })).toThrow(/Invalid environment/);
   });
 
-  it('defaults ZAI_THINKING_DISABLED to false and accepts the override', () => {
-    expect(loadEnv({}).env.ZAI_THINKING_DISABLED).toBe(false);
-    expect(loadEnv({ ZAI_THINKING_DISABLED: 'true' }).env.ZAI_THINKING_DISABLED).toBe(true);
+  it('has no thinking-disable flag: thinking is a client decision (pass-through)', () => {
+    expect('ZAI_THINKING_DISABLED' in loadEnv({}).env).toBe(false);
   });
 });
 
