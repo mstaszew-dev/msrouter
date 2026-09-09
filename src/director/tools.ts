@@ -97,7 +97,7 @@ export function toolDefinitions() {
       type: 'function',
       function: {
         name: 'write_prompt_override',
-        description: 'Append text to the Director prompt override file. This text will be appended to the agent message on next restart.',
+        description: 'Append text to the Director prompt override file. This text will be appended to the agent message on next restart. Placeholder text "test" (exact match after trimming, any casing) is ignored as a no-op.',
         parameters: {
           type: 'object',
           properties: {
@@ -207,8 +207,18 @@ async function webSearch({ query }: { query: string; maxResults?: number }): Pro
 }
 
 async function writePromptOverride({ text }: { text: string }): Promise<ToolResult> {
+  if (typeof text !== 'string') {
+    // Tool args arrive untyped from the model; reject non-strings before any
+    // string method so a bad call surfaces as a tool error, not a throw.
+    return { content: 'write_prompt_override: text must be a string', isError: true };
+  }
   if (!text || !text.trim()) {
     return { content: 'write_prompt_override: text is required', isError: true };
+  }
+  if (text.trim().toLowerCase() === 'test') {
+    // Placeholder ping with no directive content; writing it would only pollute
+    // the override log the agent reads every tick.
+    return { content: 'write_prompt_override: placeholder "test" ignored (no-op)' };
   }
   try {
     const dir = join(homedir(), '.campaign-agent');

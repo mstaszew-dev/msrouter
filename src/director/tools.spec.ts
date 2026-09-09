@@ -176,6 +176,34 @@ describe('callTool: write_prompt_override', () => {
     expect(String(res.content)).toContain('text is required');
   });
 
+  it('rejects non-string text as a tool error (not a throw)', async () => {
+    const res = await callTool('write_prompt_override', { text: 42 }, silent);
+    expect(res.isError).toBe(true);
+    expect(String(res.content)).toContain('text must be a string');
+  });
+
+  it('ignores the placeholder "test" in any casing without writing', async () => {
+    for (const text of ['test', 'TEST', 'Test', '  tEsT  ']) {
+      const res = await callTool('write_prompt_override', { text }, silent);
+      expect(res.isError).not.toBe(true);
+      expect(String(res.content)).toContain('ignored');
+    }
+    const mdPath = join(process.env['HOME']!, '.campaign-agent', 'director-prompt-overrides.md');
+    expect(existsSync(mdPath)).toBe(false);
+  });
+
+  it('still writes real messages that merely contain the word test', async () => {
+    const res = await callTool(
+      'write_prompt_override',
+      { text: 'test the dedupe flow tomorrow' },
+      silent,
+    );
+    expect(res.isError).not.toBe(true);
+    const mdPath = join(process.env['HOME']!, '.campaign-agent', 'director-prompt-overrides.md');
+    expect(existsSync(mdPath)).toBe(true);
+    expect(readFileSync(mdPath, 'utf8')).toContain('test the dedupe flow tomorrow');
+  });
+
   it('appends text to the prompt override file', async () => {
     const res = await callTool('write_prompt_override', { text: 'slow down on Drushim' }, silent);
     expect(res.isError).not.toBe(true);

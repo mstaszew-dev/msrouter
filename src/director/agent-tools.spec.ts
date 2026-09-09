@@ -1,10 +1,27 @@
-import { describe, expect, it, vi } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { callTool, toolDefinitions } from './agent-tools.js';
 
 const silent = { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() } as never;
 
 describe('agent-tools', () => {
+  let realHome: string;
+
+  beforeEach(() => {
+    realHome = process.env['HOME']!;
+    // Point HOME at a temp dir so write_prompt_override tests never touch the
+    // live ~/.campaign-agent/director-prompt-overrides.md.
+    process.env['HOME'] = mkdtempSync(join(tmpdir(), 'agent-tools-home-'));
+  });
+
+  afterEach(() => {
+    process.env['HOME'] = realHome;
+  });
+
   it('toolDefinitions returns read-only tools (terminal + web_search) by default', () => {
     const defs = toolDefinitions();
     const names = defs.map((d) => d.function.name).sort();
@@ -36,7 +53,7 @@ describe('agent-tools', () => {
   });
 
   it('callTool dispatches write_prompt_override', async () => {
-    const res = await callTool('write_prompt_override', { text: 'test' }, silent);
+    const res = await callTool('write_prompt_override', { text: 'slow down on Drushim' }, silent);
     expect(res.isError).not.toBe(true);
     expect(String(res.content)).toContain('appended');
   });
