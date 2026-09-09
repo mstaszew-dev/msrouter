@@ -4,9 +4,12 @@
  * seam and is mocked (same pattern as opencodego.spec).
  */
 import type pino from 'pino';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { loadEnv } from '../config/env.js';
 
 import { postChatCompletion } from './fetch.js';
+import { buildProviders } from './instances.js';
 import { SingleKeyProvider } from './single-key.js';
 
 vi.mock('./fetch.js', () => ({ postChatCompletion: vi.fn() }));
@@ -71,5 +74,41 @@ describe('SingleKeyProvider extraBody (ZAI thinking toggle)', () => {
     await p.attempt(body, new AbortController().signal, { model: 'glm-5.3-flash' });
     const [outbound] = vi.mocked(postChatCompletion).mock.calls[0]!;
     expect(outbound.model).toBe('glm-5.3-flash');
+  });
+});
+
+describe('ZAI_THINKING_DISABLED -> buildProviders zai extraBody wiring', () => {
+  beforeEach(() => {
+    // Calls accumulate across describes in this file; each test reads its own.
+    vi.mocked(postChatCompletion).mockReset();
+    vi.mocked(postChatCompletion).mockResolvedValue({
+      kind: 'OK',
+      response: new Response('{}', { status: 200 }),
+    });
+  });
+
+  afterEach(() => loadEnv({}));
+
+  it('wires thinking:disabled into the zai provider when the flag is set', async () => {
+    loadEnv({
+      ZAI_API_KEY: 'key-id.secret',
+      ZAI_THINKING_DISABLED: 'true',
+      SCHEDULE_INTERVAL_MINUTES: '-1',
+    });
+    const providers = buildProviders(silent);
+    await providers.zai.attempt(body, new AbortController().signal, { model: 'glm-5.3-flash' });
+    const [outbound] = vi.mocked(postChatCompletion).mock.calls[0]!;
+    expect(outbound).toMatchObject({ thinking: { type: 'disabled' } });
+  });
+
+  it('wires NO thinking field when the flag is unset', async () => {
+    loadEnv({
+      ZAI_API_KEY: 'key-id.secret',
+      SCHEDULE_INTERVAL_MINUTES: '-1',
+    });
+    const providers = buildProviders(silent);
+    await providers.zai.attempt(body, new AbortController().signal, { model: 'glm-5.3-flash' });
+    const [outbound] = vi.mocked(postChatCompletion).mock.calls[0]!;
+    expect(outbound).not.toHaveProperty('thinking');
   });
 });
