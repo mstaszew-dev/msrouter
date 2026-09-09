@@ -175,7 +175,7 @@ export class ProviderChain {
           this.consecutiveSuccesses.set(entry.label, 0);
           this.log.warn(
             { provider: entry.label, successes: count, label: 'chain' },
-            'local provider demoted after consecutive successes',
+            'weak tail provider demoted after consecutive successes',
           );
         }
         return { response: res.response, servedBy: { provider: entry.label, model: servedByModel } };

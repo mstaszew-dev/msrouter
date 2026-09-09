@@ -1131,11 +1131,14 @@ describe('ProviderChain - local provider success-based demotion', () => {
     // Two consecutive laptop successes hit the limit -> the demotion warn
     // must fire for laptop specifically.
     const demoteWarns = (silentLogger.warn as ReturnType<typeof vi.fn>).mock.calls.filter(
-      (c) => typeof c[1] === 'string' && c[1].includes('local provider demoted'),
+      (c) => typeof c[1] === 'string' && c[1].includes('weak tail provider demoted'),
     );
     expect(
       demoteWarns.filter((c) => JSON.stringify(c[0]).includes('laptop')),
     ).toHaveLength(1);
+    // NICE-2: laptop must still be in the queue (demoted, not removed).
+    const labels = chain.queueSnapshot().map((e) => e.label);
+    expect(labels).toContain('laptop');
   });
 
   it('does not demote remote providers after successes', async () => {
