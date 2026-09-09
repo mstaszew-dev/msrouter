@@ -11,8 +11,9 @@ cd /Users/mst/ZCodeProject/msrouter && ./scripts/run.sh dev
 ```
 
 It refuses to start outside iTerm by design (`assertInIterm()` in `src/main.ts`
-exits when `TERM_PROGRAM !== 'iTerm.app'`) - supervision depends on visible
-tabs. Never launch it from an agent shell, a script, or a non-iTerm terminal.
+walks the process parent chain via ps and requires a LIVE iTerm2 ancestor -
+inherited `TERM_PROGRAM` env is not accepted as proof, because it survives
+nohup/detachment). Supervision depends on visible tabs. Never launch it from an agent shell, a script, or a non-iTerm terminal.
 
 If it is down and you need it up:
 

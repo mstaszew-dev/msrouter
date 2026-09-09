@@ -119,8 +119,14 @@ EOF
 }
 
 case "${1:-dev}" in
-  dev|"")  start_gateway_dev; wait_ready; report ;;
-  prod)    start_gateway_prod; wait_ready; report ;;
+  dev|"")  start_gateway_dev; wait_ready; report
+           # Keep the tab attached to live logs: the iTerm rule exists so the
+           # gateway is visible and supervised; a bare prompt hides it.
+           log "tailing gateway logs (Ctrl-C stops the tail; the gateway keeps running)"
+           tail -F .run/gateway.log ;;
+  prod)    start_gateway_prod; wait_ready; report
+           log "tailing gateway logs (Ctrl-C stops the tail; the gateway keeps running)"
+           tail -F .run/gateway.log ;;
   worker)  start_worker; ok "worker started" ;;
   chrome)  start_chrome ;;
   down)    down ;;

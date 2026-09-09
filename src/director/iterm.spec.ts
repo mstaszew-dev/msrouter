@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type pino from 'pino';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Shared switchboard so each test can steer the partially-mocked fs.
 const fsState = vi.hoisted(() => ({
@@ -97,5 +97,85 @@ describe('startWorkerInIterm - best-effort start-lock write', () => {
       expect.anything(),
       expect.anything(),
     );
+  });
+});
+
+describe('iTerm ancestry guard', () => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- dynamic-import typing under the fs mock
+  type ItermModule = typeof import('./iterm.js');
+  type Lookup = NonNullable<Parameters<ItermModule['isItermInAncestry']>[1]>;
+  let iterm: ItermModule;
+
+  beforeAll(async () => {
+    fsState.denyAll = false; // let module-load findRoot() find its fallback
+    vi.resetModules();
+    iterm = await import('./iterm.js');
+  });
+
+  // A fake ps: pid → {ppid, comm} map; unknown pids simulate a dead process.
+  const chain =
+    (map: Record<number, { ppid: number; comm: string }>): Lookup =>
+    (pid) =>
+      map[pid] ?? null;
+
+  afterEach(() => {
+    delete process.env['TERM_PROGRAM'];
+    vi.restoreAllMocks();
+  });
+
+  it('is true when iTerm2 is a live ancestor', () => {
+    const lookup = chain({
+      100: { ppid: 200, comm: 'npm' },
+      200: { ppid: 300, comm: 'zsh' },
+      300: { ppid: 1, comm: 'iTerm2' },
+    });
+    expect(iterm.isItermInAncestry(100, lookup)).toBe(true);
+  });
+
+  it('is FALSE when the chain has no iTerm ancestor even with TERM_PROGRAM=iTerm.app', () => {
+    // THE regression (2026-09-09): run.sh nohups the gateway, which detaches
+    // to launchd within minutes; the inherited TERM_PROGRAM env var survived
+    // and the old env-only guard passed for a fully detached process.
+    process.env['TERM_PROGRAM'] = 'iTerm.app';
+    const lookup = chain({
+      100: { ppid: 200, comm: 'node' },
+      200: { ppid: 1, comm: 'launchd' },
+    });
+    expect(iterm.isItermInAncestry(100, lookup)).toBe(false);
+  });
+
+  it('is false when a dead ancestor fails the ps walk (fail closed)', () => {
+    const lookup = chain({ 100: { ppid: 999, comm: 'npm' } }); // 999: dead
+    expect(iterm.isItermInAncestry(100, lookup)).toBe(false);
+  });
+
+  it('walk terminates on a self-referential chain', () => {
+    const lookup = chain({ 100: { ppid: 100, comm: 'init' } });
+    expect(iterm.isItermInAncestry(100, lookup)).toBe(false);
+  });
+
+  it('assertInIterm exits when ancestry lacks iTerm even with TERM_PROGRAM set', () => {
+    process.env['TERM_PROGRAM'] = 'iTerm.app';
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process exited');
+    });
+    const lookup = chain({ 100: { ppid: 1, comm: 'bash' } });
+
+    expect(() => iterm.assertInIterm(100, lookup)).toThrow('process exited');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it('assertInIterm passes when iTerm2 is an ancestor (no exit)', () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process exited');
+    });
+    const lookup = chain({
+      100: { ppid: 200, comm: 'npm' },
+      200: { ppid: 300, comm: 'zsh' },
+      300: { ppid: 1, comm: 'iTerm2' },
+    });
+
+    expect(() => iterm.assertInIterm(100, lookup)).not.toThrow();
+    expect(exitSpy).not.toHaveBeenCalled();
   });
 });

@@ -180,25 +180,81 @@ export function isInIterm(): boolean {
 }
 
 /**
- * Check if the CURRENT process is running inside an iTerm2 tab.
- * Uses $TERM_PROGRAM which iTerm2 sets to "iTerm.app" on every session.
- * This is distinct from isInIterm() which only checks if iTerm2 is installed/running.
+ * Check if the CURRENT process has $TERM_PROGRAM === "iTerm.app". WEAK: the
+ * variable is inherited env - it survives detachment (nohup/&) and is present
+ * in any shell that ever descended from an iTerm tab. Use
+ * isItermInAncestry() for the authoritative check. Distinct from isInIterm()
+ * which only checks if iTerm2 is installed/running.
  */
 export function isRunningInIterm(): boolean {
   return process.env['TERM_PROGRAM'] === 'iTerm.app';
 }
 
+/** Process identity snapshot: parent pid + executable name. */
+export interface ProcInfo {
+  ppid: number;
+  comm: string;
+}
+
 /**
- * Assert that msrouter is running inside iTerm2. Calls process.exit(1) with a
- * clear message if not. Must be called before any infrastructure is started
- * (Kafka, Chrome, agent tabs) so the user gets actionable feedback.
+ * Real lookup via ps (macOS). Returns null when the pid is dead or ps
+ * fails - callers treat that as "not an iTerm child" (fail closed).
  */
-export function assertInIterm(): void {
-  if (!isRunningInIterm()) {
+export function procInfo(pid: number): ProcInfo | null {
+  try {
+    const out = execFileSync('ps', ['-o', 'ppid=,comm=', '-p', String(pid)], {
+      encoding: 'utf8',
+      timeout: 3_000,
+      stdio: 'pipe',
+    });
+    const m = out.trim().split('\n')[0]?.match(/^\s*(\d+)\s+(.+)$/);
+    return m ? { ppid: Number(m[1]), comm: m[2]!.trim() } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True when a live iTerm2 process is in this process's PARENT chain. This is
+ * the authoritative "launched from an iTerm tab" check. The old TERM_PROGRAM
+ * env check was not proof: the variable is inherited env, and run.sh nohups
+ * the gateway, which detaches it to launchd within minutes while TERM_PROGRAM
+ * stays baked into its env (2026-09-09: the gateway ran fully detached and
+ * the env-only guard passed).
+ *
+ * Fail-closed: a dead ancestor (ps returns nothing) ends the walk as false.
+ */
+export function isItermInAncestry(
+  startPid: number = process.pid,
+  lookup: (pid: number) => ProcInfo | null = procInfo,
+): boolean {
+  let pid = startPid;
+  for (let hop = 0; hop < 32; hop++) {
+    const info = lookup(pid);
+    if (!info) return false;
+    if (/iterm/i.test(info.comm)) return true;
+    if (info.ppid <= 1) return false;
+    pid = info.ppid;
+  }
+  return false;
+}
+
+/**
+ * Assert that msrouter was launched from a live iTerm2 session (a live
+ * iTerm2 process in the parent chain). Calls process.exit(1) with an
+ * actionable message if not. Must be called before any infrastructure is
+ * started (Kafka, Chrome, agent tabs).
+ */
+export function assertInIterm(
+  startPid: number = process.pid,
+  lookup: (pid: number) => ProcInfo | null = procInfo,
+): void {
+  if (!isItermInAncestry(startPid, lookup)) {
     const term = process.env['TERM_PROGRAM'] ?? '(unset)';
     console.error(
-      `[msrouter] FATAL: must be launched from iTerm2 (detected TERM_PROGRAM=${term}).\n` +
-        `Open iTerm2 and run: node dist/main.js`,
+      `[msrouter] FATAL: no live iTerm2 process found in this process's parent chain ` +
+        `(TERM_PROGRAM=${term} is inherited env and is not proof).\n` +
+        `Open an iTerm2 tab and run: cd ${MSROUTER_ROOT} && ./scripts/run.sh dev`,
     );
     process.exit(1);
   }

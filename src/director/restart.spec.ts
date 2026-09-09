@@ -391,23 +391,28 @@ describe('assertInIterm', () => {
   });
 
   it('does not exit when running inside iTerm2', () => {
+    // Ancestry-based guard (2026-09-09): TERM_PROGRAM is inherited env and
+    // proves nothing; this process's real parent chain decides. In vitest the
+    // chain is vitest/node (no iTerm2), so inject an iTerm2-terminated chain.
+    const lookup = (pid: number) =>
+      pid === 1 ? { ppid: 0, comm: 'launchd' } : { ppid: 1, comm: 'iTerm2' };
     process.env['TERM_PROGRAM'] = 'iTerm.app';
-    assertInIterm();
+    assertInIterm(process.pid, lookup);
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
-  it('exits with code 1 when TERM_PROGRAM is Apple_Terminal', () => {
+  it('exits with code 1 when the parent chain has no iTerm2 (Apple_Terminal env included)', () => {
     process.env['TERM_PROGRAM'] = 'Apple_Terminal';
-    assertInIterm();
+    assertInIterm(); // real ps walk: vitest's chain has no iTerm2
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(
-      expect.stringContaining('must be launched from iTerm2'),
+      expect.stringContaining('no live iTerm2 process'),
     );
   });
 
   it('exits with code 1 when TERM_PROGRAM is unset', () => {
     delete process.env['TERM_PROGRAM'];
-    assertInIterm();
+    assertInIterm(); // real ps walk: vitest's chain has no iTerm2
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       expect.stringContaining('TERM_PROGRAM=(unset)'),
