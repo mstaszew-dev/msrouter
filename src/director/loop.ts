@@ -474,11 +474,11 @@ export class DirectorLoop {
       }
 
       // Publish observation event to Kafka only when the OBSERVABLE STATE
-      // changed. subChanged alone was not enough: once stale-campaign fires,
-      // classifications > 0 every tick, and the old subChanged||hasClassifications
-      // gate republished + reposted to Slack an identical snapshot every tick
-      // (2026-09-01 live: same 1366/2000 observation posted repeatedly). The
-      // hash keys on the payload content, so a real submission still republishes.
+      // changed. The hash keys on submitted/target ONLY: the published
+      // payload also carries the classifications count, and hashing that
+      // republished an identical submitted count whenever the stale-warning
+      // lifecycle flipped the count 1 -> 0 five minutes after each real
+      // submission (2026-09-09: every observation duplicated in pairs).
       const subChanged = snapshot.tracker.submitted !== checkpoint.lastSubmitted;
       const observationPayload = JSON.stringify({
         kind: 'observation',
@@ -488,7 +488,14 @@ export class DirectorLoop {
         },
         classifications: classificationsCount,
       });
-      const observationHash = createHash('md5').update(observationPayload).digest('hex');
+      const observationHash = createHash('md5')
+        .update(
+          JSON.stringify({
+            submitted: snapshot.tracker.submitted,
+            target: snapshot.tracker.target,
+          }),
+        )
+        .digest('hex');
       const observationChanged = observationHash !== checkpoint.lastObservationHash;
       if (subChanged || observationChanged) {
         checkpoint.lastSubmitted = snapshot.tracker.submitted;

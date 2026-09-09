@@ -236,6 +236,9 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ iterm: true, state: { pids: [1], running: true, orphaned: false } });
   vi.mocked(ensureInfrastructureHealthy).mockReset().mockResolvedValue(false);
+  // The execFile mock records across tests (any subChanged tick spawns the
+  // RAG rebuild); clear it so per-test spawn counts stay exact.
+  (execFile as unknown as { mockClear: () => void }).mockClear();
 });
 
 describe('DirectorLoop.runOnce - remaining paths', () => {
@@ -347,6 +350,49 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
     expect(vi.mocked(restartWorker)).toHaveBeenCalledTimes(1);
   });
 
+  it('does NOT republish an observation when only the classifications count changed', async () => {
+    // 2026-09-09 incident: the observation hash included the classifications
+    // count, so after a submission published with classifications=1, the next
+    // tick (stale warning cleared, classifications=0, SAME submitted count)
+    // hashed differently and republished the identical submitted count -
+    // duplicating every observation to Kafka + Slack in pairs.
+    const { loop } = buildLoop({
+      KAFKA_ENABLED: 'true',
+      KAFKA_HOME: '/plain/kafka',
+      KAFKA_BOOTSTRAP: 'localhost:19092',
+    });
+    const snap = defaultSnapshot();
+    vi.mocked(observe).mockImplementation(async () => ({
+      snapshot: { ...snap, tracker: { ...snap.tracker, submitted: 1424 } },
+      checkpoint: { eventsReadOffset: 0, lastTickAt: 't' },
+    }));
+    // Tick 1: stale-campaign fires (classifications=1); tick 2: cleared (=0).
+    vi.mocked(classify)
+      .mockReturnValueOnce(staleCritical)
+      .mockReturnValueOnce([]);
+
+    await loop.runOnce(freshSignal());
+    await loop.runOnce(freshSignal());
+
+    const observationCalls = vi
+      .mocked(kafkaProduce)
+      .mock.calls.filter((c) => String(c[2]).includes('"kind":"observation"'));
+    expect(observationCalls).toHaveLength(1); // not 2: same submitted, only cls changed
+
+    // A REAL submission still publishes.
+    vi.mocked(observe).mockImplementation(async () => ({
+      snapshot: { ...snap, tracker: { ...snap.tracker, submitted: 1425 } },
+      checkpoint: { eventsReadOffset: 0, lastTickAt: 't' },
+    }));
+    vi.mocked(classify).mockReturnValue([]);
+    await loop.runOnce(freshSignal());
+    const after = vi
+      .mocked(kafkaProduce)
+      .mock.calls.filter((c) => String(c[2]).includes('"kind":"observation"'));
+    expect(after).toHaveLength(2);
+    expect(String(after[1]![2])).toContain('"submitted":1425');
+  });
+
   it('observe-only: skips the stale-campaign worker restart (logs instead)', async () => {
     // Lines 472-473: with DIRECTOR_AUTOSTART=false the stall-triggered VPN
     // rotation happens but the worker restart is suppressed with a log.
@@ -409,7 +455,14 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
   });
 
   it('rebuilds the RAG index when new submissions are detected', async () => {
-    const { loop } = buildLoop({}, { lastSubmitted: undefined });
+    // KAFKA_ENABLED=true so the tick also spawns the broker 'status' probe
+    // through the same execFile mock (previously this assertion passed on
+    // leftover probe calls leaked from earlier tests - pre-mockClear era).
+    const { loop } = buildLoop({
+      KAFKA_ENABLED: 'true',
+      KAFKA_HOME: '/plain/kafka',
+      KAFKA_BOOTSTRAP: 'localhost:19092',
+    }, { lastSubmitted: undefined });
 
     const result = await loop.runOnce(freshSignal());
 

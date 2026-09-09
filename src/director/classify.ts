@@ -7,6 +7,8 @@
  * titles, the 60-day dedupe contract, and observed portal-error patterns).
  */
 
+import { env } from '../config/env.js';
+
 import type { CampaignSnapshot, DecisionClassification } from './types.js';
 
 const EXCLUDED_TITLE =
@@ -89,16 +91,20 @@ export function classify(
     }
   }
 
-  // Staleness detection: if no recent events and last activity was >60 min ago,
-  // the campaign agent may be stuck (403 errors, LLM timeouts, etc.)
-  // A completed campaign is never stale: the agent exits on purpose, and
-  // flagging it would rotate VPN / restart the worker forever.
+  // Staleness detection: if no recent events and last activity was longer ago
+  // than the threshold, the campaign agent may be stuck (403 errors, LLM
+  // timeouts, etc.). Threshold is env-tunable: with slow providers a legit
+  // tick can run >60min without a tracker event, and flagging it stale
+  // rotates the VPN + restarts (kills) a healthy mid-tick worker
+  // (2026-09-09 incident). A completed campaign is never stale: the agent
+  // exits on purpose, and flagging it would rotate VPN / restart the worker
+  // forever.
   const complete = snapshot.tracker.submitted >= snapshot.tracker.target;
   if (!complete && snapshot.recentEvents.length === 0 && lastEventAt) {
     const lastMs = new Date(lastEventAt).getTime();
     const nowMs = new Date(now).getTime();
     const idleMinutes = (nowMs - lastMs) / 60_000;
-    if (idleMinutes >= 60) {
+    if (idleMinutes >= env().STALE_THRESHOLD_MINUTES) {
       out.push({
         kind: 'stale-campaign',
         severity: 'warn',

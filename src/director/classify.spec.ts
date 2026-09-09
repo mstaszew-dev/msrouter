@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { loadEnv } from '../config/env.js';
 
 import { classify } from './classify.js';
 import type { CampaignEvent, CampaignSnapshot } from './types.js';
@@ -37,6 +39,9 @@ function skipped(detail: string, over: Record<string, unknown> = {}): CampaignEv
 
 describe('classify', () => {
   const now = '2026-07-27T12:00:00Z';
+
+  beforeEach(() => loadEnv({})); // classify reads STALE_THRESHOLD_MINUTES
+  afterEach(() => loadEnv({}));
 
   it('flags a portal-error skip', () => {
     const out = classify(snap([skipped('login_or_captcha_required')]), now, now);
@@ -80,6 +85,23 @@ describe('classify', () => {
     const oldEventAt = '2026-07-27T10:00:00Z'; // 2 hours before now
     const out = classify(snap([]), now, oldEventAt);
     expect(out).toContainEqual(expect.objectContaining({ kind: 'stale-campaign', severity: 'warn' }));
+  });
+
+  it('honors STALE_THRESHOLD_MINUTES: 100min idle is NOT stale at threshold 150', () => {
+    // 2026-09-09: with slow LLM providers a legit tick can run >60min without
+    // a tracker event; the default threshold murdered healthy mid-tick agents
+    // (stale -> VPN rotation -> restartWorker killed the worker). A raised
+    // threshold must suppress the classification.
+    loadEnv({ STALE_THRESHOLD_MINUTES: '150' });
+    const oldEventAt = '2026-07-27T10:00:00Z';
+    const hundredMinLater = '2026-07-27T11:40:00Z'; // 100 min idle
+    const out = classify(snap([]), hundredMinLater, oldEventAt);
+    expect(out.find((c) => c.kind === 'stale-campaign')).toBeUndefined();
+    // ...and the default (60) still flags the same idle window.
+    loadEnv({});
+    expect(classify(snap([]), hundredMinLater, oldEventAt)).toContainEqual(
+      expect.objectContaining({ kind: 'stale-campaign' }),
+    );
   });
 
   it('does not flag stale-campaign when events exist', () => {

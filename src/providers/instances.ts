@@ -88,6 +88,12 @@ export function buildProviders(log: Logger): Providers {
         baseUrl: env.ZAI_BASE_URL,
         apiKey: env.ZAI_API_KEY,
         defaultModel: env.ZAI_MODEL,
+        // glm-5.3-flash is a hybrid reasoning model: thinking on costs
+        // minutes per call over huge contexts. ZAI_THINKING_DISABLED=true
+        // injects {"thinking":{"type":"disabled"}} into every request.
+        extraBody: env.ZAI_THINKING_DISABLED
+          ? { thinking: { type: 'disabled' } }
+          : undefined,
       },
       timeoutMs,
       log,

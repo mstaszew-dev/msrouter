@@ -46,6 +46,8 @@ const schema = z.object({
   ZAI_API_KEY: z.string().optional(),
   ZAI_BASE_URL: z.string().url().default('https://api.z.ai/api/paas/v4'),
   ZAI_MODEL: z.string().default('glm-4.6'),
+  // Inject {"thinking":{"type":"disabled"}} into zai requests (reasoning cost).
+  ZAI_THINKING_DISABLED: flag('false'),
   // TokenRouter (tokenrouter.com): OpenAI-compatible aggregator. Single key,
   // free GLM tier. Key verified against api.tokenrouter.com 2026-08-30
   // (the .io/.me domains want tr_-prefixed keys - this one is a .com key).
@@ -147,6 +149,9 @@ const schema = z.object({
   // forensics had cleared hermes of the invented-email incident). The python
   // runner remains available via DIRECTOR_RUNNER override.
   DIRECTOR_RUNNER: z.string().default(PYTHON_RUNNER),
+  // stale-campaign fires after this many minutes without new tracker events.
+  // Raise when providers are slow: a legit mid-tick worker must not be killed.
+  STALE_THRESHOLD_MINUTES: z.coerce.number().int().positive().default(60),
   // When false the Director never spawns/kills/restarts the campaign worker
   // (observe-only supervision): the user starts the agent manually from the
   // GUI. Observation, classification, Slack and Kafka stay active. VPN IP

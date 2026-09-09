@@ -82,6 +82,11 @@ describe('loadEnv - ZAI (GLM) config', () => {
   it('rejects a non-URL ZAI_BASE_URL (fail-fast)', () => {
     expect(() => loadEnv({ ZAI_BASE_URL: 'not-a-url' })).toThrow(/Invalid environment/);
   });
+
+  it('defaults ZAI_THINKING_DISABLED to false and accepts the override', () => {
+    expect(loadEnv({}).env.ZAI_THINKING_DISABLED).toBe(false);
+    expect(loadEnv({ ZAI_THINKING_DISABLED: 'true' }).env.ZAI_THINKING_DISABLED).toBe(true);
+  });
 });
 
 describe('loadEnv - TokenRouter config', () => {
