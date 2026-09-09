@@ -10,7 +10,7 @@
 
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -82,6 +82,23 @@ const execFileP = promisify(execFile);
 function expandTilde(p: string): string {
   if (p.startsWith('~/') || p === '~') return join(homedir(), p.slice(1));
   return p;
+}
+
+/**
+ * Minutes since the campaign's events.jsonl last changed (the agent appends
+ * an event on every recorded submission/skip), or null when there is no
+ * recent activity: missing file, empty file (no events ever recorded), or an
+ * mtime older than is meaningful. Null/old is treated as stale by callers
+ * (a stuck agent gets its fresh IP kick).
+ */
+function trackerEventsIdleMinutes(campaignDir: string): number | null {
+  try {
+    const st = statSync(join(campaignDir, 'events.jsonl'));
+    if (st.size === 0) return null;
+    return (Date.now() - st.mtimeMs) / 60_000;
+  } catch {
+    return null;
+  }
 }
 
 export interface DirectorLoopOpts {
@@ -383,13 +400,24 @@ export class DirectorLoop {
           // keep breaking in-flight fetches (Slack polls, agent requests).
           checkpoint.lastVpnRotation = new Date().toISOString();
           if (ok && autostartEnabled(e)) {
-            this.opts.log.info('Proton VPN IP rotated successfully; restarting agent');
-            await restartWorker({
-              entryCommand: e.DIRECTOR_RUNNER || DEFAULT_RUNNER,
-              workspace: e.DIRECTOR_OPENCLAW_WORKSPACE,
-              cdpUrl: e.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
-              log: this.opts.log,
-            });
+            // Restart only a STUCK agent onto the new IP: a healthy mid-tick
+            // worker (tracker events within the stale threshold) must not be
+            // killed by a routine IP change - same failure mode as the stall
+            // path (2026-09-09: workers were silently killed every ~30 min).
+            const idleMin = trackerEventsIdleMinutes(e.DIRECTOR_CAMPAIGN_DIR);
+            if (idleMin === null || idleMin >= e.STALE_THRESHOLD_MINUTES) {
+              this.opts.log.info('Proton VPN IP rotated successfully; restarting agent');
+              await restartWorker({
+                entryCommand: e.DIRECTOR_RUNNER || DEFAULT_RUNNER,
+                workspace: e.DIRECTOR_OPENCLAW_WORKSPACE,
+                cdpUrl: e.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
+                log: this.opts.log,
+              });
+            } else {
+              this.opts.log.info(
+                `Proton VPN IP rotated; campaign active (last event ${Math.round(idleMin)}m ago); worker not restarted`,
+              );
+            }
           } else if (ok) {
             this.opts.log.info(
               'Proton VPN IP rotated successfully; DIRECTOR_AUTOSTART=false so the worker is not restarted',

@@ -12,7 +12,7 @@
 import { execFile } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import type pino from 'pino';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -583,6 +583,48 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
         cdpUrl: 'http://127.0.0.1:9222',
       }),
     );
+  });
+
+  it('periodic rotation does NOT restart a healthy mid-tick worker', async () => {
+    // 2026-09-09 review SHOULD-1: the stall path got the staleness guard, but
+    // the PERIODIC rotation path still restartWorker'ed a healthy agent every
+    // time the IP changed (live: every ~30 min) - the same silent-kill failure
+    // mode. A campaign with fresh tracker events must survive the rotation.
+    const { loop, cpPath } = buildLoop({
+      DIRECTOR_RUNNER: '/tmp/launch',
+      DIRECTOR_CDP_URL: 'http://127.0.0.1:9222',
+      VPN_ROTATION_INTERVAL_MINUTES: '30',
+      STALE_THRESHOLD_MINUTES: '60',
+    });
+    vi.mocked(shouldRotateVpn).mockReturnValue(true);
+    vi.mocked(rotateVpnIp).mockResolvedValue(true);
+    // Fresh tracker activity: the worker is mid-tick and productive. The
+    // campaign dir is the checkpoint's parent (buildLoop's stateDir).
+    const eventsPath = join(dirname(cpPath), 'events.jsonl');
+    writeFileSync(eventsPath, '{"at":"now"}\n');
+
+    const result = await loop.runOnce(freshSignal());
+
+    expect(result.reason).toBe('ok');
+    expect(vi.mocked(rotateVpnIp)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(restartWorker)).not.toHaveBeenCalled();
+  });
+
+  it('periodic rotation still restarts a STALE worker (fresh IP for a stuck agent)', async () => {
+    const { loop } = buildLoop({
+      DIRECTOR_RUNNER: '/tmp/launch',
+      DIRECTOR_CDP_URL: 'http://127.0.0.1:9222',
+      VPN_ROTATION_INTERVAL_MINUTES: '30',
+      STALE_THRESHOLD_MINUTES: '60',
+    });
+    vi.mocked(shouldRotateVpn).mockReturnValue(true);
+    vi.mocked(rotateVpnIp).mockResolvedValue(true);
+    // No events.jsonl in the campaign dir: nothing recent -> stale.
+
+    const result = await loop.runOnce(freshSignal());
+
+    expect(result.reason).toBe('ok');
+    expect(vi.mocked(restartWorker)).toHaveBeenCalledTimes(1);
   });
 
   it('treats a non-Error RAG rebuild failure as a warning, not a crash', async () => {
