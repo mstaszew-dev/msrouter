@@ -7,7 +7,10 @@ import { createGraphqlHandler, schema } from './graphql.js';
 import { registerHandlers } from './handlers.js';
 
 const silentLogger = {
-  warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn(),
+  warn: vi.fn(),
+  info: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
 } as unknown as Parameters<typeof registerHandlers>[1]['log'];
 
 /** A chain whose handle() resolves to a non-streaming text response. */
@@ -15,7 +18,10 @@ function textChain(content = 'Hello from model', provider = 'opencode', model = 
   const body = JSON.stringify({ choices: [{ message: { content }, finish_reason: 'stop' }] });
   return {
     handle: vi.fn(async () => ({
-      response: new Response(body, { status: 200, headers: { 'content-type': 'application/json' } }),
+      response: new Response(body, {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
       servedBy: { provider, model },
     })),
   } as never;
@@ -90,7 +96,9 @@ describe('graphql schema', () => {
 
   it('Mutation.completion surfaces chain errors in GraphQL errors', async () => {
     const chain = {
-      handle: vi.fn(async () => { throw new Error('all providers failed'); }),
+      handle: vi.fn(async () => {
+        throw new Error('all providers failed');
+      }),
     } as never;
     const res = await execute(
       'mutation { completion(input: { messages: [{ role: "user", content: "hi" }] }) { content } }',
@@ -112,16 +120,75 @@ describe('graphql schema', () => {
     const callBody = handleMock.mock.calls[0]![0] as { max_tokens: number };
     expect(callBody.max_tokens).toBe(64);
   });
+
+  it('forwards temperature when provided and omits both optionals when absent', async () => {
+    const chain = textChain('TempOK');
+    const res = await execute(
+      'mutation { completion(input: { messages: [{ role: "user", content: "hi" }], temperature: 0.3 }) { content } }',
+      chain,
+    );
+    const d = dataAs<{ completion: { content: string } }>(res);
+    expect(d.completion.content).toBe('TempOK');
+    const handleMock = (chain as { handle: ReturnType<typeof vi.fn> }).handle;
+    const callBody = handleMock.mock.calls[0]![0] as {
+      temperature?: number;
+      max_tokens?: number;
+    };
+    expect(callBody.temperature).toBe(0.3);
+    expect('max_tokens' in callBody).toBe(false);
+  });
+
+  it('defaults content to empty and finish_reason to stop when choices are empty', async () => {
+    const body = JSON.stringify({ choices: [] });
+    const chain = {
+      handle: vi.fn(async () => ({
+        response: new Response(body, {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+        servedBy: { provider: 'opencode', model: 'test-model' },
+      })),
+    } as never;
+    const res = await execute(
+      'mutation { completion(input: { messages: [{ role: "user", content: "hi" }] }) { content finish_reason } }',
+      chain,
+    );
+    const d = dataAs<{ completion: { content: string; finish_reason: string } }>(res);
+    expect(d.completion.content).toBe('');
+    expect(d.completion.finish_reason).toBe('stop');
+  });
 });
 
 describe('createGraphqlHandler', () => {
+  it('responds 400 when the request has no body at all', async () => {
+    const handler = createGraphqlHandler(textChain(), silentLogger);
+    let status = 0;
+    let body: unknown;
+    const res = {
+      writeHead: (s: number) => {
+        status = s;
+      },
+      end: (b: string) => {
+        body = JSON.parse(b);
+      },
+    } as never;
+    await handler({} as never, res);
+    expect(status).toBe(400);
+    const errBody = body as { errors: Array<{ message: string }> };
+    expect(errBody.errors[0]!.message).toContain('query');
+  });
+
   it('responds 400 with a GraphQL error when query is missing', async () => {
     const handler = createGraphqlHandler(textChain(), silentLogger);
     let status = 0;
     let body: unknown;
     const res = {
-      writeHead: (s: number) => { status = s; },
-      end: (b: string) => { body = JSON.parse(b); },
+      writeHead: (s: number) => {
+        status = s;
+      },
+      end: (b: string) => {
+        body = JSON.parse(b);
+      },
     } as never;
     await handler({ body: { variables: {} } } as never, res);
     expect(status).toBe(400);
@@ -134,12 +201,19 @@ describe('createGraphqlHandler', () => {
     let status = 0;
     let body: unknown;
     const res = {
-      writeHead: (s: number) => { status = s; },
-      end: (b: string) => { body = JSON.parse(b); },
+      writeHead: (s: number) => {
+        status = s;
+      },
+      end: (b: string) => {
+        body = JSON.parse(b);
+      },
     } as never;
-    await handler({
-      body: { query: '{ health { status } }' },
-    } as never, res);
+    await handler(
+      {
+        body: { query: '{ health { status } }' },
+      } as never,
+      res,
+    );
     expect(status).toBe(200);
     const resultBody = body as { data: { health: { status: string } } };
     expect(resultBody.data.health.status).toBe('ok');

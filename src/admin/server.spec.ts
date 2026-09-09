@@ -134,7 +134,7 @@ describe('admin server: static SPA serving', () => {
     expect(res.headers.get('content-type')).toContain('text/html');
     expect(res.headers.get('content-security-policy')).toContain('default-src');
     expect(res.headers.get('x-frame-options')).toBe('DENY');
-    expect((await res.text())).toContain('console');
+    expect(await res.text()).toContain('console');
   });
 
   it('falls back to index.html for client-side routes (no such file)', async () => {
@@ -154,13 +154,23 @@ describe('admin server: static SPA serving', () => {
     expect(res.headers.get('content-type')).toContain('text/javascript');
   });
 
+  it('404s when even the SPA fallback (index.html) is missing from webDist', async () => {
+    // webDist exists (created in beforeEach) but holds no index.html, so the
+    // SPA fallback target itself fails to read -> NotFoundError('static content').
+    await startServer(webDist);
+    const res = await fetch(`${baseUrl}/missing.js`);
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toBe('static content not found');
+  });
+
   it('HEAD requests get headers but no body', async () => {
     await writeFile(join(webDist, 'index.html'), '<html>head</html>');
     await startServer(webDist);
     const res = await fetch(`${baseUrl}/`, { method: 'HEAD' });
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('text/html');
-    expect((await res.text())).toBe('');
+    expect(await res.text()).toBe('');
   });
 
   it('URL-encoded traversal outside webRoot is rejected with 400', async () => {
