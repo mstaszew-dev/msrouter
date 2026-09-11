@@ -83,13 +83,12 @@ const schema = z.object({
   OPENCODE_NEMOTRON_MODEL: z.string().default('nemotron-3-ultra-free'),
   OPENCODE_DEEPSEEK_FLASH_MODEL: z.string().default('deepseek-v4-flash-free'),
   OPENCODE_MIMO_MODEL: z.string().default('mimo-v2.5-free'),
-  OPENCODE_LAGUNA_MODEL: z.string().default('laguna-s-2.1-free'),
-  // 2026-08-31 OpenCode catalog reshuffle: qwen3.6-plus, minimax-m3, and
-  // north-mini-code-free were removed (paid-only or gone), kimi-k3 /
-  // gemini-3.7-flash / grok-4.6 / muse-spark-1.2 demand a payment method
-  // (401 CreditsError on every key), and ling-3.0-flash-free was renamed to
-  // ling-3.0-flash-fin-free. These two var names are historical; they now
-  // carry the strongest surviving free all-rounders.
+  OPENCODE_LAGUNA_MODEL: z.string().default('muse-spark-1.3-contributor-free'),
+  // 2026-08-31 reshuffle: qwen3.6-plus/minimax-m3/north-mini-code-free gone;
+  // kimi-k3/gemini-3.7-flash/grok-4.6/muse-spark-1.2 demand payment. Var
+  // names are historical; they carry the strongest surviving free models.
+  // 2026-09-11 audit: laguna-s-2.1-free removed upstream (401 ModelError) -
+  // LAGUNA slot now carries muse-spark-1.3-contributor-free (verified live).
   OPENCODE_MINIMAX_MODEL: z.string().default('nemotron-3.5-lightning-free'),
   OPENCODE_QWEN_MODEL: z.string().default('muse-spark-1.2-contributor-free'),
   OPENCODE_LING_MODEL: z.string().default('ling-3.0-flash-fin-free'),

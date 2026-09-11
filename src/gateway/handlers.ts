@@ -214,7 +214,7 @@ export function buildModelList(): Array<{ id: string; object: string; owned_by: 
     data.push({ id: cfg.OPENCODE_NEMOTRON_MODEL, object: 'model', owned_by: 'opencode-nemotron' });
     data.push({ id: cfg.OPENCODE_DEEPSEEK_FLASH_MODEL, object: 'model', owned_by: 'opencode-deepseek-flash' });
     data.push({ id: cfg.OPENCODE_MIMO_MODEL, object: 'model', owned_by: 'opencode-mimo' });
-    data.push({ id: cfg.OPENCODE_LAGUNA_MODEL, object: 'model', owned_by: 'opencode-laguna' });
+    data.push({ id: cfg.OPENCODE_LAGUNA_MODEL, object: 'model', owned_by: 'opencode-muse-spark-1.3' });
     data.push({ id: cfg.OPENCODE_LING_MODEL, object: 'model', owned_by: 'opencode-ling' });
     data.push({ id: cfg.OPENCODE_QWEN_MODEL, object: 'model', owned_by: 'opencode-muse-spark' });
     data.push({ id: cfg.OPENCODE_MINIMAX_MODEL, object: 'model', owned_by: 'opencode-nemotron-lightning' });

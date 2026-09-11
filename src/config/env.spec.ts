@@ -196,6 +196,23 @@ describe('loadEnv - OpenCode key pool', () => {
     expect(cfg.opencodeKeys).toEqual(['k1', 'k2', 'k3']);
   });
 
+  it('defaults every pool model to a LIVE catalog id (2026-09-11 audit)', () => {
+    // Every OPENCODE_*_MODEL default must exist in opencode's /zen/v1
+    // catalog. laguna-s-2.1-free was removed upstream (401 ModelError on
+    // every key, all day, inflating walks); its slot now carries
+    // muse-spark-1.3-contributor-free. If opencode reshuffles again, update
+    // this list from `curl /zen/v1/models`.
+    const e = loadEnv({}).env;
+    expect(e.OPENCODE_MODEL).toBe('big-pickle');
+    expect(e.OPENCODE_MINIMAX_MODEL).toBe('nemotron-3.5-lightning-free');
+    expect(e.OPENCODE_QWEN_MODEL).toBe('muse-spark-1.2-contributor-free');
+    expect(e.OPENCODE_NEMOTRON_MODEL).toBe('nemotron-3-ultra-free');
+    expect(e.OPENCODE_MIMO_MODEL).toBe('mimo-v2.5-free');
+    expect(e.OPENCODE_DEEPSEEK_FLASH_MODEL).toBe('deepseek-v4-flash-free');
+    expect(e.OPENCODE_LAGUNA_MODEL).toBe('muse-spark-1.3-contributor-free');
+    expect(e.OPENCODE_LING_MODEL).toBe('ling-3.0-flash-fin-free');
+  });
+
   it('dedupes OpenCode keys', () => {
     const cfg = loadEnv({
       OPENCODE_KEY1: 'dup',
