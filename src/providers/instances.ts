@@ -22,7 +22,7 @@ export interface Providers {
   openrouter: OpenRouterProvider;
   openai: SingleKeyProvider;
   zai: SingleKeyProvider;
-  /** TokenRouter (tokenrouter.com): OpenAI-compatible single-key aggregator. */  tokenrouter: SingleKeyProvider;
+  /** TokenRouter (tokenrouter.com): OpenAI-compatible single-key aggregator. */ tokenrouter: SingleKeyProvider;
   opencode: OpenCodeProvider;
   /** OpenCode Go ("go" endpoint): single-key provider for glm-5.3-flash.
    *  Distinct key pool from OPENCODE_*; routed after the OPENCODE triples. */
@@ -110,6 +110,15 @@ export function buildProviders(log: Logger): Providers {
       models: OPENCODE_MODELS(env),
       timeoutMs,
       log,
+      // The /zen/v1 free tier rejects requests without x-opencode-session
+      // (400 MissingSessionID), same contract as /go below: auto-generate a
+      // stable per-process id (OPENCODE_SESSION_ID overrides it). One id is
+      // shared across the whole pool by design (it identifies the gateway
+      // process, not the key); if upstream ever rate-limits per session id,
+      // derive per-key ids here (e.g. `${id}-${keyIdx}`) and re-verify.
+      extraHeaders: opencodeKeys.length
+        ? { 'x-opencode-session': env.OPENCODE_SESSION_ID || randomUUID() }
+        : undefined,
     }),
     // OpenCode Go: single-key provider (distinct OPENCODEGO_* pool), routed
     // after the OPENCODE triples in chain-routing.ts (same vendor family).

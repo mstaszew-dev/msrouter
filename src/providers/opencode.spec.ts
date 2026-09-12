@@ -1,7 +1,10 @@
 import type pino from 'pino';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+
+import { loadEnv } from '../config/env.js';
 
 import { postChatCompletion } from './fetch.js';
+import { buildProviders } from './instances.js';
 import { OpenCodeProvider } from './opencode.js';
 
 vi.mock('./fetch.js', () => ({ postChatCompletion: vi.fn() }));
@@ -168,5 +171,59 @@ describe('OpenCodeProvider pool', () => {
         'opencode triple demoted to back of queue',
       );
     });
+  });
+});
+
+describe('buildProviders free pool: x-opencode-session wiring', () => {
+  // 2026-09-11: the /zen/v1 free tier rejects requests without a session
+  // header (400 {"type":"MissingSessionID"} - "free tier can only be used in
+  // OpenCode"). The factory must send one on every pool call, mirroring the
+  // opencodego wiring. Verified by direct curl probes: with the header the
+  // same key/model serves 200.
+  beforeEach(() => {
+    vi.mocked(postChatCompletion).mockReset();
+    vi.mocked(postChatCompletion).mockResolvedValue({
+      kind: 'OK',
+      response: new Response('{}', { status: 200 }),
+    });
+  });
+
+  afterEach(() => loadEnv({}));
+
+  it('sends x-opencode-session, stable per process (auto-generated when unset)', async () => {
+    loadEnv({ OPENCODE_KEY1: 'k1', SCHEDULE_INTERVAL_MINUTES: '-1' });
+    const providers = buildProviders(silent);
+    const sessions: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      await providers.opencode.attempt(
+        { model: 'big-pickle', messages: [] },
+        new AbortController().signal,
+        {},
+      );
+      const [, opts] = vi.mocked(postChatCompletion).mock.calls[i]!;
+      sessions.push((opts.extraHeaders as Record<string, string>)['x-opencode-session']!);
+    }
+    // Both attempts carry the SAME non-empty UUID: the free tier 400s without
+    // it, and the id must identify the process, not the individual call.
+    expect(sessions[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(sessions[1]).toBe(sessions[0]);
+  });
+
+  it('pins x-opencode-session to OPENCODE_SESSION_ID when set', async () => {
+    loadEnv({
+      OPENCODE_KEY1: 'k1',
+      OPENCODE_SESSION_ID: 'stable-session',
+      SCHEDULE_INTERVAL_MINUTES: '-1',
+    });
+    const providers = buildProviders(silent);
+    await providers.opencode.attempt(
+      { model: 'big-pickle', messages: [] },
+      new AbortController().signal,
+      {},
+    );
+    const [, opts] = vi.mocked(postChatCompletion).mock.calls[0]!;
+    expect((opts.extraHeaders as Record<string, string>)['x-opencode-session']).toBe(
+      'stable-session',
+    );
   });
 });

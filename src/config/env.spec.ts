@@ -213,6 +213,16 @@ describe('loadEnv - OpenCode key pool', () => {
     expect(e.OPENCODE_LING_MODEL).toBe('ling-3.0-flash-fin-free');
   });
 
+  it('accepts an optional OPENCODE_SESSION_ID override (free-tier session pin)', () => {
+    // The /zen/v1 free tier rejects requests without x-opencode-session
+    // (400 MissingSessionID); the factory sends one on every pool call.
+    // OPENCODE_SESSION_ID pins it for stable attribution, else per-process UUID.
+    expect(loadEnv({}).env.OPENCODE_SESSION_ID).toBeUndefined();
+    expect(loadEnv({ OPENCODE_SESSION_ID: 'stable-session' }).env.OPENCODE_SESSION_ID).toBe(
+      'stable-session',
+    );
+  });
+
   it('dedupes OpenCode keys', () => {
     const cfg = loadEnv({
       OPENCODE_KEY1: 'dup',

@@ -5,10 +5,16 @@
  * Default `npm test` does NOT run this. Run with:
  *   INTEGRATION=1 npx vitest run test/opencode-zen.integration.spec.ts
  *
+ * The /zen/v1 free tier requires x-opencode-session (2026-09-11: without it
+ * the endpoint 400s with MissingSessionID); this probe mirrors the gateway
+ * wiring and sends one (OPENCODE_SESSION_ID pins it, else a random UUID).
+ *
  * BigPickle availability is community-reported as flaky; this test documents
- * the current state. If it fails consistently, the OPENCODE_API_KEY in .env
- * should be commented out (see README "Out of scope").
+ * the current state (live .env carries the pool as OPENCODE_KEY1..6, so the
+ * gate accepts either form).
  */
+
+import { randomUUID } from 'node:crypto';
 
 import pino from 'pino';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -17,7 +23,8 @@ import { scrubSecrets } from '../src/providers/fetch.js';
 import { SingleKeyProvider } from '../src/providers/single-key.js';
 import type { ChatRequestBody } from '../src/providers/types.js';
 
-const RUN = process.env['INTEGRATION'] === '1' && !!process.env['OPENCODE_API_KEY'];
+const ZEN_KEY = process.env['OPENCODE_API_KEY'] ?? process.env['OPENCODE_KEY1'];
+const RUN = process.env['INTEGRATION'] === '1' && !!ZEN_KEY;
 const itOrSkip = RUN ? it : it.skip;
 
 const silent = pino({ level: 'silent' });
@@ -37,8 +44,11 @@ describe('OpenCode Zen / BigPickle integration (live)', () => {
       {
         id: 'opencode-bigpickle',
         baseUrl: process.env['OPENCODE_BASE_URL'] ?? 'https://opencode.ai/zen/v1',
-        apiKey: process.env['OPENCODE_API_KEY'],
+        apiKey: ZEN_KEY,
         defaultModel: 'big-pickle',
+        extraHeaders: {
+          'x-opencode-session': process.env['OPENCODE_SESSION_ID'] || randomUUID(),
+        },
       },
       60_000,
       silent,

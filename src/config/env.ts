@@ -11,14 +11,12 @@ import { z } from 'zod';
 
 import { collectNumberedKeys } from './keys.js';
 
-const csv = z
-  .string()
-  .transform((s) =>
-    s
-      .split(',')
-      .map((x) => x.trim())
-      .filter(Boolean),
-  );
+const csv = z.string().transform((s) =>
+  s
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean),
+);
 
 /** Boolean env flag: true when 'true' or '1' (case matters), else the default. */
 const flag = (def: string) =>
@@ -78,6 +76,9 @@ const schema = z.object({
   LAPTOP_MODEL: z.string().default('qwen3.5:2b'),
   OPENCODE_API_KEY: z.string().optional(),
   OPENCODE_BASE_URL: z.string().url().default('https://opencode.ai/zen/v1'),
+  // /zen/v1 free tier requires x-opencode-session (factory auto-generates a
+  // per-process id; OPENCODE_SESSION_ID pins it for stable attribution).
+  OPENCODE_SESSION_ID: z.string().optional(),
   OPENCODE_MODEL: z.string().default('big-pickle'),
   // OpenCode Zen free models (all share OPENCODE_API_KEY / OPENCODE_BASE_URL)
   OPENCODE_NEMOTRON_MODEL: z.string().default('nemotron-3-ultra-free'),
