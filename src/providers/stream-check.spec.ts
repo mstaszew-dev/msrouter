@@ -92,8 +92,8 @@ describe('isEmptyCompletion', () => {
     expect(isEmptyCompletion(json)).toBe(false);
   });
 
-  it('returns false when choices array is empty', () => {
-    expect(isEmptyCompletion({ choices: [] })).toBe(false);
+  it('returns true when choices array is empty (200 with no candidates at all has no deliverable)', () => {
+    expect(isEmptyCompletion({ choices: [] })).toBe(true);
   });
 
   it('returns false when choices is missing', () => {

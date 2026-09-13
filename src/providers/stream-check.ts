@@ -21,7 +21,11 @@ export function isEmptyCompletion(json: unknown): boolean {
   const obj = json as Record<string, unknown>;
   if ('error' in obj && obj.error) return false;
   const choices = obj.choices;
-  if (!Array.isArray(choices) || choices.length === 0) return false;
+  if (!Array.isArray(choices)) return false;
+  // A present-but-empty choices array has no candidates and therefore no
+  // deliverable - treat it as an empty completion so the chain skips instead
+  // of forwarding a useless response to the caller.
+  if (choices.length === 0) return true;
   for (const c of choices) {
     if (!c || typeof c !== 'object') continue;
     const choice = c as Record<string, unknown>;
