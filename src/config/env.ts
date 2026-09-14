@@ -27,8 +27,8 @@ const flag = (def: string) =>
 
 /**
  * Python campaign launcher: the Director's default spawn target (since
- * 2026-09-08, when hermes_agent/ was archived out of the tree). Single
- * source of truth for the zod default and the loop.ts fallback.
+ * 2026-09-08, when hermes_agent/ was archived). Single source of truth for
+ * the zod default and the loop.ts fallback.
  */
 export const PYTHON_RUNNER = '/Users/mst/bin/job-search-agent';
 
@@ -50,30 +50,29 @@ const schema = z.object({
   TOKENROUTER_API_KEY: z.string().optional(),
   TOKENROUTER_BASE_URL: z.string().url().default('https://api.tokenrouter.com/v1'),
   TOKENROUTER_MODEL: z.string().default('z-ai/glm-5.3-free'),
-
   // Local llama-server: OpenAI /v1/chat/completions on a patched 128K GGUF.
   LOCAL_ENABLED: flag('false'),
   LOCAL_BASE_URL: z.string().url().default('http://127.0.0.1:11434/v1'),
   LOCAL_MODEL: z.string().default('qwen3.5:2b'),
   // Local prefills are slow (~220-370 tok/s), so local gets its own timeout
-  // instead of UPSTREAM_TIMEOUT_MS (matches the campaign agent's 300s cap).
+  // instead of UPSTREAM_TIMEOUT_MS (matches the agent's 300s cap).
   LOCAL_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
-  // LM Studio (Bionic) local: OpenAI /v1/chat/completions, no API key.
-  // LMSTUDIO_MODEL is a preferred ALIAS: the provider discovers the models
-  // actually loaded (GET {base}/models) and falls back to whatever is up.
+  // LM Studio (Bionic) local: OpenAI /v1, no key. LMSTUDIO_MODEL is an
+  // ALIAS: the provider discovers loaded models (GET {base}/models).
   LMSTUDIO_ENABLED: flag('false'),
   LMSTUDIO_BASE_URL: z.string().url().default('http://127.0.0.1:1234/v1'),
   LMSTUDIO_MODEL: z.string().default('qwen3.5-4b'),
   // Local prefills are slow (a 20k-token prompt takes minutes on the shared
   // single-slot llama-server), so LM Studio gets its own timeout (cf. LOCAL_TIMEOUT_MS).
   LMSTUDIO_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
-  // Laptop (tailnet) qwen: Ollama on the user's other machine, exposed via
-  // Tailscale. OpenAI-compatible, no API key. Weakest model in the chain:
-  // routed ABSOLUTE LAST (only when every remote provider and the local
-  // fallbacks are exhausted).
+  // Laptop (tailnet) qwen: Ollama on the user's other machine via Tailscale.
+  // OpenAI-compatible, no API key. Weakest model: routed ABSOLUTE LAST when
+  // every remote provider and the local fallbacks are exhausted.
   LAPTOP_ENABLED: flag('false'),
   LAPTOP_BASE_URL: z.string().url().default('https://laptop-a64sv2el.taila0a683.ts.net/v1'),
   LAPTOP_MODEL: z.string().default('qwen3.5:2b'),
+  // Local-class timeout: slow prefill over Tailscale (cf. LMSTUDIO_TIMEOUT_MS).
+  LAPTOP_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
   OPENCODE_API_KEY: z.string().optional(),
   OPENCODE_BASE_URL: z.string().url().default('https://opencode.ai/zen/v1'),
   // /zen/v1 free tier requires x-opencode-session (factory auto-generates a
@@ -120,8 +119,13 @@ const schema = z.object({
   TRANSIENT_BACKOFF_MS: z.coerce.number().int().positive().default(1_000),
   // 429 cooldown: a rate-limited entry is parked (skipped by walks) this long.
   RATE_LIMIT_COOLDOWN_MS: z.coerce.number().int().min(0).default(60_000),
-  // Demote provider to back of queue after N consecutive successes (prevents
-  // local model from monopolizing the chain when remote providers fail).
+  // Wall-clock budget for ONE alias walk (mst/free): once spent, remaining
+  // remote entries (mid-entry retries too) are skipped so the walk fails
+  // over to the local tail (slow-hanging remotes, 2026-09-13). 0 disables.
+  // Keep deadline + UPSTREAM_TIMEOUT_MS + LOCAL*_TIMEOUT_MS < client read
+  // timeout (campaign: 300+120+300 < 1200s).
+  WALK_DEADLINE_MS: z.coerce.number().int().min(0).default(300_000),
+  // Demote after N consecutive successes (local tail must not monopolize).
   SUCCESS_DEMOTE_LIMIT: z.coerce.number().int().positive().default(5),
 
   // Agent / scheduler
@@ -141,22 +145,20 @@ const schema = z.object({
   DIRECTOR_CAMPAIGN_DIR: z.string().default('/Users/mst/Downloads/job-search/job-apply'),
   // Campaign agent workspace (where the launcher + campaign_agent/ live).
   DIRECTOR_OPENCLAW_WORKSPACE: z.string().default('/Users/mst/ZCodeProject/openclaw-job-search'),
-  // Launcher wrapper the Director invokes to restart the worker.
-  // Default: the hermes runner (returned to on 2026-08-31 after the hermes
-  // CLI flag fix landed and both agents began inlining an IDENTITY block;
-  // forensics had cleared hermes of the invented-email incident). The python
-  // runner remains available via DIRECTOR_RUNNER override.
+  // Launcher wrapper the Director invokes to restart the worker. Default:
+  // the hermes runner (returned to on 2026-08-31 after the hermes CLI flag
+  // fix landed and both agents began inlining an IDENTITY block; forensics
+  // had cleared hermes of the invented-email incident). The python runner
+  // remains available via DIRECTOR_RUNNER override.
   DIRECTOR_RUNNER: z.string().default(PYTHON_RUNNER),
-  // stale-campaign fires after this many minutes without new tracker events.
-  // Raise when providers are slow: a legit mid-tick worker must not be killed.
+  // stale-campaign fires after this many minutes without new tracker events
+  // (raise when providers are slow: legit mid-tick workers must not die).
   STALE_THRESHOLD_MINUTES: z.coerce.number().int().positive().default(60),
   // When false the Director never spawns/kills/restarts the campaign worker
-  // (observe-only supervision): the user starts the agent manually from the
-  // GUI. Observation, classification, Slack and Kafka stay active. VPN IP
-  // rotation (periodic + stall-triggered) still runs without its paired
-  // worker restart; the manual worker's retry loop tolerates the ~30s flap.
+  // (observe-only; user starts the agent manually). Observation, Slack and
+  // VPN rotation stay active.
   DIRECTOR_AUTOSTART: flag('true'),
-  // Vestigial: pgrep-based detection replaced pidfile tracking; kept for config compat.
+  // Vestigial: pgrep-based detection replaced pidfile tracking (config compat).
   DIRECTOR_PIDFILE: z.string().default('~/.campaign-agent/job-search-agent.pid'),
   // The single patch target the Director edits on approval.
   DIRECTOR_OVERRIDES: z.string().default('~/.campaign-agent/director-overrides.env'),
@@ -174,12 +176,11 @@ const schema = z.object({
   KAFKA_HOME: z.string().default('~/kafka/kafka_2.13-3.7.0'),
   KAFKA_BOOTSTRAP: z.string().default('localhost:19092'),
   KAFKA_POLL_INTERVAL_SECONDS: z.coerce.number().int().positive().default(30),
-
   CDP_URL: z.string().url().default('http://127.0.0.1:9222'),
-  // Default allowlist EXCLUDES code-execution primitives (node, npm, find, git)
-  // which an LLM-driven agent could turn into arbitrary code execution
-  // (node -e, npm install, find -exec, git clone hooks). Add them only if you
-  // explicitly opt in and trust the agent.
+  // Default allowlist EXCLUDES code-execution primitives (node, npm, find,
+  // git) which an LLM-driven agent could turn into arbitrary execution
+  // (node -e, npm install, find -exec, git clone hooks). Opt in only if you
+  // trust the agent.
   TERMINAL_ALLOWLIST: csv.default('ls,cat,echo,pwd,head,tail,grep'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
   LOG_REDACT: csv.default(''),

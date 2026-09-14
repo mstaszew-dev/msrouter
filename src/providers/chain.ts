@@ -1,21 +1,15 @@
 /**
- * Provider chain with adaptive flat-sequence rotation.
+ * Provider chain with adaptive flat-sequence rotation (see chain-routing.ts
+ * for entry construction, the local tail, and the walk deadline).
  *
- * On construction, builds ONE flat ordered list of RoutingEntry triples
- * `<model, provider, keyIndex>` (delegated to chain-routing.ts) and wraps it in
- * a RotationQueue. Every `handle()` call iterates the queue from the front:
- *   - OK       -> return the response.
- *   - KEY_FAILURE (401/402/403/429) -> demote to back; 429 also PARKS the
- *     entry for RATE_LIMIT_COOLDOWN_MS (walks skip parked entries, so a
- *     rate-limit storm does not re-hammer every limited key per request).
- *   - TRANSIENT (5xx/408/425)      -> backoff-retry in place up to MAX_TRANSIENT_RETRIES.
- *   - BAD_REQUEST (other 4xx)      -> skip to next entry (do not demote).
+ * handle() iterates the RotationQueue from the front:
+ *   - OK -> return. KEY_FAILURE (401/402/403/429) -> demote to back; 429 also
+ *     parks for RATE_LIMIT_COOLDOWN_MS (walks skip parked entries).
+ *   - TRANSIENT (5xx/408/425) -> backoff-retry in place up to
+ *     MAX_TRANSIENT_RETRIES. BAD_REQUEST (other 4xx) -> skip to next entry.
  *
  * Demotion/parking is in-memory only; restart rebuilds from env order.
- *
- * Aliases "mst/free" and "free" walk the SAME entry list using each entry's
- * provider-default model. Prefix "direct:<provider>/<model>" pins a single
- * provider and disables fallback.
+ * "mst/free"/"free" walk all entries; "direct:<p>/<model>" pins one provider.
  */
 
 import type { Logger } from 'pino';
@@ -26,6 +20,9 @@ import { env } from '../config/env.js';
 
 import {
   buildRoutingEntries,
+  dispatchProvider,
+  dispatchProviderCount,
+  isOverWalkDeadline,
   isProviderDefaultModel,
   shortCircuit,
   type ChainProvider,
@@ -81,8 +78,8 @@ export class ProviderChain {
       throw new NoProviderAvailableError(`${provider}: not configured`);
     }
     const failures: string[] = [];
-    // For openrouter direct, iterate keys; for opencode direct, iterate triples
-    // matching the model; for single-key providers, one attempt with retries.
+    // For openrouter direct, iterate keys; opencode, matching triples;
+    // single-key providers, one attempt with retries.
     const maxIdx =
       provider === 'openrouter'
         ? this.providers.openrouter.keyCount
@@ -108,19 +105,33 @@ export class ProviderChain {
    *  model path. First pass walks ELIGIBLE entries only (429-parked ones
    *  skip their cooldown; see park()); if it fails while entries were
    *  parked, a second pass retries the parked remainder so a hopeless-but-
-   *  never-parked entry (401 key, unavailable provider) cannot defeat the
-   *  fallback and a parked entry that has recovered is still reachable. */
+   *  never-parked entry cannot defeat the fallback. WALK_DEADLINE_MS bounds
+   *  the walk (both passes; see chain-routing). */
   private async iterate(
     body: ChatRequestBody,
     signal: AbortSignal,
     opts: { explicitModel?: string },
   ): Promise<ChainResult> {
     const failures: string[] = [];
+    const deadlineMs = env().WALK_DEADLINE_MS;
+    const startedAt = Date.now();
+    let deadlineLogged = false;
     const pass = async (entries: readonly RoutingEntry[]): Promise<ChainResult | undefined> => {
       for (const entry of entries) {
         if (signal.aborted) throw new NoProviderAvailableError('aborted');
+        if (isOverWalkDeadline(entry, startedAt, deadlineMs)) {
+          if (!deadlineLogged) {
+            deadlineLogged = true;
+            this.log.warn(
+              { label: 'chain', walkDeadlineMs: deadlineMs, elapsedMs: Date.now() - startedAt, provider: entry.label },
+              'walk deadline exceeded; skipping remaining remote entries (failing over to local tail)',
+            );
+          }
+          continue; // skip remote entries; local tail stays reachable
+        }
         const res = await this.tryEntry(entry, opts.explicitModel ?? entry.model, body, signal, failures, {
           demoteOnKeyFailure: true,
+          walk: { startedAt, deadlineMs },
         });
         if (res) return res;
       }
@@ -138,15 +149,18 @@ export class ProviderChain {
   }
 
   /** Attempt one entry with TRANSIENT retry-in-place. On KEY_FAILURE
-   *  (when demoteOnKeyFailure), demote the entry to the back of the queue.
-   *  `entry` MUST be the original queue reference for demotion to work. */
+   *  (when demoteOnKeyFailure), demote to the back; 429 parks (cooldown).
+   *  `entry` MUST be the original queue reference for demotion to work.
+   *  walk: when set, the in-place retry loop also stops once the walk
+   *  deadline is exceeded (a single entry's 3 x timeout + backoffs must not
+   *  overshoot WALK_DEADLINE_MS by 400s+). */
   private async tryEntry(
     entry: RoutingEntry,
     model: string,
     body: ChatRequestBody,
     signal: AbortSignal,
     failures: string[],
-    behavior: { demoteOnKeyFailure: boolean },
+    behavior: { demoteOnKeyFailure: boolean; walk?: { startedAt: number; deadlineMs: number } },
   ): Promise<ChainResult | undefined> {
     const p = this.providers[entry.provider];
     if (!p.available) {
@@ -156,18 +170,21 @@ export class ProviderChain {
     let attempt = 0;
     while (attempt <= env().MAX_TRANSIENT_RETRIES) {
       if (signal.aborted) return undefined;
-      const res: ProviderCallResult = await this.callProvider(entry, model, body, signal);
+      const w = behavior.walk;
+      if (w && isOverWalkDeadline(entry, w.startedAt, w.deadlineMs, attempt)) return undefined;
+      const res: ProviderCallResult = await dispatchProvider(
+        this.providers, entry, model, body, signal,
+      );
       if (res.kind === 'OK') {
         // resolvedModel: the provider may resolve an alias (LM Studio -> GGUF).
         const resolvedModel = res.resolvedModel ?? model;
         const servedByModel =
           entry.provider === 'openrouter' ? `${resolvedModel}[key${entry.attemptIndex + 1}]` : resolvedModel;
-        // Consecutive-success demotion: the weak local tail rotates to the
-        // back at SUCCESS_DEMOTE_LIMIT so it never monopolizes the chain.
+        // Consecutive-success demotion: the weak local tail (local/lmstudio/
+        // laptop, "always works") rotates to the back at SUCCESS_DEMOTE_LIMIT
+        // so it never monopolizes the chain.
         const count = (this.consecutiveSuccesses.get(entry.label) ?? 0) + 1;
         this.consecutiveSuccesses.set(entry.label, count);
-        // Weak local tail (local/lmstudio/laptop): "always works", so it must
-        // never accumulate preference - rotate to the back at the limit.
         const isLocal =
           entry.provider === 'lmstudio' || entry.provider === 'local' || entry.provider === 'laptop';
         if (isLocal && count >= this.successDemoteLimit) {
@@ -192,20 +209,18 @@ export class ProviderChain {
         await sleep(backoffMs(attempt, env().TRANSIENT_BACKOFF_MS));
         continue;
       }
-      // KEY_FAILURE demotes when configured; BAD_REQUEST and (per the original
-      // semantics) empty-completion TRANSIENT responses fall through to skip
-      // this entry and try the next one.
+      // KEY_FAILURE demotes when configured; BAD_REQUEST and empty-completion
+      // TRANSIENT responses fall through to skip this entry. 429 also parks
+      // the entry (RATE_LIMIT_COOLDOWN_MS): a demoted-only entry is retried
+      // on the very next request, which re-hammered the whole limited pool
+      // per request (2-8 min walks, 2026-09-08). Non-429 (401/402/403)
+      // demotes only: a bad key is not cooling down.
       if (res.kind === 'KEY_FAILURE' && behavior.demoteOnKeyFailure) {
         this.queue.demote(entry);
         this.log.warn(
           { provider: entry.label, label: 'chain', status: res.status },
           'chain entry demoted to back of queue',
         );
-        // 429 also parks the entry for the cooldown window (RATE_LIMIT_
-        // COOLDOWN_MS): a demoted-only entry is retried on the very next
-        // request, which re-hammered the whole limited pool each request
-        // (2-8 min walks, 2026-09-08). Non-429 key failures (401/402/403)
-        // demote only: a bad key is not cooling down.
         if (res.status === 429 && env().RATE_LIMIT_COOLDOWN_MS > 0) {
           this.queue.park(entry, env().RATE_LIMIT_COOLDOWN_MS, `429 (${entry.label})`);
         }
@@ -215,26 +230,9 @@ export class ProviderChain {
     return undefined;
   }
 
-  /** Dispatch one attempt to the right provider with the right opts shape. */
-  private async callProvider(
-    entry: RoutingEntry,
-    model: string,
-    body: ChatRequestBody,
-    signal: AbortSignal,
-  ): Promise<ProviderCallResult> {
-    const p = this.providers[entry.provider];
-    if (entry.provider === 'openrouter') {
-      return p.attempt(body, signal, { model, keyIndex: entry.attemptIndex });
-    }
-    if (entry.provider === 'opencode') {
-      return p.attempt(body, signal, { model, tripleIndex: entry.attemptIndex });
-    }
-    return p.attempt(body, signal, { model });
-  }
-
   /** Count OpenCode triples whose model matches (for direct:opencode/<model>). */
   private opencodeTripleCountForModel(model: string): number {
-    return this.providers.opencode.queueSnapshot().filter((t) => t.model === model).length;
+    return dispatchProviderCount(this.providers, model);
   }
 
   /** White-box: current routing-entry queue order (for tests/debug). */

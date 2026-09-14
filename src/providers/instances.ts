@@ -163,6 +163,8 @@ export function buildProviders(log: Logger): Providers {
     // Laptop (tailnet) qwen: Ollama behind Tailscale on the user's other
     // machine. OpenAI-compatible /v1, no API key. 32K prompt guard: Ollama's
     // effective context is modest and oversized prompts would truncate there.
+    // Own local-class timeout (LAPTOP_TIMEOUT_MS): slow single-slot prefills
+    // over Tailscale can exceed UPSTREAM_TIMEOUT_MS.
     laptop: new LocalProvider(
       {
         id: 'laptop',
@@ -170,7 +172,7 @@ export function buildProviders(log: Logger): Providers {
         defaultModel: env.LAPTOP_MODEL,
         maxPromptTokens: 32_000,
       },
-      timeoutMs,
+      env.LAPTOP_TIMEOUT_MS,
       log,
     ),
   };

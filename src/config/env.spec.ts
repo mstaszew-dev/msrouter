@@ -30,6 +30,12 @@ describe('loadEnv', () => {
     expect(loadEnv({ RATE_LIMIT_COOLDOWN_MS: '0' }).env.RATE_LIMIT_COOLDOWN_MS).toBe(0);
     expect(loadEnv({ RATE_LIMIT_COOLDOWN_MS: '120000' }).env.RATE_LIMIT_COOLDOWN_MS).toBe(120_000);
   });
+
+  it('defaults WALK_DEADLINE_MS to 300s; 0 disables the walk deadline', () => {
+    expect(loadEnv({}).env.WALK_DEADLINE_MS).toBe(300_000);
+    expect(loadEnv({ WALK_DEADLINE_MS: '0' }).env.WALK_DEADLINE_MS).toBe(0);
+    expect(loadEnv({ WALK_DEADLINE_MS: '60000' }).env.WALK_DEADLINE_MS).toBe(60_000);
+  });
 });
 
 describe('loadEnv - OpenCode Go config', () => {
@@ -123,6 +129,15 @@ describe('loadEnv - laptop (tailnet qwen) config', () => {
     });
     expect(cfg.env.LAPTOP_ENABLED).toBe(true);
     expect(cfg.env.LAPTOP_MODEL).toBe('qwen3.5:4b');
+  });
+
+  // Laptop is a slow single-slot local model over Tailscale (cf. LM Studio):
+  // it gets its own local-class timeout, never UPSTREAM_TIMEOUT_MS.
+  it('gives Laptop its own slow-local timeout (default 300s, overridable)', () => {
+    const cfg = loadEnv({});
+    expect(cfg.env.LAPTOP_TIMEOUT_MS).toBe(300_000);
+    const over = loadEnv({ LAPTOP_TIMEOUT_MS: '600000' });
+    expect(over.env.LAPTOP_TIMEOUT_MS).toBe(600_000);
   });
 });
 

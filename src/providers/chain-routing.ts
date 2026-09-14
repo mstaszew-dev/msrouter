@@ -14,6 +14,7 @@ import { env } from '../config/env.js';
 
 import type { Providers } from './instances.js';
 import { withFree } from './openrouter.js';
+import type { ChatRequestBody, ProviderCallResult } from './types.js';
 
 /** A single flat routing entry: which provider, which model, which key slot. */
 export interface RoutingEntry {
@@ -34,6 +35,58 @@ export interface RoutingEntry {
   model: string;
   /** OpenRouter: logical key index. OpenCode: triple index. Single-key: 0. */
   attemptIndex: number;
+}
+
+/** Local-tail providers: the always-available fallbacks at the walk's end. */
+export const LOCAL_TAIL: ReadonlySet<RoutingEntry['provider']> = new Set([
+  'local',
+  'lmstudio',
+  'laptop',
+]);
+
+/**
+ * True when the walk has exceeded its WALK_DEADLINE_MS budget and the entry
+ * must not be attempted (or retried) further. Remote entries are skipped at
+ * any attempt once the deadline passes. The local tail keeps its FIRST
+ * attempt (the always-available fallback stays reachable), but `attempt > 0`
+ * stops: a hanging local (3 x LOCAL*_TIMEOUT_MS) must not blow the caller's
+ * budget either. Callers in pass()-style loops use the default attempt 0,
+ * which for locals is always allowed (deadline exemption).
+ */
+export function isOverWalkDeadline(
+  entry: RoutingEntry,
+  startedAt: number,
+  deadlineMs: number,
+  attempt = 0,
+): boolean {
+  if (deadlineMs <= 0) return false;
+  if (Date.now() - startedAt < deadlineMs) return false;
+  if (LOCAL_TAIL.has(entry.provider)) return attempt > 0;
+  return true;
+}
+
+/** Dispatch one attempt to the right provider with the right opts shape
+ *  (openrouter: keyIndex; opencode: tripleIndex; others: model only). */
+export async function dispatchProvider(
+  providers: Providers,
+  entry: RoutingEntry,
+  model: string,
+  body: ChatRequestBody,
+  signal: AbortSignal,
+): Promise<ProviderCallResult> {
+  const p = providers[entry.provider];
+  if (entry.provider === 'openrouter') {
+    return p.attempt(body, signal, { model, keyIndex: entry.attemptIndex });
+  }
+  if (entry.provider === 'opencode') {
+    return p.attempt(body, signal, { model, tripleIndex: entry.attemptIndex });
+  }
+  return p.attempt(body, signal, { model });
+}
+
+/** Count OpenCode triples whose model matches (for direct:opencode/<model>). */
+export function dispatchProviderCount(providers: Providers, model: string): number {
+  return providers.opencode.queueSnapshot().filter((t) => t.model === model).length;
 }
 
 /** Provider id union used by shortCircuit + runSingle. */

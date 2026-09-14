@@ -1275,3 +1275,173 @@ describe('ProviderChain - opencodego routing', () => {
     expect(res.servedBy.provider).toBe('openrouter[key1/openrouter/free]');
   });
 });
+
+describe('ProviderChain - walk deadline (WALK_DEADLINE_MS)', () => {
+  // Slow-hanging remotes must not starve the local tail: once a walk exceeds
+  // the deadline it skips straight to local entries instead of grinding
+  // through every remaining remote key (the 2026-09-13 incident: 15 keys x
+  // 3 attempts x 120s hung for >90 min while the client gave up at 25 min).
+  const ENV = {
+    NODE_ENV: 'test',
+    PORT: '8788',
+    OPENROUTER_KEY1: 'sk-or-test-key-1111',
+    OPENROUTER_KEY2: 'sk-or-test-key-2222',
+    FORCE_FREE: 'true',
+    SCHEDULE_INTERVAL_MINUTES: '-1',
+    UPSTREAM_TIMEOUT_MS: '5000',
+    OPENROUTER_MODELS: 'vendor/extra',
+    LOCAL_ENABLED: 'true',
+    LMSTUDIO_ENABLED: 'true',
+    LAPTOP_ENABLED: 'true',
+    WALK_DEADLINE_MS: '1',
+  };
+
+  /** attempt stub that resolves only after `delayMs` wall-clock time. */
+  function slowAttempt(delayMs: number): ReturnType<typeof vi.fn> {
+    return vi.fn(async (): Promise<ProviderCallResult> => {
+      await new Promise((r) => setTimeout(r, delayMs));
+      return { kind: 'KEY_FAILURE', status: 429, message: 'slow + limited' };
+    });
+  }
+
+  afterEach(() => loadEnv(ENV));
+
+  it('exceeding the walk deadline fails over to the local tail (skips remaining remotes)', async () => {
+    loadEnv({ ...ENV, WALK_DEADLINE_MS: '1' });
+    const p = makeProviders({ openrouterKeys: 2 });
+    // Every OpenRouter entry hangs 30ms (over the 1ms deadline) then 429s;
+    // openai/zai/tokenrouter fail fast but are NOT local, so the walk must
+    // skip them via the deadline path and land on local.
+    (p.openrouter as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt =
+      slowAttempt(30);
+    (p.local as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(
+      async (): Promise<ProviderCallResult> => ({ kind: 'OK', response: okResponse() }),
+    );
+    const chain = new ProviderChain(p, silentLogger);
+    const res = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    expect(res.servedBy.provider).toBe('local');
+    // Remaining remote entries after the deadline must never be called.
+    const openaiAttempt = (p.openai as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt;
+    expect(openaiAttempt).not.toHaveBeenCalled();
+  });
+
+  it('resumes the normal walk order when the deadline is not exceeded (0 disables)', async () => {
+    loadEnv({ ...ENV, WALK_DEADLINE_MS: '0' });
+    const p = makeProviders({
+      openrouterKeys: 1,
+      openrouterResults: [{ kind: 'KEY_FAILURE', status: 429, message: 'rl' }],
+      openaiResults: [{ kind: 'KEY_FAILURE', status: 429, message: 'rl' }],
+      tokenrouterResults: [{ kind: 'OK', response: okResponse() }],
+    });
+    const chain = new ProviderChain(p, silentLogger);
+    const res = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    expect(res.servedBy.provider).toBe('tokenrouter');
+  });
+
+  it('logs a warning when the deadline forces the local tail', async () => {
+    loadEnv({ ...ENV, WALK_DEADLINE_MS: '1' });
+    const p = makeProviders({ openrouterKeys: 1 });
+    (p.openrouter as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt =
+      slowAttempt(30);
+    (p.local as unknown as { available: boolean }).available = false;
+    (p.lmstudio as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(
+      async (): Promise<ProviderCallResult> => ({ kind: 'OK', response: okResponse() }),
+    );
+    const chain = new ProviderChain(p, silentLogger);
+    (silentLogger.warn as ReturnType<typeof vi.fn>).mockClear();
+    const res = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    expect(res.servedBy.provider).toBe('lmstudio');
+    // Exactly ONCE per walk, not once per skipped entry.
+    const deadlineWarns = (silentLogger.warn as ReturnType<typeof vi.fn>).mock.calls.filter(
+      ([, msg]) => String(msg).includes('walk deadline'),
+    );
+    expect(deadlineWarns).toHaveLength(1);
+    expect(deadlineWarns[0]![0]).toEqual(
+      expect.objectContaining({ label: 'chain' }),
+    );
+  });
+
+  it('the parked-remainder second pass also respects the walk deadline', async () => {
+    // Request 1: openrouter 429s -> parked (RATE_LIMIT_COOLDOWN_MS). Request
+    // 2 with the deadline exceeded mid-walk: eligible (never-parked) remotes
+    // are skipped, and the PARKED remote remainder must be skipped too (the
+    // second pass shares the same deadline check) while local still serves.
+    loadEnv({ ...ENV, WALK_DEADLINE_MS: '0', RATE_LIMIT_COOLDOWN_MS: '60000' });
+    const p = makeProviders({ openrouterKeys: 1 });
+    // Phase 1: every remote 429s (openrouter parks); local+laptop are
+    // unavailable so the walk fails fast instead of burning TRANSIENT backoffs.
+    const orAttempt = (p.openrouter as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt;
+    orAttempt.mockResolvedValue({ kind: 'KEY_FAILURE', status: 429, message: 'rl' });
+    (p.local as unknown as { available: boolean }).available = false;
+    (p.laptop as unknown as { available: boolean }).available = false;
+    const chain = new ProviderChain(p, silentLogger);
+    await expect(
+      chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal),
+    ).rejects.toThrow(/all routing entries failed/);
+
+    // Phase 2: deadline now 1ms; openai hangs past it. The parked openrouter
+    // entry (second pass) and the remaining remotes must all be skipped while
+    // local (re-enabled) serves.
+    loadEnv({ ...ENV, WALK_DEADLINE_MS: '1', RATE_LIMIT_COOLDOWN_MS: '60000' });
+    (p.openai as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt =
+      slowAttempt(30);
+    (p.local as unknown as { available: boolean }).available = true;
+    (p.local as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(
+      async (): Promise<ProviderCallResult> => ({ kind: 'OK', response: okResponse() }),
+    );
+    const orCallsBefore = orAttempt.mock.calls.length;
+    const res = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    expect(res.servedBy.provider).toBe('local');
+    // The parked openrouter entry (second pass) was NOT retried.
+    expect(orAttempt.mock.calls.length).toBe(orCallsBefore);
+  });
+
+  it('stops an in-flight entry TRANSIENT retry once the deadline passes', async () => {
+    // SHOULD: mid-entry retries too must respect the deadline. An entry that
+    // is in flight when the deadline passes returns TRANSIENT; the retry
+    // (#2) must never start - the walk bails out of the entry and fails over
+    // to the local tail instead of grinding retry x timeout past the budget.
+    loadEnv({ ...ENV, WALK_DEADLINE_MS: '1', TRANSIENT_BACKOFF_MS: '1' });
+    const p = makeProviders({ openrouterKeys: 1 });
+    const orAttempt = (p.openrouter as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt;
+    orAttempt.mockImplementation(async (): Promise<ProviderCallResult> => {
+      await new Promise((r) => setTimeout(r, 30));
+      return { kind: 'TRANSIENT', status: 502, message: 'in-flight hang' };
+    });
+    (p.local as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(
+      async (): Promise<ProviderCallResult> => ({ kind: 'OK', response: okResponse() }),
+    );
+    const chain = new ProviderChain(p, silentLogger);
+    const res = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    expect(res.servedBy.provider).toBe('local');
+    // The hanging openrouter entry was tried exactly ONCE: its TRANSIENT is in
+    // flight past the deadline, so the mid-entry retry must never start.
+    expect(orAttempt).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets the local tail start once past the deadline but stops its retries', async () => {
+    // SHOULD: LOCAL_TAIL exemption must not let a hanging local run 3 x its
+    // timeout past the deadline. First attempt stays allowed (the always-works
+    // fallback must remain reachable), but a TRANSIENT past the deadline stops
+    // the retry instead of retrying up to MAX_TRANSIENT_RETRIES.
+    loadEnv({ ...ENV, WALK_DEADLINE_MS: '1', TRANSIENT_BACKOFF_MS: '1' });
+    const p = makeProviders({ openrouterKeys: 1 });
+    // All remotes and the primary local fail fast so the walk reaches laptop
+    // (the tail) with the deadline already blown; laptop hangs past deadline
+    // then TRANSIENTs.
+    (p.laptop as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(
+      async (): Promise<ProviderCallResult> => {
+        await new Promise((r) => setTimeout(r, 30));
+        return { kind: 'TRANSIENT', status: 0, message: 'laptop hang' };
+      },
+    );
+    const chain = new ProviderChain(p, silentLogger);
+    await expect(
+      chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal),
+    ).rejects.toThrow(/all routing entries failed/);
+    // laptop started once (deadline exemption for the first attempt) but its
+    // TRANSIENT never retried: not 3 x timestamp-burning hangs.
+    const laptopAttempt = (p.laptop as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt;
+    expect(laptopAttempt).toHaveBeenCalledTimes(1);
+  });
+});
