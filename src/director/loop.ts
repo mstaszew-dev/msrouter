@@ -565,6 +565,12 @@ export class DirectorLoop {
           const currentHash = hashClassifications(actionable);
           if (currentHash === checkpoint.lastProposalHash) {
             this.opts.log.info({ hash: currentHash }, 'Skipping proposal: same state as last tick');
+            // The stale flag is only ever set next to a RUN proposal; a
+            // hash-skip here left it false, so the stall path re-fired the
+            // VPN rotation + worker restart on the NEXT tick and killed a
+            // freshly restarted worker 4 minutes in (2026-09-14 live double
+            // kill). The episode is handled either way: mark it active.
+            if (onlyStale) checkpoint.staleWarningActive = true;
           } else {
             checkpoint.lastProposalHash = currentHash;
             // Mark stale warning as active if we're about to propose one

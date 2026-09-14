@@ -11,6 +11,7 @@
  * VPN-rotation + proposal phases, which loop.spec's shared mock environment
  * does not cover; here every side-effectful module is mocked explicitly.
  */
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -42,7 +43,7 @@ vi.mock('./restart.js', async (importOriginal) => {
 });
 
 import { DirectorLoop } from './loop.js';
-import { rotateVpnIp } from './restart.js';
+import { restartWorker, rotateVpnIp } from './restart.js';
 import type { DirectorSurface } from './types.js';
 
 const silent = {
@@ -144,6 +145,31 @@ describe('stale-campaign detection (idle worker)', () => {
     const { loop } = makeLoop(makeIdleCampaign(3 * 60 * 60_000));
     await loop.runOnce(new AbortController().signal);
     expect(vi.mocked(rotateVpnIp)).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not re-fire the stale rotation while the episode persists', async () => {
+    // 2026-09-14 live incident: the fire block never set
+    // checkpoint.staleWarningActive, so the flag's lifecycle depended on
+    // Phase 4's proposal path - which can be skipped by the duplicate-hash
+    // gate ("same state as last tick"; sig "stale-campaign:warn:<idle>m idle"
+    // matched the previous episode's). Result: the stale rotation+restart
+    // fired at 22:12:03 AND again at 22:16:50, killing the freshly restarted
+    // worker 4 minutes in (double kill). The fire must be one-shot per stale
+    // episode: only real new activity clears it.
+    vi.mocked(rotateVpnIp).mockClear();
+    vi.mocked(restartWorker).mockClear();
+    // Seed the proposal hash of the CURRENT stale classification (idle 180m)
+    // so Phase 4 takes the skip path and cannot set the flag itself - the
+    // fire block must.
+    const seed = JSON.stringify({
+      eventsReadOffset: 0,
+      lastProposalHash: createHash('md5').update('stale-campaign:warn:180m idle').digest('hex'),
+    });
+    const { loop } = makeLoop(makeIdleCampaign(3 * 60 * 60_000), seed);
+    await loop.runOnce(new AbortController().signal);
+    await loop.runOnce(new AbortController().signal);
+    expect(vi.mocked(rotateVpnIp)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(restartWorker)).toHaveBeenCalledTimes(1);
   });
 
   it('posts the observation only ONCE for a persistently stale campaign', async () => {
