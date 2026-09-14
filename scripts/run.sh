@@ -46,6 +46,11 @@ start_gateway_dev() {
   log "starting gateway in dev mode (tsx)"
   nohup npx tsx src/main.ts > .run/gateway.log 2>&1 &
   echo $! > .run/gateway.pid
+  # Record THIS shell as the log watcher: it stays in the foreground running
+  # `tail -F` after the report. down() reaps it - otherwise every gateway
+  # restart orphans a tab that tails a dead gateway (2026-09-14: two tail
+  # tabs in iTerm after a restart).
+  echo $$ > .run/dev-session.pid
   ok "gateway pid $(cat .run/gateway.pid)"
 }
 
@@ -57,6 +62,7 @@ start_gateway_prod() {
   npm run build
   nohup node dist/main.js > .run/gateway.log 2>&1 &
   echo $! > .run/gateway.pid
+  echo $$ > .run/dev-session.pid
   ok "gateway pid $(cat .run/gateway.pid)"
 }
 
@@ -75,6 +81,19 @@ down() {
     fi
     rm -f .run/$name.pid
   done
+  # Reap the dev/prod log watcher (the shell whose foreground is `tail -F`).
+  # Guard rails: never kill our own shell, and only kill a process that is
+  # actually a run.sh instance (PID-reuse safety).
+  if [[ -f .run/dev-session.pid ]]; then
+    local sid
+    sid="$(cat .run/dev-session.pid)"
+    if [[ "$sid" != "$$" ]] && kill -0 "$sid" 2>/dev/null \
+       && ps -p "$sid" -o command= 2>/dev/null | grep -q "run.sh"; then
+      pkill -P "$sid" 2>/dev/null || true
+      kill "$sid" && ok "stopped log watcher (pid $sid)"
+    fi
+    rm -f .run/dev-session.pid
+  fi
 }
 
 wait_ready() {
