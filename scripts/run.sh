@@ -82,15 +82,18 @@ down() {
     rm -f .run/$name.pid
   done
   # Reap the dev/prod log watcher (the shell whose foreground is `tail -F`).
-  # Guard rails: never kill our own shell, and only kill a process that is
-  # actually a run.sh instance (PID-reuse safety).
+  # Guard rails: never kill our own shell, and only kill a process whose
+  # command is THIS project's run.sh (PID-reuse safety - a bare "run.sh"
+  # grep would match other projects). Known residual: a watcher orphaned by
+  # a gateway CRASH (not down) whose pid was overwritten by a later start
+  # is not reaped here; close that tab manually (2026-09-14 residual).
   if [[ -f .run/dev-session.pid ]]; then
     local sid
     sid="$(cat .run/dev-session.pid)"
     if [[ "$sid" != "$$" ]] && kill -0 "$sid" 2>/dev/null \
-       && ps -p "$sid" -o command= 2>/dev/null | grep -q "run.sh"; then
-      pkill -P "$sid" 2>/dev/null || true
-      kill "$sid" && ok "stopped log watcher (pid $sid)"
+       && ps -p "$sid" -o command= 2>/dev/null | grep -q "scripts/run.sh"; then
+      pkill -P "$sid" tail 2>/dev/null || true
+      kill "$sid" 2>/dev/null && ok "stopped log watcher (pid $sid)" || true
     fi
     rm -f .run/dev-session.pid
   fi

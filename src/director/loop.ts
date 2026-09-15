@@ -346,6 +346,10 @@ export class DirectorLoop {
     let observed = 0;
     let classificationsCount = 0;
     let proposedCount = 0;
+    // Set when this tick already rotated VPN + restarted the worker (periodic
+    // 0b or stall 3a): the other path must not double-rotate/double-restart
+    // the minutes-old worker within the same tick (review 2026-09-15).
+    let staleHandledThisTick = false;
 
     // Supervise the observability broker before doing any work: a dead Kafka
     // must never block the tick, but it should also not stay dead silently.
@@ -407,6 +411,10 @@ export class DirectorLoop {
             const idleMin = trackerEventsIdleMinutes(e.DIRECTOR_CAMPAIGN_DIR);
             if (idleMin === null || idleMin >= e.STALE_THRESHOLD_MINUTES) {
               this.opts.log.info('Proton VPN IP rotated successfully; restarting agent');
+              // The worker was just rotated + restarted here: the stall path
+              // (3a) must not fire again this tick and double-kill the fresh
+              // worker (review 2026-09-15).
+              staleHandledThisTick = true;
               await restartWorker({
                 entryCommand: e.DIRECTOR_RUNNER || DEFAULT_RUNNER,
                 workspace: e.DIRECTOR_OPENCLAW_WORKSPACE,
@@ -477,12 +485,19 @@ export class DirectorLoop {
       // for 60+ min), the free-tier providers are likely rate-limiting the
       // current IP. Rotate the VPN IP and restart the agent to get a fresh IP.
       const hasStale = classifications.some((c) => c.kind === 'stale-campaign');
-      if (hasStale && !checkpoint.staleWarningActive) {
+      if (hasStale && !checkpoint.staleWarningActive && !staleHandledThisTick) {
         this.opts.log.warn('Campaign stale; rotating Proton VPN IP and restarting agent');
         const ok = await rotateVpnIp();
         // Back off a full interval even on failure (a failed rotation still
         // flapped the tunnel; retrying next tick would repeat the disruption).
         checkpoint.lastVpnRotation = new Date().toISOString();
+        // One-shot per episode, set AT THE FIRE SITE: Phase 4's proposal
+        // path may be skipped (duplicate-hash gate) or skipped entirely
+        // (aborted/throwing later phase), so it cannot be the only flag
+        // setter - otherwise the next tick re-fired rotation+restart and
+        // killed the freshly restarted worker (2026-09-14 double kill).
+        checkpoint.staleWarningActive = true;
+        staleHandledThisTick = true;
         if (ok) {
           this.opts.log.info('Proton VPN IP rotated due to stall');
         } else {
@@ -499,6 +514,10 @@ export class DirectorLoop {
         } else {
           this.opts.log.info('DIRECTOR_AUTOSTART=false; skipping stale-campaign worker restart');
         }
+        // Persist immediately: a throw in any later phase must not lose the
+        // flag/rotation bookkeeping, or the next tick re-fires the restart
+        // (the 2026-09-01 checkpoint-loss class, loop.ts comment at ~line 137).
+        await this.saveCheckpoint(checkpoint);
       }
 
       // Publish observation event to Kafka only when the OBSERVABLE STATE
@@ -556,20 +575,21 @@ export class DirectorLoop {
       const actionable = classifications.filter((c) => c.severity !== 'info');
       if (actionable.length > 0 && !signal.aborted) {
         // Suppress repeated stale-campaign proposals: if the only actionable
-        // classifications are stale-campaign and we already sent one, skip.
+        // classifications are stale-campaign and we already sent one, skip -
+        // EXCEPT on the tick that fired the stall recovery itself (3a/0b):
+        // the first-tick proposal must still go out while the flag is already
+        // set by the fire site.
         const onlyStale = actionable.every((c) => c.kind === 'stale-campaign');
-        if (onlyStale && checkpoint.staleWarningActive) {
+        if (onlyStale && checkpoint.staleWarningActive && !staleHandledThisTick) {
           this.opts.log.info('Stale-campaign warning already active; skipping duplicate proposal');
         } else {
           this.opts.log.info({ actionable: actionable.length }, 'Phase 4: Proposing patches');
           const currentHash = hashClassifications(actionable);
           if (currentHash === checkpoint.lastProposalHash) {
             this.opts.log.info({ hash: currentHash }, 'Skipping proposal: same state as last tick');
-            // The stale flag is only ever set next to a RUN proposal; a
-            // hash-skip here left it false, so the stall path re-fired the
-            // VPN rotation + worker restart on the NEXT tick and killed a
-            // freshly restarted worker 4 minutes in (2026-09-14 live double
-            // kill). The episode is handled either way: mark it active.
+            // The episode is handled regardless (the fire block sets the
+            // flag since 2026-09-15); mark it active for the hash-skip path
+            // too, so a silently-skipped episode can never re-fire.
             if (onlyStale) checkpoint.staleWarningActive = true;
           } else {
             checkpoint.lastProposalHash = currentHash;

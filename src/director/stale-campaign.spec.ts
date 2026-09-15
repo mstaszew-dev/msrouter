@@ -165,8 +165,13 @@ describe('stale-campaign detection (idle worker)', () => {
       eventsReadOffset: 0,
       lastProposalHash: createHash('md5').update('stale-campaign:warn:180m idle').digest('hex'),
     });
-    const { loop } = makeLoop(makeIdleCampaign(3 * 60 * 60_000), seed);
+    const { loop, stateDir } = makeLoop(makeIdleCampaign(3 * 60 * 60_000), seed);
     await loop.runOnce(new AbortController().signal);
+    // The fire block itself must set the flag (mechanism pin, not just counts).
+    const cp = JSON.parse(readFileSync(join(stateDir, 'cp.json'), 'utf8')) as {
+      staleWarningActive?: boolean;
+    };
+    expect(cp['staleWarningActive']).toBe(true);
     await loop.runOnce(new AbortController().signal);
     expect(vi.mocked(rotateVpnIp)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(restartWorker)).toHaveBeenCalledTimes(1);
