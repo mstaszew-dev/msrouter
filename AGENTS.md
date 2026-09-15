@@ -35,7 +35,7 @@ second instance while one is listening on :8787 (`scripts/run.sh down` first).
 
 ## Conventions
 
-- TDD, fresh-context review subagent before merge (rule `60-code-review-subagent`)
+- TDD, fresh-context review subagent before commit (rule `60-code-review-subagent`)
 - Secrets live only in gitignored `.env`; `.env.example` carries names, empty values
 - Direct tools, no MCP hop for internal calls (ADR `0003-direct-tools-no-mcp`)
 - Conventional commits; push to `origin/master` after review
