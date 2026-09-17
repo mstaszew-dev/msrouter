@@ -46,6 +46,15 @@ describe('shortCircuit', () => {
     expect(r).toEqual({ provider: 'openrouter', model: 'anthropic/claude-3-opus:free' });
   });
 
+  it('parses direct:openrouter/stealth/<model> and keeps the bare id', () => {
+    // Natively free stealth previews must not gain a :free suffix (no such
+    // variant exists upstream).
+    expect(shortCircuit('direct:openrouter/stealth/union-alpha')).toEqual({
+      provider: 'openrouter',
+      model: 'stealth/union-alpha',
+    });
+  });
+
   it('parses direct:tokenrouter/<model>', () => {
     const r = shortCircuit('direct:tokenrouter/z-ai/glm-5.3-free');
     expect(r).toEqual({ provider: 'tokenrouter', model: 'z-ai/glm-5.3-free' });
@@ -119,6 +128,13 @@ describe('withFree', () => {
     // includes(':') prevents double-suffixing — any colon variant is preserved
     const result = withFree('openai/gpt-4o:2024-08-06', true);
     expect(result).toBe('openai/gpt-4o:2024-08-06');
+  });
+
+  it('does not append :free to stealth/ models (natively free, no :free variant)', () => {
+    // stealth/union-alpha is 0/0-priced at its base id on OpenRouter and no
+    // 'stealth/union-alpha:free' id exists, so rewriting it would 404 every
+    // request instead of using the already-free model.
+    expect(withFree('stealth/union-alpha', true)).toBe('stealth/union-alpha');
   });
 });
 

@@ -129,11 +129,15 @@ export class OpenRouterProvider implements Provider {
  * a model/router that should NOT be suffixed. The OpenRouter auto-routers
  * (`openrouter/free`, `openrouter/auto`) select among upstream models
  * themselves; appending `:free` would corrupt them into a non-existent model.
+ * `stealth/*` previews are natively free (0/0 pricing at the base id) with no
+ * `:free` variant upstream (verified 2026-09-17 for union-alpha), so they must
+ * keep their bare id too.
  */
 export function withFree(model: string, force: boolean): string {
   if (!force) return model;
   if (model.includes(':')) return model;
   if (model === 'openrouter/free' || model === 'openrouter/auto') return model;
+  if (model.startsWith('stealth/')) return model;
   return `${model}:free`;
 }
 

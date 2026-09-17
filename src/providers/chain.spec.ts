@@ -180,6 +180,37 @@ describe('ProviderChain - routing-entry queue construction', () => {
   });
 });
 
+describe('ProviderChain - stealth/ models in OPENROUTER_MODELS (natively free)', () => {
+  const DEFAULT_ENV = {
+    NODE_ENV: 'test',
+    PORT: '8788',
+    OPENROUTER_KEY1: 'sk-or-test-key-1111',
+    FORCE_FREE: 'true',
+    SCHEDULE_INTERVAL_MINUTES: '-1',
+    UPSTREAM_TIMEOUT_MS: '5000',
+    OPENROUTER_MODELS: 'vendor/extra',
+  };
+
+  afterEach(() => loadEnv(DEFAULT_ENV));
+
+  it('routes stealth/union-alpha entries without the :free suffix', () => {
+    // Union Alpha is 0/0-priced at its base id; ':free' does not exist
+    // upstream, so the routing entry must carry the bare id.
+    loadEnv({ ...DEFAULT_ENV, OPENROUTER_MODELS: 'stealth/union-alpha' });
+    const p = makeProviders({ openrouterKeys: 1 });
+    const labels = new ProviderChain(p, silentLogger)
+      .queueSnapshot()
+      .map((c) => c.label);
+    expect(labels).toEqual([
+      'openrouter[key1/openrouter/free]',
+      'openrouter[key1/stealth/union-alpha]',
+      'openai',
+      'zai',
+      'tokenrouter',
+    ]);
+  });
+});
+
 describe('ProviderChain - default (no additional models)', () => {
   it('builds the production queue with OPENROUTER_MODELS empty', () => {
     loadEnv({ OPENROUTER_MODELS: '' });
