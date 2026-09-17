@@ -153,3 +153,23 @@ describe('laptop (tailnet qwen) gateway wiring', () => {
     expect(ids).not.toContain('qwen3.5:2b');
   });
 });
+
+describe('buildModelList - opencode gone-slot filtering', () => {
+  // 2026-09-17: an emptied OPENCODE_*_MODEL drops the routing slot (instances
+  // filter); the advertisement surfaces must not resurrect it as an empty-id
+  // entry in /v1/models or the GraphQL models query.
+  it('never advertises empty-string ids when an opencode variant slot is emptied', () => {
+    loadEnv({ OPENCODE_KEY1: 'sk-opencode-test-1', OPENCODE_NEMOTRON_MODEL: '' });
+    const ids = buildModelList().map((m) => m.id);
+    expect(ids).not.toContain('');
+    expect(ids).not.toContain('nemotron-3-ultra-free');
+  });
+
+  it('still advertises the surviving opencode models', () => {
+    loadEnv({ OPENCODE_KEY1: 'sk-opencode-test-1', OPENCODE_NEMOTRON_MODEL: '' });
+    const ids = buildModelList().filter((m) => m.owned_by.startsWith('opencode-')).map((m) => m.id);
+    expect(ids).toContain('big-pickle');
+    expect(ids).toContain('mimo-v2.5-free');
+    expect(ids).toHaveLength(7); // 8 slots minus the emptied one
+  });
+});

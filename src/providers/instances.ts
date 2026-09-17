@@ -64,7 +64,11 @@ const OPENCODE_MODELS = (e: {
   e.OPENCODE_DEEPSEEK_FLASH_MODEL,
   e.OPENCODE_LAGUNA_MODEL,
   e.OPENCODE_LING_MODEL,
-];
+].map((m) => m.trim()).filter((m) => m.length > 0);
+// Empty var = slot removed: a gone model (403/404 upstream, e.g. the
+// nemotron pair's "free tier can only be used from within OpenCode") is
+// retired by setting its env var empty, never by leaving a broken
+// empty-model triple in the queue.
 
 export function buildProviders(log: Logger): Providers {
   const { env, openrouterKeys, opencodeKeys } = config();

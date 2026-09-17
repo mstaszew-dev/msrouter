@@ -210,14 +210,21 @@ export function buildModelList(): Array<{ id: string; object: string; owned_by: 
   if (cfg.LMSTUDIO_ENABLED) data.push({ id: cfg.LMSTUDIO_MODEL, object: 'model', owned_by: 'lmstudio' });
   if (cfg.LAPTOP_ENABLED) data.push({ id: cfg.LAPTOP_MODEL, object: 'model', owned_by: 'laptop' });
   if (config().opencodeKeys.length > 0) {
-    data.push({ id: cfg.OPENCODE_MODEL, object: 'model', owned_by: 'opencode-bigpickle' });
-    data.push({ id: cfg.OPENCODE_NEMOTRON_MODEL, object: 'model', owned_by: 'opencode-nemotron' });
-    data.push({ id: cfg.OPENCODE_DEEPSEEK_FLASH_MODEL, object: 'model', owned_by: 'opencode-deepseek-flash' });
-    data.push({ id: cfg.OPENCODE_MIMO_MODEL, object: 'model', owned_by: 'opencode-mimo' });
-    data.push({ id: cfg.OPENCODE_LAGUNA_MODEL, object: 'model', owned_by: 'opencode-muse-spark-1.3' });
-    data.push({ id: cfg.OPENCODE_LING_MODEL, object: 'model', owned_by: 'opencode-ling' });
-    data.push({ id: cfg.OPENCODE_QWEN_MODEL, object: 'model', owned_by: 'opencode-muse-spark' });
-    data.push({ id: cfg.OPENCODE_MINIMAX_MODEL, object: 'model', owned_by: 'opencode-nemotron-lightning' });
+    // Mirror the pool filter (instances.ts): an emptied OPENCODE_*_MODEL slot
+    // is gone-for-gateway and must not be advertised as an empty id.
+    const ocModels: ReadonlyArray<readonly [string, string]> = [
+      [cfg.OPENCODE_MODEL, 'opencode-bigpickle'],
+      [cfg.OPENCODE_NEMOTRON_MODEL, 'opencode-nemotron'],
+      [cfg.OPENCODE_DEEPSEEK_FLASH_MODEL, 'opencode-deepseek-flash'],
+      [cfg.OPENCODE_MIMO_MODEL, 'opencode-mimo'],
+      [cfg.OPENCODE_LAGUNA_MODEL, 'opencode-muse-spark-1.3'],
+      [cfg.OPENCODE_LING_MODEL, 'opencode-ling'],
+      [cfg.OPENCODE_QWEN_MODEL, 'opencode-muse-spark'],
+      [cfg.OPENCODE_MINIMAX_MODEL, 'opencode-nemotron-lightning'],
+    ];
+    for (const [id, owner] of ocModels) {
+      if (id.trim()) data.push({ id, object: 'model', owned_by: owner });
+    }
   }
   return data;
 }

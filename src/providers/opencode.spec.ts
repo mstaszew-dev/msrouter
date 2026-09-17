@@ -227,3 +227,58 @@ describe('buildProviders free pool: x-opencode-session wiring', () => {
     );
   });
 });
+
+describe('buildProviders free pool: gone-model slot filtering', () => {
+  // 2026-09-17: nemotron-3-ultra-free and nemotron-3.5-lightning-free answer
+  // 403 "free tier can only be used from within OpenCode" to every non-OpenCode
+  // client (verified by direct curl probes), so they can never serve through
+  // the gateway. Slots are removed by setting their env var empty; the factory
+  // must drop the empty slot instead of building a broken empty-model triple.
+  afterEach(() => loadEnv({}));
+
+  it('drops slots whose model env var is empty, keeping the live ones', () => {
+    loadEnv({
+      OPENCODE_KEY1: 'k1',
+      OPENCODE_MODEL: 'big-pickle',
+      OPENCODE_NEMOTRON_MODEL: '',
+      OPENCODE_MINIMAX_MODEL: '',
+      SCHEDULE_INTERVAL_MINUTES: '-1',
+    });
+    const providers = buildProviders(silent);
+    const models = providers.opencode.queueSnapshot().map((t) => t.model);
+    // Nemotron pair dropped (emptied); absent vars keep their schema defaults.
+    expect(models).toEqual([
+      'big-pickle',
+      'muse-spark-1.2-contributor-free',
+      'mimo-v2.5-free',
+      'deepseek-v4-flash-free',
+      'muse-spark-1.3-contributor-free',
+      'ling-3.0-flash-fin-free',
+    ]);
+  });
+
+  it('keeps all eight slots when no model var is overridden (zod defaults)', () => {
+    loadEnv({ OPENCODE_KEY1: 'k1', SCHEDULE_INTERVAL_MINUTES: '-1' });
+    const providers = buildProviders(silent);
+    // 8 defaulted model slots x 1 key = 8 triples
+    expect(providers.opencode.queueSnapshot().length).toBe(8);
+  });
+
+  it('drops ALL slots when every model var is empty (provider still available, zero triples)', () => {
+    loadEnv({
+      OPENCODE_KEY1: 'k1',
+      OPENCODE_MODEL: '',
+      OPENCODE_MINIMAX_MODEL: '',
+      OPENCODE_QWEN_MODEL: '',
+      OPENCODE_NEMOTRON_MODEL: '',
+      OPENCODE_MIMO_MODEL: '',
+      OPENCODE_DEEPSEEK_FLASH_MODEL: '',
+      OPENCODE_LAGUNA_MODEL: '',
+      OPENCODE_LING_MODEL: '',
+      SCHEDULE_INTERVAL_MINUTES: '-1',
+    });
+    const providers = buildProviders(silent);
+    expect(providers.opencode.available).toBe(true); // keys configured
+    expect(providers.opencode.queueSnapshot()).toEqual([]);
+  });
+});
