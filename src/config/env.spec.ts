@@ -133,9 +133,12 @@ describe('loadEnv - laptop (tailnet qwen) config', () => {
 
   // Laptop is a slow single-slot local model over Tailscale (cf. LM Studio):
   // it gets its own local-class timeout, never UPSTREAM_TIMEOUT_MS.
-  it('gives Laptop its own slow-local timeout (default 300s, overridable)', () => {
+  it('gives Laptop its own slow-local timeout (default 30min, overridable)', () => {
+    // 2026-09-18: raised 300s -> 1800s. The tailnet qwen serves long campaign
+    // prefills; the python agent's SDK timeout was raised to match (1800s),
+    // so the gateway must not cut a laptop attempt earlier than the client.
     const cfg = loadEnv({});
-    expect(cfg.env.LAPTOP_TIMEOUT_MS).toBe(300_000);
+    expect(cfg.env.LAPTOP_TIMEOUT_MS).toBe(1_800_000);
     const over = loadEnv({ LAPTOP_TIMEOUT_MS: '600000' });
     expect(over.env.LAPTOP_TIMEOUT_MS).toBe(600_000);
   });

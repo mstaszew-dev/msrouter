@@ -71,8 +71,9 @@ const schema = z.object({
   LAPTOP_ENABLED: flag('false'),
   LAPTOP_BASE_URL: z.string().url().default('https://laptop-a64sv2el.taila0a683.ts.net/v1'),
   LAPTOP_MODEL: z.string().default('qwen3.5:2b'),
-  // Local-class timeout: slow prefill over Tailscale (cf. LMSTUDIO_TIMEOUT_MS).
-  LAPTOP_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
+  // Local-class timeout (cf. LMSTUDIO_TIMEOUT_MS). 2026-09-18: 300s -> 1800s
+  // to match the agent's 1800s SDK timeout; slow tailnet prefills need it.
+  LAPTOP_TIMEOUT_MS: z.coerce.number().int().positive().default(1_800_000),
   OPENCODE_API_KEY: z.string().optional(),
   OPENCODE_BASE_URL: z.string().url().default('https://opencode.ai/zen/v1'),
   // /zen/v1 free tier requires x-opencode-session (factory auto-generates a
@@ -122,8 +123,7 @@ const schema = z.object({
   // Wall-clock budget for ONE alias walk (mst/free): once spent, remaining
   // remote entries (mid-entry retries too) are skipped so the walk fails
   // over to the local tail (slow-hanging remotes, 2026-09-13). 0 disables.
-  // Keep deadline + UPSTREAM_TIMEOUT_MS + LOCAL*_TIMEOUT_MS < client read
-  // timeout (campaign: 300+120+300 < 1200s).
+  // Client ceiling: 300 + 300 + laptop 1800 = 2400s (agent TIMEOUT_SECONDS).
   WALK_DEADLINE_MS: z.coerce.number().int().min(0).default(300_000),
   // Demote after N consecutive successes (local tail must not monopolize).
   SUCCESS_DEMOTE_LIMIT: z.coerce.number().int().positive().default(5),
