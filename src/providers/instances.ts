@@ -33,8 +33,8 @@ export interface Providers {
   /** LM Studio (Bionic) local provider; always built, only routed when
    *  LMSTUDIO_ENABLED=true (chain-routing gates the entry). */
   lmstudio: LmStudioProvider;
-  /** Laptop (tailnet) qwen via Ollama+Tailscale; routed ABSOLUTE LAST when
-   *  LAPTOP_ENABLED=true (weakest model in the chain). */
+  /** Laptop slot: the local qwen35-gw gateway (0.8B); routed ABSOLUTE LAST
+   *  when LAPTOP_ENABLED=true (weakest model in the chain). */
   laptop: LocalProvider;
 }
 
@@ -167,11 +167,10 @@ export function buildProviders(log: Logger): Providers {
       env.LMSTUDIO_TIMEOUT_MS,
       log,
     ),
-    // Laptop (tailnet) qwen: Ollama behind Tailscale on the user's other
-    // machine. OpenAI-compatible /v1, no API key. 32K prompt guard: Ollama's
-    // effective context is modest and oversized prompts would truncate there.
-    // Own local-class timeout (LAPTOP_TIMEOUT_MS): slow single-slot prefills
-    // over Tailscale can exceed UPSTREAM_TIMEOUT_MS.
+    // Laptop slot: the local qwen35-gw gateway (0.8B). OpenAI-compatible /v1,
+    // no API key. 32K prompt guard: the 0.8B context is modest and oversized
+    // prompts would truncate there. Own local-class timeout (LAPTOP_TIMEOUT_MS):
+    // slow single-slot prefills can exceed UPSTREAM_TIMEOUT_MS.
     laptop: new LocalProvider(
       {
         id: 'laptop',

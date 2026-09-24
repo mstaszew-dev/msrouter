@@ -113,12 +113,12 @@ describe('loadEnv - TokenRouter config', () => {
   });
 });
 
-describe('loadEnv - laptop (tailnet qwen) config', () => {
-  it('defaults to the tailnet URL and qwen3.5:2b, disabled', () => {
+describe('loadEnv - laptop (local qwen35-gw gateway) config', () => {
+  it('defaults to the local gateway URL and qwen3.5-0.8b, disabled', () => {
     const cfg = loadEnv({});
     expect(cfg.env.LAPTOP_ENABLED).toBe(false);
-    expect(cfg.env.LAPTOP_BASE_URL).toBe('https://laptop-a64sv2el.taila0a683.ts.net/v1');
-    expect(cfg.env.LAPTOP_MODEL).toBe('qwen3.5:2b');
+    expect(cfg.env.LAPTOP_BASE_URL).toBe('http://127.0.0.1:8091/v1');
+    expect(cfg.env.LAPTOP_MODEL).toBe('qwen3.5-0.8b');
   });
 
   it('accepts LAPTOP_* overrides', () => {
@@ -131,10 +131,10 @@ describe('loadEnv - laptop (tailnet qwen) config', () => {
     expect(cfg.env.LAPTOP_MODEL).toBe('qwen3.5:4b');
   });
 
-  // Laptop is a slow single-slot local model over Tailscale (cf. LM Studio):
+  // Laptop is a slow single-slot local model (cf. LM Studio):
   // it gets its own local-class timeout, never UPSTREAM_TIMEOUT_MS.
   it('gives Laptop its own slow-local timeout (default 30min, overridable)', () => {
-    // 2026-09-18: raised 300s -> 1800s. The tailnet qwen serves long campaign
+    // 2026-09-18: raised 300s -> 1800s. The 0.8B gateway serves long campaign
     // prefills; the python agent's SDK timeout was raised to match (1800s),
     // so the gateway must not cut a laptop attempt earlier than the client.
     const cfg = loadEnv({});

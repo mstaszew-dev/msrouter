@@ -965,7 +965,7 @@ describe('ProviderChain - local (llama-server) entry', () => {
       LOCAL_ENABLED: 'true',
       LMSTUDIO_ENABLED: 'true',
       LAPTOP_ENABLED: 'true',
-      LAPTOP_MODEL: 'qwen3.5:2b',
+      LAPTOP_MODEL: 'qwen3.5-0.8b',
     });
     const p = makeProviders({ openrouterKeys: 1 });
     const chain = new ProviderChain(p, silentLogger);
@@ -976,7 +976,7 @@ describe('ProviderChain - local (llama-server) entry', () => {
   });
 
   it('omits the laptop entry when LAPTOP_ENABLED is false (default)', () => {
-    loadEnv({ ...DEFAULT_ENV, LAPTOP_MODEL: 'qwen3.5:2b' });
+    loadEnv({ ...DEFAULT_ENV, LAPTOP_MODEL: 'qwen3.5-0.8b' });
     const p = makeProviders({ openrouterKeys: 1 });
     const chain = new ProviderChain(p, silentLogger);
     expect(chain.queueSnapshot().some((e) => e.provider === 'laptop')).toBe(false);
@@ -986,7 +986,7 @@ describe('ProviderChain - local (llama-server) entry', () => {
     loadEnv({
       ...DEFAULT_ENV,
       LAPTOP_ENABLED: 'true',
-      LAPTOP_MODEL: 'qwen3.5:2b',
+      LAPTOP_MODEL: 'qwen3.5-0.8b',
     });
     const p = makeProviders({
       openrouterKeys: 1,
@@ -995,7 +995,7 @@ describe('ProviderChain - local (llama-server) entry', () => {
     });
     const chain = new ProviderChain(p, silentLogger);
     const res = await chain.handle(
-      { ...baseBody, model: 'direct:laptop/qwen3.5:2b' },
+      { ...baseBody, model: 'direct:laptop/qwen3.5-0.8b' },
       new AbortController().signal,
     );
     expect(res.servedBy.provider).toBe('laptop');
@@ -1003,11 +1003,11 @@ describe('ProviderChain - local (llama-server) entry', () => {
     const laptopAttempt = p.laptop as unknown as { attempt: ReturnType<typeof vi.fn> };
     expect(laptopAttempt.attempt).toHaveBeenCalledTimes(1);
     const opts = laptopAttempt.attempt.mock.calls[0]![2] as { model: string };
-    expect(opts.model).toBe('qwen3.5:2b');
+    expect(opts.model).toBe('qwen3.5-0.8b');
   });
 
-  it('sends qwen3.5:2b verbatim on the explicit-model path (no :free rewrite)', async () => {
-    loadEnv({ ...DEFAULT_ENV, LAPTOP_ENABLED: 'true', LAPTOP_MODEL: 'qwen3.5:2b' });
+  it('sends qwen3.5-0.8b verbatim on the explicit-model path (no :free rewrite)', async () => {
+    loadEnv({ ...DEFAULT_ENV, LAPTOP_ENABLED: 'true', LAPTOP_MODEL: 'qwen3.5-0.8b' });
     const p = makeProviders({
       openrouterKeys: 1,
       openrouterResults: [{ kind: 'KEY_FAILURE', status: 404, message: 'no such model' }],
@@ -1015,13 +1015,13 @@ describe('ProviderChain - local (llama-server) entry', () => {
     });
     const chain = new ProviderChain(p, silentLogger);
     const res = await chain.handle(
-      { ...baseBody, model: 'qwen3.5:2b' },
+      { ...baseBody, model: 'qwen3.5-0.8b' },
       new AbortController().signal,
     );
     expect(res.servedBy.provider).toBe('laptop');
     const laptopAttempt = p.laptop as unknown as { attempt: ReturnType<typeof vi.fn> };
     const opts = laptopAttempt.attempt.mock.calls[0]![2] as { model: string };
-    expect(opts.model).toBe('qwen3.5:2b');
+    expect(opts.model).toBe('qwen3.5-0.8b');
   });
 });
 
@@ -1133,14 +1133,14 @@ describe('ProviderChain - local provider success-based demotion', () => {
   });
 
   it('demotes LAPTOP after consecutive successes too (weak tail never gains preference)', async () => {
-    // 2026-09-09 user directive: laptop qwen3.5:2b is very weak and "always
+    // 2026-09-09 user directive: laptop qwen3.5-0.8b is very weak and "always
     // works", so the adaptive queue must never let it accumulate preference.
     // It joins local/lmstudio in the success-based demotion.
     loadEnv({
       ...DEFAULT_ENV,
       SUCCESS_DEMOTE_LIMIT: '2',
       LAPTOP_ENABLED: 'true',
-      LAPTOP_MODEL: 'qwen3.5:2b',
+      LAPTOP_MODEL: 'qwen3.5-0.8b',
     });
     const p = makeProviders({
       openrouterKeys: 1,

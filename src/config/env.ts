@@ -65,14 +65,14 @@ const schema = z.object({
   // Local prefills are slow (a 20k-token prompt takes minutes on the shared
   // single-slot llama-server), so LM Studio gets its own timeout (cf. LOCAL_TIMEOUT_MS).
   LMSTUDIO_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
-  // Laptop (tailnet) qwen: Ollama on the user's other machine via Tailscale.
-  // OpenAI-compatible, no API key. Weakest model: routed ABSOLUTE LAST when
-  // every remote provider and the local fallbacks are exhausted.
+  // Laptop slot: the local qwen35-gw gateway (0.8B), OpenAI-compatible /v1,
+  // no API key. Weakest model: routed ABSOLUTE LAST when every remote
+  // provider and the local fallbacks are exhausted.
   LAPTOP_ENABLED: flag('false'),
-  LAPTOP_BASE_URL: z.string().url().default('https://laptop-a64sv2el.taila0a683.ts.net/v1'),
-  LAPTOP_MODEL: z.string().default('qwen3.5:2b'),
+  LAPTOP_BASE_URL: z.string().url().default('http://127.0.0.1:8091/v1'),
+  LAPTOP_MODEL: z.string().default('qwen3.5-0.8b'),
   // Local-class timeout (cf. LMSTUDIO_TIMEOUT_MS). 2026-09-18: 300s -> 1800s
-  // to match the agent's 1800s SDK timeout; slow tailnet prefills need it.
+  // to match the agent's 1800s SDK timeout; slow 0.8B prefills need it.
   LAPTOP_TIMEOUT_MS: z.coerce.number().int().positive().default(1_800_000),
   OPENCODE_API_KEY: z.string().optional(),
   OPENCODE_BASE_URL: z.string().url().default('https://opencode.ai/zen/v1'),
