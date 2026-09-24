@@ -167,8 +167,8 @@ export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
   if (e.LMSTUDIO_ENABLED) {
     list.push({ provider: 'lmstudio', label: 'lmstudio', model: e.LMSTUDIO_MODEL, attemptIndex: 0 });
   }
-  // Laptop (tailnet) qwen goes ABSOLUTE LAST: the 0.8B model is the weakest
-  // in the chain, so it only serves when everything else is exhausted.
+  // Laptop slot: local 0.8B gateway, weakest in chain (used only when remotes
+  // exhausted).
   if (e.LAPTOP_ENABLED) {
     list.push({ provider: 'laptop', label: 'laptop', model: e.LAPTOP_MODEL, attemptIndex: 0 });
   }
