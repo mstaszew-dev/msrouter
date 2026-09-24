@@ -19,6 +19,7 @@ import { sendJson } from '../common/http.js';
 import { env, config } from '../config/env.js';
 import { type ProviderChain } from '../providers/chain.js';
 import { scrubSecrets } from '../providers/fetch.js';
+import { opencodePoolModels } from '../providers/instances.js';
 import type { ChatRequestBody } from '../providers/types.js';
 
 import { createGraphqlHandler } from './graphql.js';
@@ -183,6 +184,8 @@ export function resolveModel(requested: string): string {
     cfg.LOCAL_MODEL,
     cfg.LMSTUDIO_MODEL,
     cfg.LAPTOP_MODEL,
+    // Live OpenCode pool slots must pass through verbatim, not alias-rewrite.
+    ...opencodePoolModels(cfg),
   ]);
   if (known.has(requested)) return requested;
   // Unknown: default to the alias walk.

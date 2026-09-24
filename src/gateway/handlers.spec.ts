@@ -88,6 +88,27 @@ describe('resolveModel - unknown model defaults to the alias walk', () => {
     loadEnv({ OPENCODEGO_MODEL: 'glm-5.3-flash' });
     expect(resolveModel('glm-5.3-flash')).toBe('glm-5.3-flash');
   });
+
+  it('passes a configured opencode pool model (big-pickle) through verbatim', () => {
+    loadEnv({ OPENCODE_KEY1: 'sk-opencode-test-1', OPENCODE_MODEL: 'big-pickle' });
+    expect(resolveModel('big-pickle')).toBe('big-pickle');
+  });
+
+  it('passes a configured opencode NEMOTRON pool model through verbatim', () => {
+    // nemotron-3-ultra-free is advertised in /v1/models (owned_by
+    // opencode-nemotron); an explicit request must stay pinned to the pool
+    // triple instead of being rewritten to the mst/free alias walk.
+    loadEnv({
+      OPENCODE_KEY1: 'sk-opencode-test-1',
+      OPENCODE_NEMOTRON_MODEL: 'nemotron-3-ultra-free',
+    });
+    expect(resolveModel('nemotron-3-ultra-free')).toBe('nemotron-3-ultra-free');
+  });
+
+  it('still rewrites an emptied (retired) opencode slot to the alias walk', () => {
+    loadEnv({ OPENCODE_NEMOTRON_MODEL: '' });
+    expect(resolveModel('nemotron-3-ultra-free')).toBe('mst/free');
+  });
 });
 
 describe('buildModelList - tokenrouter model advertisement', () => {
@@ -171,5 +192,18 @@ describe('buildModelList - opencode gone-slot filtering', () => {
     expect(ids).toContain('big-pickle');
     expect(ids).toContain('mimo-v2.5-free');
     expect(ids).toHaveLength(7); // 8 slots minus the emptied one
+  });
+
+  it('advertises big-pickle and nemotron-3-ultra-free when both slots are configured', () => {
+    loadEnv({
+      OPENCODE_KEY1: 'sk-opencode-test-1',
+      OPENCODE_MODEL: 'big-pickle',
+      OPENCODE_NEMOTRON_MODEL: 'nemotron-3-ultra-free',
+    });
+    const oc = buildModelList().filter((m) => m.owned_by.startsWith('opencode-'));
+    expect(oc.map((m) => m.id)).toEqual(
+      expect.arrayContaining(['big-pickle', 'nemotron-3-ultra-free']),
+    );
+    expect(oc.find((m) => m.id === 'nemotron-3-ultra-free')?.owned_by).toBe('opencode-nemotron');
   });
 });

@@ -38,14 +38,20 @@ export interface Providers {
   laptop: LocalProvider;
 }
 
-/** OpenCode Zen model variants, ordered by capability (strongest first).
- *  Preferred models come first; weaker free-tier models are last as fallback
- *  so the gateway doesn't stall if all preferred models are demoted.
- *  Order is preserved in the rotation queue (model-major, key-minor).
- *  2026-08-31 catalog reshuffle: qwen3.6-plus/minimax-m3/north-mini-code-free
- *  were removed upstream (paid-only or gone); kimi-k3/gemini-3.7-flash/
- *  grok-4.6/muse-spark-1.2 demand a payment method - never route them. */
-const OPENCODE_MODELS = (e: {
+const OPENCODE_MODE_SLOTS: Array<keyof OpenCodeSlotEnv> = [
+  'OPENCODE_MODEL', // big-pickle (fast default, demoted if empty)
+  'OPENCODE_MINIMAX_MODEL', // nemotron-3.5-lightning-free (strongest current all-rounder)
+  'OPENCODE_QWEN_MODEL', // muse-spark-1.2-contributor-free (coding + technical reasoning)
+  'OPENCODE_NEMOTRON_MODEL', // nemotron-3-ultra-free (good coding + technical reasoning)
+  'OPENCODE_MIMO_MODEL', // decent for large-codebase/refactoring
+  // Fallback: weaker free-tier models, only reached if all above are demoted
+  'OPENCODE_DEEPSEEK_FLASH_MODEL',
+  'OPENCODE_LAGUNA_MODEL',
+  'OPENCODE_LING_MODEL',
+];
+
+/** The env fields that configure the 8 OpenCode Zen pool slots. */
+export interface OpenCodeSlotEnv {
   OPENCODE_MODEL: string;
   OPENCODE_MINIMAX_MODEL: string;
   OPENCODE_QWEN_MODEL: string;
@@ -54,21 +60,18 @@ const OPENCODE_MODELS = (e: {
   OPENCODE_DEEPSEEK_FLASH_MODEL: string;
   OPENCODE_LAGUNA_MODEL: string;
   OPENCODE_LING_MODEL: string;
-}): readonly string[] => [
-  e.OPENCODE_MODEL, // big-pickle (fast default, demoted if empty)
-  e.OPENCODE_MINIMAX_MODEL, // nemotron-3.5-lightning-free (strongest current all-rounder)
-  e.OPENCODE_QWEN_MODEL, // muse-spark-1.2-contributor-free (coding + technical reasoning)
-  e.OPENCODE_NEMOTRON_MODEL, // nemotron-3-ultra-free (good coding + technical reasoning)
-  e.OPENCODE_MIMO_MODEL, // decent for large-codebase/refactoring
-  // Fallback: weaker free-tier models, only reached if all above are demoted
-  e.OPENCODE_DEEPSEEK_FLASH_MODEL,
-  e.OPENCODE_LAGUNA_MODEL,
-  e.OPENCODE_LING_MODEL,
-].map((m) => m.trim()).filter((m) => m.length > 0);
-// Empty var = slot removed: a gone model (403/404 upstream, e.g. the
-// nemotron pair's "free tier can only be used from within OpenCode") is
-// retired by setting its env var empty, never by leaving a broken
-// empty-model triple in the queue.
+}
+
+/**
+ * The live (non-empty) OpenCode pool model ids, strongest first.
+ * Empty var = slot removed: a gone model (403/404 upstream, e.g. the
+ * nemotron pair's "free tier can only be used from within OpenCode") is
+ * retired by setting its env var empty, never by leaving a broken
+ * empty-model triple in the queue.
+ */
+export function opencodePoolModels(e: OpenCodeSlotEnv): readonly string[] {
+  return OPENCODE_MODE_SLOTS.map((slot) => e[slot].trim()).filter((m) => m.length > 0);
+}
 
 export function buildProviders(log: Logger): Providers {
   const { env, openrouterKeys, opencodeKeys } = config();
@@ -111,7 +114,7 @@ export function buildProviders(log: Logger): Providers {
     opencode: new OpenCodeProvider({
       keys: opencodeKeys,
       baseUrl: env.OPENCODE_BASE_URL,
-      models: OPENCODE_MODELS(env),
+      models: opencodePoolModels(env),
       timeoutMs,
       log,
       // The /zen/v1 free tier rejects requests without x-opencode-session

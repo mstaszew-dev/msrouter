@@ -281,4 +281,34 @@ describe('buildProviders free pool: gone-model slot filtering', () => {
     expect(providers.opencode.available).toBe(true); // keys configured
     expect(providers.opencode.queueSnapshot()).toEqual([]);
   });
+
+  it('queues big-pickle then nemotron-3-ultra-free triples when both slots are configured (production contract)', () => {
+    // The exact .env the gateway is expected to run with for this work:
+    // big-pickle + nemotron-3-ultra-free live, every other slot retired.
+    loadEnv({
+      OPENCODE_KEY1: 'k1',
+      OPENCODE_KEY2: 'k2',
+      OPENCODE_KEY3: 'k3',
+      OPENCODE_MODEL: 'big-pickle',
+      OPENCODE_NEMOTRON_MODEL: 'nemotron-3-ultra-free',
+      OPENCODE_MINIMAX_MODEL: '',
+      OPENCODE_QWEN_MODEL: '',
+      OPENCODE_MIMO_MODEL: '',
+      OPENCODE_DEEPSEEK_FLASH_MODEL: '',
+      OPENCODE_LAGUNA_MODEL: '',
+      OPENCODE_LING_MODEL: '',
+      SCHEDULE_INTERVAL_MINUTES: '-1',
+    });
+    const providers = buildProviders(silent);
+    // Model-major, key-minor: every key for big-pickle, then every key for nemotron.
+    expect(providers.opencode.keyCount).toBe(3);
+    expect(providers.opencode.queueSnapshot()).toEqual([
+      { model: 'big-pickle', keyIdx: 0 },
+      { model: 'big-pickle', keyIdx: 1 },
+      { model: 'big-pickle', keyIdx: 2 },
+      { model: 'nemotron-3-ultra-free', keyIdx: 0 },
+      { model: 'nemotron-3-ultra-free', keyIdx: 1 },
+      { model: 'nemotron-3-ultra-free', keyIdx: 2 },
+    ]);
+  });
 });

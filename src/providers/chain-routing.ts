@@ -12,7 +12,7 @@
 
 import { env } from '../config/env.js';
 
-import type { Providers } from './instances.js';
+import { opencodePoolModels, type Providers } from './instances.js';
 import { withFree } from './openrouter.js';
 import type { ChatRequestBody, ProviderCallResult } from './types.js';
 
@@ -191,7 +191,10 @@ export function isProviderDefaultModel(model: string): boolean {
     model === e.OPENCODEGO_MODEL ||
     model === e.LOCAL_MODEL ||
     model === e.LMSTUDIO_MODEL ||
-    model === e.LAPTOP_MODEL
+    model === e.LAPTOP_MODEL ||
+    // Any live OpenCode pool slot (big-pickle, nemotron-3-ultra-free, ...)
+    // must bypass the FORCE_FREE :free rewrite on the explicit-model path.
+    opencodePoolModels(e).includes(model)
   );
 }
 
