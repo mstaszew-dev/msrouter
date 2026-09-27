@@ -33,8 +33,8 @@ export interface Providers {
   /** LM Studio (Bionic) local provider; always built, only routed when
    *  LMSTUDIO_ENABLED=true (chain-routing gates the entry). */
   lmstudio: LmStudioProvider;
-  /** Laptop slot: the local qwen35-gw gateway (0.8B); routed ABSOLUTE LAST
-   *  when LAPTOP_ENABLED=true (weakest model in the chain). */
+  /** Laptop slot: tailnet Ollama on the travelmate (Qwen3.5 2B); routed
+   *  ABSOLUTE LAST when LAPTOP_ENABLED=true (weakest model in the chain). */
   laptop: LocalProvider;
 }
 
@@ -167,16 +167,18 @@ export function buildProviders(log: Logger): Providers {
       env.LMSTUDIO_TIMEOUT_MS,
       log,
     ),
-    // Laptop slot: the local qwen35-gw gateway (0.8B). OpenAI-compatible /v1,
-    // no API key. 32K prompt guard: the 0.8B context is modest and oversized
-    // prompts would truncate there. Own local-class timeout (LAPTOP_TIMEOUT_MS):
-    // slow single-slot prefills can exceed UPSTREAM_TIMEOUT_MS.
+    // Laptop slot: the travelmate's tailnet Ollama (Qwen3.5 2B, 64K ctx; was
+    // the local qwen35-gw 0.8B gateway until 2026-09-27). OpenAI-compatible
+    // /v1 via tailnet-only HTTPS, no API key. 52K prompt guard: 64K window
+    // minus 8K output headroom minus ~4K chat-template/estimator slack.
+    // Own local-class timeout (LAPTOP_TIMEOUT_MS): slow tailnet prefills can
+    // exceed UPSTREAM_TIMEOUT_MS.
     laptop: new LocalProvider(
       {
         id: 'laptop',
         baseUrl: env.LAPTOP_BASE_URL,
         defaultModel: env.LAPTOP_MODEL,
-        maxPromptTokens: 32_000,
+        maxPromptTokens: 52_000,
       },
       env.LAPTOP_TIMEOUT_MS,
       log,

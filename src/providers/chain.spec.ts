@@ -79,7 +79,11 @@ function makeProviders(
   const tokenrouterResults = overrides.tokenrouterResults ?? [];
   const tokenrouterAttempt = vi.fn(async (): Promise<ProviderCallResult> => {
     return (
-      tokenrouterResults.shift() ?? { kind: 'KEY_FAILURE', status: 429, message: 'tokenrouter stub' }
+      tokenrouterResults.shift() ?? {
+        kind: 'KEY_FAILURE',
+        status: 429,
+        message: 'tokenrouter stub',
+      }
     );
   });
 
@@ -99,9 +103,7 @@ function makeProviders(
 
   const lmstudioResults = overrides.lmstudioResults ?? [];
   const lmstudioAttempt = vi.fn(async (): Promise<ProviderCallResult> => {
-    return (
-      lmstudioResults.shift() ?? { kind: 'KEY_FAILURE', status: 0, message: 'lmstudio stub' }
-    );
+    return lmstudioResults.shift() ?? { kind: 'KEY_FAILURE', status: 0, message: 'lmstudio stub' };
   });
 
   const opencodegoResults = overrides.opencodegoResults ?? [];
@@ -198,9 +200,7 @@ describe('ProviderChain - stealth/ models in OPENROUTER_MODELS (natively free)',
     // upstream, so the routing entry must carry the bare id.
     loadEnv({ ...DEFAULT_ENV, OPENROUTER_MODELS: 'stealth/union-alpha' });
     const p = makeProviders({ openrouterKeys: 1 });
-    const labels = new ProviderChain(p, silentLogger)
-      .queueSnapshot()
-      .map((c) => c.label);
+    const labels = new ProviderChain(p, silentLogger).queueSnapshot().map((c) => c.label);
     expect(labels).toEqual([
       'openrouter[key1/openrouter/free]',
       'openrouter[key1/stealth/union-alpha]',
@@ -219,9 +219,7 @@ describe('ProviderChain - default (no additional models)', () => {
       opencodeKeys: 1,
       opencodeModels: ['big-pickle'],
     });
-    const labels = new ProviderChain(p, silentLogger)
-      .queueSnapshot()
-      .map((c) => c.label);
+    const labels = new ProviderChain(p, silentLogger).queueSnapshot().map((c) => c.label);
     expect(labels).toEqual([
       'openrouter[key1/openrouter/free]',
       'openrouter[key2/openrouter/free]',
@@ -419,10 +417,16 @@ describe('ProviderChain - 429 cooldown parking (rate-limit storms)', () => {
       ],
     });
     const chain = new ProviderChain(p, silentLogger);
-    const res1 = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    const res1 = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
     expect(res1.servedBy.provider).toBe('tokenrouter');
 
-    const res2 = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    const res2 = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
     expect(res2.servedBy.provider).toBe('tokenrouter');
     // Both openrouter entries (2 models x key1) were attempted exactly once
     // each in request 1 and NOT again in request 2 (parked for the cooldown).
@@ -450,11 +454,17 @@ describe('ProviderChain - 429 cooldown parking (rate-limit storms)', () => {
       .mockResolvedValueOnce({ kind: 'KEY_FAILURE', status: 429, message: 'rl' })
       .mockResolvedValue({ kind: 'OK', response: okResponse() });
     const chain = new ProviderChain(p, silentLogger);
-    const res1 = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    const res1 = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
     expect(res1.servedBy.provider).toBe('openai');
 
     vi.advanceTimersByTime(61_000); // cooldown expired
-    const res2 = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    const res2 = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
     expect(res2.servedBy.provider).toContain('openrouter'); // eligible again
     vi.useRealTimers();
   });
@@ -478,14 +488,20 @@ describe('ProviderChain - 429 cooldown parking (rate-limit storms)', () => {
     });
     const orEntry = p.openrouter as unknown as { attempt: ReturnType<typeof vi.fn> };
     const forbidden = (): ProviderCallResult => ({
-      kind: 'KEY_FAILURE', status: 403, message: 'forbidden',
+      kind: 'KEY_FAILURE',
+      status: 403,
+      message: 'forbidden',
     });
     orEntry.attempt
       .mockImplementationOnce(async () => ({
-        kind: 'KEY_FAILURE', status: 401, message: 'bad key',
+        kind: 'KEY_FAILURE',
+        status: 401,
+        message: 'bad key',
       })) // or/free: 401 -> demote only
       .mockImplementationOnce(async () => ({
-        kind: 'KEY_FAILURE', status: 429, message: 'rl',
+        kind: 'KEY_FAILURE',
+        status: 429,
+        message: 'rl',
       })) // or/vendor: 429 -> demote + park
       .mockResolvedValue({ kind: 'OK', response: okResponse() });
     const openaiEntry = p.openai as unknown as { attempt: ReturnType<typeof vi.fn> };
@@ -507,8 +523,8 @@ describe('ProviderChain - 429 cooldown parking (rate-limit storms)', () => {
     expect(orEntry.attempt).toHaveBeenCalledTimes(2);
     // THE discriminator: exactly ONE entry (the 429 one) was parked. A
     // regression that parks 401s would park both openrouter entries here.
-    const infoCalls = (silentLogger.info as ReturnType<typeof vi.fn>)
-      .mock.calls as unknown as Array<[unknown, unknown]>;
+    const infoCalls = (silentLogger.info as ReturnType<typeof vi.fn>).mock
+      .calls as unknown as Array<[unknown, unknown]>;
     const parkEntry = infoCalls.find(
       (c): c is [unknown, string] => typeof c[1] === 'string' && c[1].includes('parked'),
     );
@@ -520,7 +536,10 @@ describe('ProviderChain - 429 cooldown parking (rate-limit storms)', () => {
     // Request 2 (cooldowns still live): the 401 entry must be attempted again
     // (not parked). It now returns OK (mockResolvedValue above), so the walk
     // serves from openrouter via the previously-401ing entry.
-    const res2 = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    const res2 = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
     expect(res2.servedBy.provider).toContain('openrouter');
     expect(orEntry.attempt).toHaveBeenCalledTimes(3);
     vi.useRealTimers();
@@ -543,7 +562,10 @@ describe('ProviderChain - 429 cooldown parking (rate-limit storms)', () => {
       chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal),
     ).rejects.toBeInstanceOf(NoProviderAvailableError);
 
-    const res2 = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    const res2 = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
     expect(res2.servedBy.provider).toBe('tokenrouter');
     vi.useRealTimers();
   });
@@ -567,16 +589,19 @@ describe('ProviderChain - 429 cooldown parking (rate-limit storms)', () => {
       .mockResolvedValue({ kind: 'OK', response: okResponse() });
     const hopeless = { kind: 'KEY_FAILURE', status: 403, message: 'forbidden' } as const;
     (p.zai as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt.mockResolvedValue(hopeless);
-    (
-      p.tokenrouter as unknown as { attempt: ReturnType<typeof vi.fn> }
-    ).attempt.mockResolvedValue(hopeless);
+    (p.tokenrouter as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt.mockResolvedValue(
+      hopeless,
+    );
     const chain = new ProviderChain(p, silentLogger);
 
     await expect(
       chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal),
     ).rejects.toBeInstanceOf(NoProviderAvailableError);
 
-    const res = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    const res = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
     expect(res.servedBy.provider).toContain('openrouter'); // served from the parked remainder
     vi.useRealTimers();
   });
@@ -596,11 +621,9 @@ describe('ProviderChain - 429 cooldown parking (rate-limit storms)', () => {
     expect(res.servedBy.provider).toBe('zai');
     // The STRIPPED model arrives via opts.model - the real SingleKeyProvider
     // sends body = { ...body, model: opts.model } upstream.
-    expect(zaiEntry.attempt).toHaveBeenCalledWith(
-      expect.any(Object),
-      expect.any(AbortSignal),
-      { model: 'glm-5.3-flash' },
-    );
+    expect(zaiEntry.attempt).toHaveBeenCalledWith(expect.any(Object), expect.any(AbortSignal), {
+      model: 'glm-5.3-flash',
+    });
     vi.useRealTimers();
   });
 });
@@ -665,7 +688,10 @@ describe('ProviderChain - direct: short-circuit', () => {
     (p.openrouter as unknown as { available: boolean }).available = false;
     const chain = new ProviderChain(p, silentLogger);
     await expect(
-      chain.handle({ ...baseBody, model: 'direct:openrouter/mst/free' }, new AbortController().signal),
+      chain.handle(
+        { ...baseBody, model: 'direct:openrouter/mst/free' },
+        new AbortController().signal,
+      ),
     ).rejects.toBeInstanceOf(NoProviderAvailableError);
   });
 
@@ -683,7 +709,10 @@ describe('ProviderChain - direct: short-circuit', () => {
     (p.zai as unknown as { available: boolean }).available = false;
     const chain = new ProviderChain(p, silentLogger);
     await expect(
-      chain.handle({ ...baseBody, model: 'direct:openrouter/mst/free' }, new AbortController().signal),
+      chain.handle(
+        { ...baseBody, model: 'direct:openrouter/mst/free' },
+        new AbortController().signal,
+      ),
     ).rejects.toBeInstanceOf(NoProviderAvailableError);
     expect(p.openrouter.attempt).toHaveBeenCalledTimes(3);
   });
@@ -699,7 +728,10 @@ describe('ProviderChain - direct: short-circuit', () => {
     (p.openai as unknown as { available: boolean }).available = false;
     const chain = new ProviderChain(p, silentLogger);
     await expect(
-      chain.handle({ ...baseBody, model: 'direct:openrouter/mst/free' }, new AbortController().signal),
+      chain.handle(
+        { ...baseBody, model: 'direct:openrouter/mst/free' },
+        new AbortController().signal,
+      ),
     ).rejects.toSatisfy((err: unknown) => {
       expect(err).toBeInstanceOf(NoProviderAvailableError);
       // runSingle uses entry.label = p.id ('openrouter'), not the queue label
@@ -965,7 +997,7 @@ describe('ProviderChain - local (llama-server) entry', () => {
       LOCAL_ENABLED: 'true',
       LMSTUDIO_ENABLED: 'true',
       LAPTOP_ENABLED: 'true',
-      LAPTOP_MODEL: 'qwen3.5-0.8b',
+      LAPTOP_MODEL: 'qwen35-2b-64k:latest',
     });
     const p = makeProviders({ openrouterKeys: 1 });
     const chain = new ProviderChain(p, silentLogger);
@@ -976,7 +1008,7 @@ describe('ProviderChain - local (llama-server) entry', () => {
   });
 
   it('omits the laptop entry when LAPTOP_ENABLED is false (default)', () => {
-    loadEnv({ ...DEFAULT_ENV, LAPTOP_MODEL: 'qwen3.5-0.8b' });
+    loadEnv({ ...DEFAULT_ENV, LAPTOP_MODEL: 'qwen35-2b-64k:latest' });
     const p = makeProviders({ openrouterKeys: 1 });
     const chain = new ProviderChain(p, silentLogger);
     expect(chain.queueSnapshot().some((e) => e.provider === 'laptop')).toBe(false);
@@ -986,7 +1018,7 @@ describe('ProviderChain - local (llama-server) entry', () => {
     loadEnv({
       ...DEFAULT_ENV,
       LAPTOP_ENABLED: 'true',
-      LAPTOP_MODEL: 'qwen3.5-0.8b',
+      LAPTOP_MODEL: 'qwen35-2b-64k:latest',
     });
     const p = makeProviders({
       openrouterKeys: 1,
@@ -995,7 +1027,7 @@ describe('ProviderChain - local (llama-server) entry', () => {
     });
     const chain = new ProviderChain(p, silentLogger);
     const res = await chain.handle(
-      { ...baseBody, model: 'direct:laptop/qwen3.5-0.8b' },
+      { ...baseBody, model: 'direct:laptop/qwen35-2b-64k:latest' },
       new AbortController().signal,
     );
     expect(res.servedBy.provider).toBe('laptop');
@@ -1003,11 +1035,11 @@ describe('ProviderChain - local (llama-server) entry', () => {
     const laptopAttempt = p.laptop as unknown as { attempt: ReturnType<typeof vi.fn> };
     expect(laptopAttempt.attempt).toHaveBeenCalledTimes(1);
     const opts = laptopAttempt.attempt.mock.calls[0]![2] as { model: string };
-    expect(opts.model).toBe('qwen3.5-0.8b');
+    expect(opts.model).toBe('qwen35-2b-64k:latest');
   });
 
-  it('sends qwen3.5-0.8b verbatim on the explicit-model path (no :free rewrite)', async () => {
-    loadEnv({ ...DEFAULT_ENV, LAPTOP_ENABLED: 'true', LAPTOP_MODEL: 'qwen3.5-0.8b' });
+  it('sends qwen35-2b-64k:latest verbatim on the explicit-model path (no :free rewrite)', async () => {
+    loadEnv({ ...DEFAULT_ENV, LAPTOP_ENABLED: 'true', LAPTOP_MODEL: 'qwen35-2b-64k:latest' });
     const p = makeProviders({
       openrouterKeys: 1,
       openrouterResults: [{ kind: 'KEY_FAILURE', status: 404, message: 'no such model' }],
@@ -1015,13 +1047,13 @@ describe('ProviderChain - local (llama-server) entry', () => {
     });
     const chain = new ProviderChain(p, silentLogger);
     const res = await chain.handle(
-      { ...baseBody, model: 'qwen3.5-0.8b' },
+      { ...baseBody, model: 'qwen35-2b-64k:latest' },
       new AbortController().signal,
     );
     expect(res.servedBy.provider).toBe('laptop');
     const laptopAttempt = p.laptop as unknown as { attempt: ReturnType<typeof vi.fn> };
     const opts = laptopAttempt.attempt.mock.calls[0]![2] as { model: string };
-    expect(opts.model).toBe('qwen3.5-0.8b');
+    expect(opts.model).toBe('qwen35-2b-64k:latest');
   });
 });
 
@@ -1036,7 +1068,10 @@ describe('ProviderChain - tryEntry demoteOnKeyFailure=false path', () => {
     (p.zai as unknown as { available: boolean }).available = false;
     const chain = new ProviderChain(p, silentLogger);
     await expect(
-      chain.handle({ ...baseBody, model: 'direct:openrouter/mst/free' }, new AbortController().signal),
+      chain.handle(
+        { ...baseBody, model: 'direct:openrouter/mst/free' },
+        new AbortController().signal,
+      ),
     ).rejects.toBeInstanceOf(NoProviderAvailableError);
     // The entry should NOT be demoted (demoteOnKeyFailure=false in runSingle)
     const labels = chain.queueSnapshot().map((c) => c.label);
@@ -1103,9 +1138,7 @@ describe('ProviderChain - local provider success-based demotion', () => {
     loadEnv({ ...DEFAULT_ENV, SUCCESS_DEMOTE_LIMIT: '3' });
     const p = makeProviders({
       openrouterKeys: 1,
-      openrouterResults: [
-        { kind: 'KEY_FAILURE', status: 429, message: 'or fail' },
-      ],
+      openrouterResults: [{ kind: 'KEY_FAILURE', status: 429, message: 'or fail' }],
       lmstudioResults: [
         { kind: 'OK', response: okResponse() },
         { kind: 'OK', response: okResponse() },
@@ -1123,7 +1156,10 @@ describe('ProviderChain - local provider success-based demotion', () => {
 
     // First 3 calls should succeed via lmstudio
     for (let i = 0; i < 3; i++) {
-      const res = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+      const res = await chain.handle(
+        { ...baseBody, model: 'mst/free' },
+        new AbortController().signal,
+      );
       expect(res.servedBy.provider).toBe('lmstudio');
     }
 
@@ -1133,14 +1169,14 @@ describe('ProviderChain - local provider success-based demotion', () => {
   });
 
   it('demotes LAPTOP after consecutive successes too (weak tail never gains preference)', async () => {
-    // 2026-09-09 user directive: laptop qwen3.5-0.8b is very weak and "always
+    // 2026-09-09 user directive: laptop qwen35-2b-64k:latest is very weak and "always
     // works", so the adaptive queue must never let it accumulate preference.
     // It joins local/lmstudio in the success-based demotion.
     loadEnv({
       ...DEFAULT_ENV,
       SUCCESS_DEMOTE_LIMIT: '2',
       LAPTOP_ENABLED: 'true',
-      LAPTOP_MODEL: 'qwen3.5-0.8b',
+      LAPTOP_MODEL: 'qwen35-2b-64k:latest',
     });
     const p = makeProviders({
       openrouterKeys: 1,
@@ -1155,7 +1191,10 @@ describe('ProviderChain - local provider success-based demotion', () => {
     (silentLogger.warn as ReturnType<typeof vi.fn>).mockClear();
 
     for (let i = 0; i < 3; i++) {
-      const res = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+      const res = await chain.handle(
+        { ...baseBody, model: 'mst/free' },
+        new AbortController().signal,
+      );
       expect(res.servedBy.provider).toContain('laptop');
     }
 
@@ -1164,9 +1203,7 @@ describe('ProviderChain - local provider success-based demotion', () => {
     const demoteWarns = (silentLogger.warn as ReturnType<typeof vi.fn>).mock.calls.filter(
       (c) => typeof c[1] === 'string' && c[1].includes('weak tail provider demoted'),
     );
-    expect(
-      demoteWarns.filter((c) => JSON.stringify(c[0]).includes('laptop')),
-    ).toHaveLength(1);
+    expect(demoteWarns.filter((c) => JSON.stringify(c[0]).includes('laptop'))).toHaveLength(1);
     // NICE-2: laptop must still be in the queue (demoted, not removed).
     const labels = chain.queueSnapshot().map((e) => e.label);
     expect(labels).toContain('laptop');
@@ -1187,7 +1224,10 @@ describe('ProviderChain - local provider success-based demotion', () => {
 
     // Make 3 successful calls via openrouter
     for (let i = 0; i < 3; i++) {
-      const res = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+      const res = await chain.handle(
+        { ...baseBody, model: 'mst/free' },
+        new AbortController().signal,
+      );
       expect(res.servedBy.provider).toContain('openrouter');
     }
 
@@ -1200,9 +1240,7 @@ describe('ProviderChain - local provider success-based demotion', () => {
     loadEnv({ ...DEFAULT_ENV, SUCCESS_DEMOTE_LIMIT: '3' });
     const p = makeProviders({
       openrouterKeys: 1,
-      openrouterResults: [
-        { kind: 'KEY_FAILURE', status: 429, message: 'or fail' },
-      ],
+      openrouterResults: [{ kind: 'KEY_FAILURE', status: 429, message: 'or fail' }],
     });
     const lmstudio = p.lmstudio as unknown as { attempt: ReturnType<typeof vi.fn> };
     // 2 successes, then 1 failure (resets counter), then 2 more successes
@@ -1235,7 +1273,6 @@ describe('ProviderChain - local provider success-based demotion', () => {
     expect(lmstudioIndex).toBeLessThan(labels.length - 1);
   });
 });
-
 
 describe('ProviderChain - opencodego routing', () => {
   const DEFAULT_ENV = {
@@ -1278,7 +1315,10 @@ describe('ProviderChain - opencodego routing', () => {
       opencodegoResults: [{ kind: 'OK', response: okResponse('{"ok":true}') }],
     });
     const chain = new ProviderChain(p, silentLogger);
-    const res = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    const res = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
     expect(res.servedBy).toEqual({ provider: 'opencodego', model: 'glm-5.3-flash' });
   });
 
@@ -1302,7 +1342,10 @@ describe('ProviderChain - opencodego routing', () => {
       opencodegoAvailable: false,
     });
     const chain = new ProviderChain(p, silentLogger);
-    const res = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    const res = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
     expect(res.servedBy.provider).toBe('openrouter[key1/openrouter/free]');
   });
 });
@@ -1343,13 +1386,15 @@ describe('ProviderChain - walk deadline (WALK_DEADLINE_MS)', () => {
     // Every OpenRouter entry hangs 30ms (over the 1ms deadline) then 429s;
     // openai/zai/tokenrouter fail fast but are NOT local, so the walk must
     // skip them via the deadline path and land on local.
-    (p.openrouter as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt =
-      slowAttempt(30);
+    (p.openrouter as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = slowAttempt(30);
     (p.local as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(
       async (): Promise<ProviderCallResult> => ({ kind: 'OK', response: okResponse() }),
     );
     const chain = new ProviderChain(p, silentLogger);
-    const res = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    const res = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
     expect(res.servedBy.provider).toBe('local');
     // Remaining remote entries after the deadline must never be called.
     const openaiAttempt = (p.openai as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt;
@@ -1365,31 +1410,34 @@ describe('ProviderChain - walk deadline (WALK_DEADLINE_MS)', () => {
       tokenrouterResults: [{ kind: 'OK', response: okResponse() }],
     });
     const chain = new ProviderChain(p, silentLogger);
-    const res = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    const res = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
     expect(res.servedBy.provider).toBe('tokenrouter');
   });
 
   it('logs a warning when the deadline forces the local tail', async () => {
     loadEnv({ ...ENV, WALK_DEADLINE_MS: '1' });
     const p = makeProviders({ openrouterKeys: 1 });
-    (p.openrouter as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt =
-      slowAttempt(30);
+    (p.openrouter as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = slowAttempt(30);
     (p.local as unknown as { available: boolean }).available = false;
     (p.lmstudio as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(
       async (): Promise<ProviderCallResult> => ({ kind: 'OK', response: okResponse() }),
     );
     const chain = new ProviderChain(p, silentLogger);
     (silentLogger.warn as ReturnType<typeof vi.fn>).mockClear();
-    const res = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    const res = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
     expect(res.servedBy.provider).toBe('lmstudio');
     // Exactly ONCE per walk, not once per skipped entry.
     const deadlineWarns = (silentLogger.warn as ReturnType<typeof vi.fn>).mock.calls.filter(
       ([, msg]) => String(msg).includes('walk deadline'),
     );
     expect(deadlineWarns).toHaveLength(1);
-    expect(deadlineWarns[0]![0]).toEqual(
-      expect.objectContaining({ label: 'chain' }),
-    );
+    expect(deadlineWarns[0]![0]).toEqual(expect.objectContaining({ label: 'chain' }));
   });
 
   it('the parked-remainder second pass also respects the walk deadline', async () => {
@@ -1414,14 +1462,16 @@ describe('ProviderChain - walk deadline (WALK_DEADLINE_MS)', () => {
     // entry (second pass) and the remaining remotes must all be skipped while
     // local (re-enabled) serves.
     loadEnv({ ...ENV, WALK_DEADLINE_MS: '1', RATE_LIMIT_COOLDOWN_MS: '60000' });
-    (p.openai as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt =
-      slowAttempt(30);
+    (p.openai as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = slowAttempt(30);
     (p.local as unknown as { available: boolean }).available = true;
     (p.local as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(
       async (): Promise<ProviderCallResult> => ({ kind: 'OK', response: okResponse() }),
     );
     const orCallsBefore = orAttempt.mock.calls.length;
-    const res = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    const res = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
     expect(res.servedBy.provider).toBe('local');
     // The parked openrouter entry (second pass) was NOT retried.
     expect(orAttempt.mock.calls.length).toBe(orCallsBefore);
@@ -1443,7 +1493,10 @@ describe('ProviderChain - walk deadline (WALK_DEADLINE_MS)', () => {
       async (): Promise<ProviderCallResult> => ({ kind: 'OK', response: okResponse() }),
     );
     const chain = new ProviderChain(p, silentLogger);
-    const res = await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
+    const res = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
     expect(res.servedBy.provider).toBe('local');
     // The hanging openrouter entry was tried exactly ONCE: its TRANSIENT is in
     // flight past the deadline, so the mid-entry retry must never start.

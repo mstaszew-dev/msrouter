@@ -165,10 +165,15 @@ export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
     list.push({ provider: 'local', label: 'local', model: e.LOCAL_MODEL, attemptIndex: 0 });
   }
   if (e.LMSTUDIO_ENABLED) {
-    list.push({ provider: 'lmstudio', label: 'lmstudio', model: e.LMSTUDIO_MODEL, attemptIndex: 0 });
+    list.push({
+      provider: 'lmstudio',
+      label: 'lmstudio',
+      model: e.LMSTUDIO_MODEL,
+      attemptIndex: 0,
+    });
   }
-  // Laptop slot: local 0.8B gateway, weakest in chain (used only when remotes
-  // exhausted).
+  // Laptop slot: tailnet Ollama (Qwen3.5 2B), weakest in chain (used only
+  // when remotes exhausted).
   if (e.LAPTOP_ENABLED) {
     list.push({ provider: 'laptop', label: 'laptop', model: e.LAPTOP_MODEL, attemptIndex: 0 });
   }

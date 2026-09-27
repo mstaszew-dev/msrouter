@@ -129,13 +129,17 @@ describe('buildModelList - tokenrouter model advertisement', () => {
 describe('buildModelList - opencodego model advertisement', () => {
   it('includes glm-5.3-flash with owned_by=opencodego when OPENCODEGO_API_KEY is set', () => {
     loadEnv({ OPENCODEGO_API_KEY: 'sk-opencodego-test', OPENCODEGO_MODEL: 'glm-5.3-flash' });
-    const tr = buildModelList().find((m) => m.id === 'glm-5.3-flash' && m.owned_by === 'opencodego');
+    const tr = buildModelList().find(
+      (m) => m.id === 'glm-5.3-flash' && m.owned_by === 'opencodego',
+    );
     expect(tr).toBeDefined();
   });
 
   it('omits the opencodego model when OPENCODEGO_API_KEY is unset', () => {
     loadEnv({ OPENCODEGO_MODEL: 'glm-5.3-flash' });
-    const ids = buildModelList().filter((m) => m.owned_by === 'opencodego').map((m) => m.id);
+    const ids = buildModelList()
+      .filter((m) => m.owned_by === 'opencodego')
+      .map((m) => m.id);
     expect(ids).toEqual([]);
   });
 });
@@ -155,23 +159,23 @@ describe('buildModelList - local (llama-server) model advertisement', () => {
   });
 });
 
-describe('laptop (local qwen35-gw gateway) wiring', () => {
-  it('resolveModel passes qwen3.5-0.8b through as a known model', () => {
-    loadEnv({ LAPTOP_MODEL: 'qwen3.5-0.8b' });
-    expect(resolveModel('qwen3.5-0.8b')).toBe('qwen3.5-0.8b');
+describe('laptop (tailnet Ollama) wiring', () => {
+  it('resolveModel passes qwen35-2b-64k:latest through as a known model', () => {
+    loadEnv({ LAPTOP_MODEL: 'qwen35-2b-64k:latest' });
+    expect(resolveModel('qwen35-2b-64k:latest')).toBe('qwen35-2b-64k:latest');
   });
 
-  it('buildModelList advertises qwen3.5-0.8b when LAPTOP_ENABLED=true', () => {
-    loadEnv({ LAPTOP_ENABLED: 'true', LAPTOP_MODEL: 'qwen3.5-0.8b' });
-    const laptop = buildModelList().find((m) => m.id === 'qwen3.5-0.8b');
+  it('buildModelList advertises qwen35-2b-64k:latest when LAPTOP_ENABLED=true', () => {
+    loadEnv({ LAPTOP_ENABLED: 'true', LAPTOP_MODEL: 'qwen35-2b-64k:latest' });
+    const laptop = buildModelList().find((m) => m.id === 'qwen35-2b-64k:latest');
     expect(laptop).toBeDefined();
     expect(laptop?.owned_by).toBe('laptop');
   });
 
   it('buildModelList omits the laptop model when LAPTOP_ENABLED is false (default)', () => {
-    loadEnv({ LAPTOP_ENABLED: 'false', LAPTOP_MODEL: 'qwen3.5-0.8b' });
+    loadEnv({ LAPTOP_ENABLED: 'false', LAPTOP_MODEL: 'qwen35-2b-64k:latest' });
     const ids = buildModelList().map((m) => m.id);
-    expect(ids).not.toContain('qwen3.5-0.8b');
+    expect(ids).not.toContain('qwen35-2b-64k:latest');
   });
 });
 
@@ -188,7 +192,9 @@ describe('buildModelList - opencode gone-slot filtering', () => {
 
   it('still advertises the surviving opencode models', () => {
     loadEnv({ OPENCODE_KEY1: 'sk-opencode-test-1', OPENCODE_NEMOTRON_MODEL: '' });
-    const ids = buildModelList().filter((m) => m.owned_by.startsWith('opencode-')).map((m) => m.id);
+    const ids = buildModelList()
+      .filter((m) => m.owned_by.startsWith('opencode-'))
+      .map((m) => m.id);
     expect(ids).toContain('big-pickle');
     expect(ids).toContain('mimo-v2.5-free');
     expect(ids).toHaveLength(7); // 8 slots minus the emptied one
