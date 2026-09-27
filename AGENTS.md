@@ -24,6 +24,15 @@ If it is down and you need it up:
 Never `nohup`, never background it from a non-iTerm shell, never start a
 second instance while one is listening on :8787 (`scripts/run.sh down` first).
 
+## On-demand only (user policy, 2026-09-27)
+
+The gateway, Kafka, the kafka-monitor tab, and any local model server (LM
+Studio, llama-server, qwen35gw) are started ONLY on demand by the user and
+are normally OFF. Nothing autostarts them; do not start one "just in case".
+If a task needs the gateway, start it (iTerm rule above), do the work, then
+`scripts/run.sh down` (and stop Kafka/monitor the same way). Prefer
+`SIGTERM`/graceful stop scripts over `kill -9`.
+
 ## Layout
 
 - `src/config/` - zod env schema (`env.ts`, 250-line module budget), providers

@@ -14,8 +14,9 @@
  * short alias ("qwen3.5-9b") keeps working across 9B <-> 4B swaps.
  */
 import type pino from 'pino';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { setPostFetchForTests } from './fetch.js';
 import { LmStudioProvider, normalizeModelToken, resolveLmStudioModel } from './lmstudio.js';
 
 const silent = {
@@ -29,8 +30,18 @@ function makeProvider(baseUrl = 'http://127.0.0.1:1234/v1', defaultModel = 'goog
   return new LmStudioProvider({ baseUrl, defaultModel }, 5000, silent);
 }
 
+beforeEach(() => {
+  // Model discovery calls global fetch directly while postChatCompletion
+  // goes through the fetch.ts seam: delegate the seam to whatever global
+  // fetch stub the (inline or helper) test installs.
+  setPostFetchForTests((url, init) =>
+    (globalThis.fetch as unknown as (u: string, i?: RequestInit) => Promise<Response>)(url, init),
+  );
+});
+
 afterEach(() => {
   vi.unstubAllGlobals();
+  setPostFetchForTests();
 });
 
 const baseBody = {
@@ -157,9 +168,16 @@ describe('extractModelIds (via listLoadedModels)', () => {
       vi.fn(async (url: string | URL) => {
         const u = String(url);
         if (u.endsWith('/models')) {
-          return new Response(JSON.stringify({ object: 'list', data: 'not-an-array' }), { status: 200 });
+          return new Response(JSON.stringify({ object: 'list', data: 'not-an-array' }), {
+            status: 200,
+          });
         }
-        return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }] }), { status: 200 });
+        return new Response(
+          JSON.stringify({
+            choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+          }),
+          { status: 200 },
+        );
       }),
     );
     const p = makeProvider();
@@ -184,7 +202,9 @@ describe('extractModelIds (via listLoadedModels)', () => {
           );
         }
         return new Response(
-          JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }] }),
+          JSON.stringify({
+            choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+          }),
           { status: 200 },
         );
       }),
@@ -267,19 +287,22 @@ describe('LmStudioProvider model discovery', () => {
         const rawBody = typeof init?.body === 'string' ? init.body : '';
         calls.push({ url: u, method, body: rawBody ? JSON.parse(rawBody) : undefined });
         if (u.endsWith('/models')) {
-          return new Response(
-            JSON.stringify({ object: 'list', data: 'not-an-array' }),
-            { status: 200 },
-          );
+          return new Response(JSON.stringify({ object: 'list', data: 'not-an-array' }), {
+            status: 200,
+          });
         }
         return new Response(
-          JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }] }),
+          JSON.stringify({
+            choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+          }),
           { status: 200 },
         );
       }),
     );
     const p = makeProvider();
-    const res = await p.attempt(baseBody, new AbortController().signal, { model: 'my-custom-model' });
+    const res = await p.attempt(baseBody, new AbortController().signal, {
+      model: 'my-custom-model',
+    });
     expect(res.kind).toBe('OK');
     const post = calls.find((c) => c.method === 'POST');
     expect(post?.body).toMatchObject({ model: 'my-custom-model' });

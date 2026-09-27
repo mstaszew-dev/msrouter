@@ -8,9 +8,24 @@
  * timeouts on every outbound I/O).
  */
 
+import { slowUpstreamFetch, type UpstreamFetch } from '../config/http-agent.js';
+
 import { checkStreamContent, isEmptyCompletion } from './stream-check.js';
 import type { ProviderCallResult } from './types.js';
 import { classifyAttempt, type ChatRequestBody } from './types.js';
+
+/**
+ * Transport used for every upstream call. Production binds npm undici's
+ * fetch to a shared Agent with the response-header timeout disabled (the
+ * tailnet endpoint holds headers back for the whole prefill); see
+ * http-agent.ts. Swappable for tests via setPostFetchForTests.
+ */
+let postFetch: UpstreamFetch = slowUpstreamFetch;
+
+/** Test seam: replace the upstream transport (undefined restores production). */
+export function setPostFetchForTests(fn?: UpstreamFetch): void {
+  postFetch = fn ?? slowUpstreamFetch;
+}
 
 export interface UpstreamOptions {
   baseUrl: string;
@@ -41,7 +56,7 @@ export async function postChatCompletion(
   opts.signal.addEventListener('abort', () => ac.abort(), { once: true });
 
   try {
-    const res = await fetch(url, {
+    const res = await postFetch(url, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',

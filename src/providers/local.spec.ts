@@ -14,6 +14,7 @@ import type pino from 'pino';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { LocalProvider } from './local.js';
+import { setPostFetchForTests } from './fetch.js';
 
 const silent = {
   warn: vi.fn(),
@@ -30,7 +31,7 @@ function makeProvider(baseUrl = 'http://127.0.0.1:11434/v1') {
 
 function stubFetchOnce(responseBody: unknown, status = 200) {
   const fetchMock = vi.fn(async () => new Response(JSON.stringify(responseBody), { status }));
-  vi.stubGlobal('fetch', fetchMock);
+  setPostFetchForTests(fetchMock as never);
   return fetchMock;
 }
 
@@ -58,7 +59,10 @@ const baseBody = {
 };
 
 describe('LocalProvider (llama-server /v1/chat/completions)', () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setPostFetchForTests();
+  });
 
   it('is available without an api key', () => {
     expect(makeProvider().available).toBe(true);
@@ -104,7 +108,11 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
             role: 'assistant',
             content: '',
             tool_calls: [
-              { id: 'call_x', type: 'function', function: { name: 'read', arguments: '{"path":"/tmp/foo.txt"}' } },
+              {
+                id: 'call_x',
+                type: 'function',
+                function: { name: 'read', arguments: '{"path":"/tmp/foo.txt"}' },
+              },
             ],
           },
           finish_reason: 'tool_calls',
@@ -134,13 +142,11 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
 
   it('supports streaming requests', async () => {
     const fetchMock = vi.fn(async () => streamingResponse('Hi there'));
-    vi.stubGlobal('fetch', fetchMock);
+    setPostFetchForTests(fetchMock as never);
     const p = makeProvider();
-    const res = await p.attempt(
-      { ...baseBody, stream: true },
-      new AbortController().signal,
-      { model: 'qwen3.5:2b' },
-    );
+    const res = await p.attempt({ ...baseBody, stream: true }, new AbortController().signal, {
+      model: 'qwen3.5:2b',
+    });
     expect(res.kind).toBe('OK');
     const [url, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
     expect(url).toBe('http://127.0.0.1:11434/v1/chat/completions');
@@ -150,7 +156,7 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
 
   it('fast-fails oversized prompts beyond 128K tokens', async () => {
     const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
+    setPostFetchForTests(fetchMock as never);
     // ~150k tokens by the chars/4 heuristic: well past the 128K guard.
     const big = 'x'.repeat(600_000);
     const res = await makeProvider().attempt(
@@ -193,7 +199,10 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
   });
 
   it('classifies an upstream 500 as TRANSIENT with the error body scrubbed', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"error":"boom sk-or-v1-abc123456"}', { status: 500 })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{"error":"boom sk-or-v1-abc123456"}', { status: 500 })),
+    );
     const res = await makeProvider().attempt(baseBody, new AbortController().signal, {
       model: 'qwen3.5:2b',
     });
@@ -203,7 +212,7 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
 
   it('includes tool definitions in prompt token estimate', async () => {
     const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
+    setPostFetchForTests(fetchMock as never);
     // Messages under limit, but tools push over
     const tools = Array.from({ length: 200 }, (_, i) => ({
       type: 'function',
@@ -221,7 +230,7 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
 
   it('rejects when tools push prompt over 128K', async () => {
     const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
+    setPostFetchForTests(fetchMock as never);
     // Messages near limit + large tool definitions = over limit
     const big = 'x'.repeat(490_000); // ~122.5K tokens from messages alone
     const tools = Array.from({ length: 50 }, (_, i) => ({
@@ -244,13 +253,15 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
     const res = await makeProvider().attempt(
       {
         ...baseBody,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'text', text: 'hello world' },
-            { type: 'text', text: 'second part' },
-          ],
-        }],
+        messages: [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'hello world' },
+              { type: 'text', text: 'second part' },
+            ],
+          },
+        ],
       },
       new AbortController().signal,
       { model: 'qwen3.5:2b' },
@@ -276,7 +287,7 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
 
   it('error message says "context window" not "300s budget"', async () => {
     const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
-    vi.stubGlobal('fetch', fetchMock);
+    setPostFetchForTests(fetchMock as never);
     const big = 'x'.repeat(600_000);
     const res = await makeProvider().attempt(
       { ...baseBody, messages: [{ role: 'user', content: big }] },
@@ -287,5 +298,56 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
     const msg = (res as { message: string }).message;
     expect(msg).toContain('context window');
     expect(msg).not.toContain('300s');
+  });
+});
+
+describe('LocalProvider suppressReasoning (laptop tailnet slot)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    setPostFetchForTests();
+  });
+
+  it('injects reasoning_effort:"none" when enabled and the client sent none', async () => {
+    const p = new LocalProvider(
+      { baseUrl: 'http://127.0.0.1:11434/v1', defaultModel: 'm', suppressReasoning: true },
+      5000,
+      silent,
+    );
+    const fetchMock = stubFetchOnce({
+      choices: [{ message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
+    });
+    const res = await p.attempt({ ...baseBody }, new AbortController().signal, { model: 'm' });
+    expect(res.kind).toBe('OK');
+    const [, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body.reasoning_effort).toBe('none');
+  });
+
+  it('keeps a client-supplied reasoning_effort verbatim (never overwritten)', async () => {
+    const p = new LocalProvider(
+      { baseUrl: 'http://127.0.0.1:11434/v1', defaultModel: 'm', suppressReasoning: true },
+      5000,
+      silent,
+    );
+    const fetchMock = stubFetchOnce({
+      choices: [{ message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
+    });
+    await p.attempt({ ...baseBody, reasoning_effort: 'low' }, new AbortController().signal, {
+      model: 'm',
+    });
+    const [, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body.reasoning_effort).toBe('low');
+  });
+
+  it('does not inject when the flag is unset (verbatim passthrough)', async () => {
+    const fetchMock = stubFetchOnce({
+      choices: [{ message: { role: 'assistant', content: 'OK' }, finish_reason: 'stop' }],
+    });
+    const p = makeProvider();
+    await p.attempt({ ...baseBody }, new AbortController().signal, { model: 'qwen3.5:2b' });
+    const [, init] = fetchMock.mock.calls[0]! as unknown as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body).not.toHaveProperty('reasoning_effort');
   });
 });

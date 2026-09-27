@@ -997,7 +997,7 @@ describe('ProviderChain - local (llama-server) entry', () => {
       LOCAL_ENABLED: 'true',
       LMSTUDIO_ENABLED: 'true',
       LAPTOP_ENABLED: 'true',
-      LAPTOP_MODEL: 'qwen35-2b-64k:latest',
+      LAPTOP_MODEL: 'qwen35-2b-64k',
     });
     const p = makeProviders({ openrouterKeys: 1 });
     const chain = new ProviderChain(p, silentLogger);
@@ -1008,7 +1008,7 @@ describe('ProviderChain - local (llama-server) entry', () => {
   });
 
   it('omits the laptop entry when LAPTOP_ENABLED is false (default)', () => {
-    loadEnv({ ...DEFAULT_ENV, LAPTOP_MODEL: 'qwen35-2b-64k:latest' });
+    loadEnv({ ...DEFAULT_ENV, LAPTOP_MODEL: 'qwen35-2b-64k' });
     const p = makeProviders({ openrouterKeys: 1 });
     const chain = new ProviderChain(p, silentLogger);
     expect(chain.queueSnapshot().some((e) => e.provider === 'laptop')).toBe(false);
@@ -1018,7 +1018,7 @@ describe('ProviderChain - local (llama-server) entry', () => {
     loadEnv({
       ...DEFAULT_ENV,
       LAPTOP_ENABLED: 'true',
-      LAPTOP_MODEL: 'qwen35-2b-64k:latest',
+      LAPTOP_MODEL: 'qwen35-2b-64k',
     });
     const p = makeProviders({
       openrouterKeys: 1,
@@ -1027,7 +1027,7 @@ describe('ProviderChain - local (llama-server) entry', () => {
     });
     const chain = new ProviderChain(p, silentLogger);
     const res = await chain.handle(
-      { ...baseBody, model: 'direct:laptop/qwen35-2b-64k:latest' },
+      { ...baseBody, model: 'direct:laptop/qwen35-2b-64k' },
       new AbortController().signal,
     );
     expect(res.servedBy.provider).toBe('laptop');
@@ -1035,11 +1035,11 @@ describe('ProviderChain - local (llama-server) entry', () => {
     const laptopAttempt = p.laptop as unknown as { attempt: ReturnType<typeof vi.fn> };
     expect(laptopAttempt.attempt).toHaveBeenCalledTimes(1);
     const opts = laptopAttempt.attempt.mock.calls[0]![2] as { model: string };
-    expect(opts.model).toBe('qwen35-2b-64k:latest');
+    expect(opts.model).toBe('qwen35-2b-64k');
   });
 
-  it('sends qwen35-2b-64k:latest verbatim on the explicit-model path (no :free rewrite)', async () => {
-    loadEnv({ ...DEFAULT_ENV, LAPTOP_ENABLED: 'true', LAPTOP_MODEL: 'qwen35-2b-64k:latest' });
+  it('sends qwen35-2b-64k verbatim on the explicit-model path (no :free rewrite)', async () => {
+    loadEnv({ ...DEFAULT_ENV, LAPTOP_ENABLED: 'true', LAPTOP_MODEL: 'qwen35-2b-64k' });
     const p = makeProviders({
       openrouterKeys: 1,
       openrouterResults: [{ kind: 'KEY_FAILURE', status: 404, message: 'no such model' }],
@@ -1047,13 +1047,13 @@ describe('ProviderChain - local (llama-server) entry', () => {
     });
     const chain = new ProviderChain(p, silentLogger);
     const res = await chain.handle(
-      { ...baseBody, model: 'qwen35-2b-64k:latest' },
+      { ...baseBody, model: 'qwen35-2b-64k' },
       new AbortController().signal,
     );
     expect(res.servedBy.provider).toBe('laptop');
     const laptopAttempt = p.laptop as unknown as { attempt: ReturnType<typeof vi.fn> };
     const opts = laptopAttempt.attempt.mock.calls[0]![2] as { model: string };
-    expect(opts.model).toBe('qwen35-2b-64k:latest');
+    expect(opts.model).toBe('qwen35-2b-64k');
   });
 });
 
@@ -1169,14 +1169,14 @@ describe('ProviderChain - local provider success-based demotion', () => {
   });
 
   it('demotes LAPTOP after consecutive successes too (weak tail never gains preference)', async () => {
-    // 2026-09-09 user directive: laptop qwen35-2b-64k:latest is very weak and "always
+    // 2026-09-09 user directive: laptop qwen35-2b-64k is very weak and "always
     // works", so the adaptive queue must never let it accumulate preference.
     // It joins local/lmstudio in the success-based demotion.
     loadEnv({
       ...DEFAULT_ENV,
       SUCCESS_DEMOTE_LIMIT: '2',
       LAPTOP_ENABLED: 'true',
-      LAPTOP_MODEL: 'qwen35-2b-64k:latest',
+      LAPTOP_MODEL: 'qwen35-2b-64k',
     });
     const p = makeProviders({
       openrouterKeys: 1,

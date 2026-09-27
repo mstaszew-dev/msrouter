@@ -5,7 +5,7 @@ vi.mock('./stream-check.js', () => ({
   isEmptyCompletion: vi.fn(),
 }));
 
-import { postChatCompletion, scrubSecrets } from './fetch.js';
+import { postChatCompletion, scrubSecrets, setPostFetchForTests } from './fetch.js';
 import { checkStreamContent, isEmptyCompletion } from './stream-check.js';
 import type { AttemptOutcome, ChatRequestBody, ProviderCallResult } from './types.js';
 
@@ -66,7 +66,6 @@ function assertFailure(result: ProviderCallResult): AttemptOutcome {
 }
 
 let fetchSpy: ReturnType<typeof vi.fn>;
-const originalFetch = globalThis.fetch;
 
 /* eslint-disable @typescript-eslint/no-unsafe-member-access */
 function lastFetchHeaders(): Record<string, string> {
@@ -83,7 +82,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
-  globalThis.fetch = originalFetch;
+  setPostFetchForTests();
   vi.restoreAllMocks();
 });
 
@@ -94,7 +93,7 @@ describe('postChatCompletion', () => {
         choices: [{ message: { content: 'hello' }, finish_reason: 'stop' }],
       };
       fetchSpy = fakeFetch(200, payload);
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       const result = await postChatCompletion(body(), opts());
 
@@ -108,7 +107,7 @@ describe('postChatCompletion', () => {
       fetchSpy = vi.fn().mockResolvedValue(
         new Response('not json at all', { status: 200 }),
       );
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       const result = await postChatCompletion(body(), opts());
 
@@ -121,7 +120,7 @@ describe('postChatCompletion', () => {
         choices: [{ message: { content: 'hi' }, finish_reason: 'stop' }],
       };
       fetchSpy = fakeFetch(200, payload);
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       const result = await postChatCompletion(body(), opts());
 
@@ -133,7 +132,7 @@ describe('postChatCompletion', () => {
     it('returns TRANSIENT with upstream error message (string error)', async () => {
       const payload = { error: 'rate limited' };
       fetchSpy = fakeFetch(200, payload);
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       const result = await postChatCompletion(body(), opts());
       const outcome = assertFailure(result);
@@ -145,7 +144,7 @@ describe('postChatCompletion', () => {
     it('returns TRANSIENT with error.message for object errors', async () => {
       const payload = { error: { message: 'quota exceeded', type: 'insufficient_quota' } };
       fetchSpy = fakeFetch(200, payload);
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       const result = await postChatCompletion(body(), opts());
       const outcome = assertFailure(result);
@@ -157,7 +156,7 @@ describe('postChatCompletion', () => {
     it('returns TRANSIENT with stringified error for unknown error shapes', async () => {
       const payload = { error: 42 };
       fetchSpy = fakeFetch(200, payload);
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       const result = await postChatCompletion(body(), opts());
       const outcome = assertFailure(result);
@@ -173,7 +172,7 @@ describe('postChatCompletion', () => {
         choices: [{ message: { content: '' }, finish_reason: 'length' }],
       };
       fetchSpy = fakeFetch(200, payload);
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
       mockedIsEmpty.mockReturnValue(true);
 
       const result = await postChatCompletion(body(), opts());
@@ -188,7 +187,7 @@ describe('postChatCompletion', () => {
   describe('error responses (classifyAttempt)', () => {
     it('returns KEY_FAILURE for 401', async () => {
       fetchSpy = fakeFetch(401, { error: 'unauthorized' });
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       const result = await postChatCompletion(body(), opts());
       const outcome = assertFailure(result);
@@ -200,7 +199,7 @@ describe('postChatCompletion', () => {
 
     it('returns KEY_FAILURE for 403', async () => {
       fetchSpy = fakeFetch(403, { error: 'forbidden' });
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       const result = await postChatCompletion(body(), opts());
       const outcome = assertFailure(result);
@@ -211,7 +210,7 @@ describe('postChatCompletion', () => {
 
     it('returns KEY_FAILURE for 429', async () => {
       fetchSpy = fakeFetch(429, { error: 'rate limit' });
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       const result = await postChatCompletion(body(), opts());
       const outcome = assertFailure(result);
@@ -222,7 +221,7 @@ describe('postChatCompletion', () => {
 
     it('returns TRANSIENT for 500', async () => {
       fetchSpy = fakeFetch(500, { error: 'internal error' });
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       const result = await postChatCompletion(body(), opts());
       const outcome = assertFailure(result);
@@ -233,7 +232,7 @@ describe('postChatCompletion', () => {
 
     it('returns TRANSIENT for 503', async () => {
       fetchSpy = fakeFetch(503, { error: 'overloaded' });
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       const result = await postChatCompletion(body(), opts());
       const outcome = assertFailure(result);
@@ -244,7 +243,7 @@ describe('postChatCompletion', () => {
 
     it('returns BAD_REQUEST for 400', async () => {
       fetchSpy = fakeFetch(400, { error: 'bad request' });
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       const result = await postChatCompletion(body(), opts());
       const outcome = assertFailure(result);
@@ -255,7 +254,7 @@ describe('postChatCompletion', () => {
 
     it('returns TRANSIENT for 408', async () => {
       fetchSpy = fakeFetch(408, { error: 'timeout' });
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       const result = await postChatCompletion(body(), opts());
       const outcome = assertFailure(result);
@@ -266,7 +265,7 @@ describe('postChatCompletion', () => {
 
     it('appends scrubbed error body to outcome message', async () => {
       fetchSpy = fakeFetch(401, { error: { message: 'key sk-or-v1-abc123def is invalid' } });
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       const outcome = assertFailure(await postChatCompletion(body(), opts()));
 
@@ -278,7 +277,7 @@ describe('postChatCompletion', () => {
   describe('network errors', () => {
     it('returns TRANSIENT with status 0 for generic fetch error', async () => {
       fetchSpy = fakeFetchError(new Error('connection refused'));
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       const result = await postChatCompletion(body(), opts());
       const outcome = assertFailure(result);
@@ -291,7 +290,7 @@ describe('postChatCompletion', () => {
 
     it('scrubs secrets from error messages', async () => {
       fetchSpy = fakeFetchError(new Error('auth failed with sk-testkey123'));
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       const outcome = assertFailure(await postChatCompletion(body(), opts()));
 
@@ -301,7 +300,7 @@ describe('postChatCompletion', () => {
 
     it('handles non-Error thrown values', async () => {
       fetchSpy = vi.fn().mockRejectedValue('string error');
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       const result = await postChatCompletion(body(), opts());
       const outcome = assertFailure(result);
@@ -348,7 +347,7 @@ describe('postChatCompletion', () => {
     it('returns OK when checkStreamContent returns ok: true', async () => {
       const streamResponse = new Response('stream data', { status: 200 });
       fetchSpy = fakeFetch(200, {});
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
       mockedCheckStream.mockResolvedValue({ ok: true, response: streamResponse });
 
       const result = await postChatCompletion(body({ stream: true }), opts());
@@ -360,7 +359,7 @@ describe('postChatCompletion', () => {
 
     it('returns KEY_FAILURE when checkStreamContent returns ok: false', async () => {
       fetchSpy = fakeFetch(200, {});
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
       mockedCheckStream.mockResolvedValue({ ok: false, reason: 'no content tokens' });
 
       const result = await postChatCompletion(body({ stream: true }), opts());
@@ -373,7 +372,7 @@ describe('postChatCompletion', () => {
 
     it('uses default message when checkStreamContent reason is undefined', async () => {
       fetchSpy = fakeFetch(200, {});
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
       // Simulate a malformed stream-check result whose `reason` is missing at
       // runtime, to exercise the default-message fallback in postChatCompletion.
       mockedCheckStream.mockResolvedValue({ ok: false } as { ok: false; reason: string });
@@ -389,7 +388,7 @@ describe('postChatCompletion', () => {
   describe('headers', () => {
     it('sends content-type: application/json', async () => {
       fetchSpy = fakeFetch(200, { choices: [] });
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       await postChatCompletion(body(), opts());
 
@@ -399,7 +398,7 @@ describe('postChatCompletion', () => {
 
     it('sends authorization from opts', async () => {
       fetchSpy = fakeFetch(200, { choices: [] });
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       await postChatCompletion(body(), opts());
 
@@ -409,7 +408,7 @@ describe('postChatCompletion', () => {
 
     it('sends accept: text/event-stream for streaming', async () => {
       fetchSpy = fakeFetch(200, {});
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       await postChatCompletion(body({ stream: true }), opts());
 
@@ -419,7 +418,7 @@ describe('postChatCompletion', () => {
 
     it('sends accept: application/json for non-streaming', async () => {
       fetchSpy = fakeFetch(200, { choices: [] });
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       await postChatCompletion(body({ stream: false }), opts());
 
@@ -429,7 +428,7 @@ describe('postChatCompletion', () => {
 
     it('passes extra headers through', async () => {
       fetchSpy = fakeFetch(200, { choices: [] });
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
       const extraHeaders = { 'HTTP-Referer': 'https://example.com', 'X-Title': 'MyApp' };
 
       await postChatCompletion(body(), opts({ extraHeaders }));
@@ -441,7 +440,7 @@ describe('postChatCompletion', () => {
 
     it('handles missing extraHeaders gracefully', async () => {
       fetchSpy = fakeFetch(200, { choices: [] });
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       await postChatCompletion(body(), opts({ extraHeaders: undefined }));
 
@@ -461,7 +460,7 @@ describe('postChatCompletion', () => {
             });
           }),
       );
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       const fetchPromise = postChatCompletion(body(), opts({ signal: ac.signal, timeoutMs: 60_000 }));
 
@@ -477,7 +476,7 @@ describe('postChatCompletion', () => {
   describe('request body', () => {
     it('serializes the body as JSON', async () => {
       fetchSpy = fakeFetch(200, { choices: [] });
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       const b = body({ model: 'claude-4', temperature: 0.7 });
       await postChatCompletion(b, opts());
@@ -493,7 +492,7 @@ describe('postChatCompletion', () => {
 
     it('uses POST method', async () => {
       fetchSpy = fakeFetch(200, { choices: [] });
-      globalThis.fetch = fetchSpy;
+      setPostFetchForTests(fetchSpy as never);
 
       await postChatCompletion(body(), opts());
 

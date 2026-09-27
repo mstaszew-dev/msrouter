@@ -113,12 +113,12 @@ describe('loadEnv - TokenRouter config', () => {
   });
 });
 
-describe('loadEnv - laptop (local qwen35-gw gateway) config', () => {
-  it('defaults to the local gateway URL and qwen3.5-0.8b, disabled', () => {
+describe('loadEnv - laptop (tailnet travelmate Ollama) config', () => {
+  it('defaults to the tailnet URL and the exact qwen35-2b-64k id, disabled', () => {
     const cfg = loadEnv({});
     expect(cfg.env.LAPTOP_ENABLED).toBe(false);
-    expect(cfg.env.LAPTOP_BASE_URL).toBe('http://127.0.0.1:8091/v1');
-    expect(cfg.env.LAPTOP_MODEL).toBe('qwen3.5-0.8b');
+    expect(cfg.env.LAPTOP_BASE_URL).toBe('https://mstro-travelmate-p215-52.taila0a683.ts.net/v1');
+    expect(cfg.env.LAPTOP_MODEL).toBe('qwen35-2b-64k');
   });
 
   it('accepts LAPTOP_* overrides', () => {

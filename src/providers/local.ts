@@ -25,12 +25,7 @@
 import type { Logger } from 'pino';
 
 import { postChatCompletion } from './fetch.js';
-import type {
-  AttemptOptions,
-  ChatRequestBody,
-  Provider,
-  ProviderCallResult,
-} from './types.js';
+import type { AttemptOptions, ChatRequestBody, Provider, ProviderCallResult } from './types.js';
 
 /**
  * Prompt-token ceiling for local. The Qwen3.5-2B GGUF supports up to 128K
@@ -54,7 +49,11 @@ function estimatePromptTokens(messages: unknown[], tools?: unknown[]): number {
       chars += content.length;
     } else if (Array.isArray(content)) {
       for (const part of content) {
-        if (part && typeof part === 'object' && typeof (part as Record<string, unknown>).text === 'string') {
+        if (
+          part &&
+          typeof part === 'object' &&
+          typeof (part as Record<string, unknown>).text === 'string'
+        ) {
           chars += ((part as Record<string, unknown>).text as string).length;
         }
       }
@@ -78,6 +77,11 @@ export interface LocalConfig {
   /** Prompt-token ceiling for the guard. Defaults to 128K (local GGUF);
    *  smaller-window endpoints pass a lower value. */
   maxPromptTokens?: number;
+  /** Inject reasoning_effort:"none" when the client sent none. For the 1.9B
+   *  tailnet laptop model: thinking tokens are pure latency at ~8 tok/s
+   *  decode, and the server is verified to honour the field. A client-set
+   *  reasoning_effort is always forwarded verbatim. */
+  suppressReasoning?: boolean;
 }
 
 export class LocalProvider implements Provider {
@@ -85,6 +89,7 @@ export class LocalProvider implements Provider {
   private readonly baseUrl: string;
   private readonly defaultModel: string;
   private readonly maxPromptTokens: number;
+  private readonly suppressReasoning: boolean;
 
   constructor(
     cfg: LocalConfig,
@@ -95,6 +100,7 @@ export class LocalProvider implements Provider {
     this.baseUrl = cfg.baseUrl;
     this.defaultModel = cfg.defaultModel;
     this.maxPromptTokens = cfg.maxPromptTokens ?? LOCAL_MAX_PROMPT_TOKENS;
+    this.suppressReasoning = cfg.suppressReasoning ?? false;
   }
 
   /** Always available when the entry is routed (chain-routing gates on
@@ -128,6 +134,9 @@ export class LocalProvider implements Provider {
     // rest of the body (messages, stream, tools, temperature, max_tokens) is
     // already OpenAI-shaped, which llama-server's /v1 endpoint accepts.
     const outbound: ChatRequestBody = { ...body, model: opts.model };
+    if (this.suppressReasoning && outbound.reasoning_effort === undefined) {
+      outbound.reasoning_effort = 'none';
+    }
     this.log.debug({ provider: this.id, model: opts.model }, 'local attempt');
 
     // llama-server ignores Authorization, but UpstreamOptions.authorization is

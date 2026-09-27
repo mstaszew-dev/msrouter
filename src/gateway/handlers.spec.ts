@@ -160,22 +160,22 @@ describe('buildModelList - local (llama-server) model advertisement', () => {
 });
 
 describe('laptop (tailnet Ollama) wiring', () => {
-  it('resolveModel passes qwen35-2b-64k:latest through as a known model', () => {
-    loadEnv({ LAPTOP_MODEL: 'qwen35-2b-64k:latest' });
-    expect(resolveModel('qwen35-2b-64k:latest')).toBe('qwen35-2b-64k:latest');
+  it('resolveModel passes qwen35-2b-64k through as a known model', () => {
+    loadEnv({ LAPTOP_MODEL: 'qwen35-2b-64k' });
+    expect(resolveModel('qwen35-2b-64k')).toBe('qwen35-2b-64k');
   });
 
-  it('buildModelList advertises qwen35-2b-64k:latest when LAPTOP_ENABLED=true', () => {
-    loadEnv({ LAPTOP_ENABLED: 'true', LAPTOP_MODEL: 'qwen35-2b-64k:latest' });
-    const laptop = buildModelList().find((m) => m.id === 'qwen35-2b-64k:latest');
+  it('buildModelList advertises qwen35-2b-64k when LAPTOP_ENABLED=true', () => {
+    loadEnv({ LAPTOP_ENABLED: 'true', LAPTOP_MODEL: 'qwen35-2b-64k' });
+    const laptop = buildModelList().find((m) => m.id === 'qwen35-2b-64k');
     expect(laptop).toBeDefined();
     expect(laptop?.owned_by).toBe('laptop');
   });
 
   it('buildModelList omits the laptop model when LAPTOP_ENABLED is false (default)', () => {
-    loadEnv({ LAPTOP_ENABLED: 'false', LAPTOP_MODEL: 'qwen35-2b-64k:latest' });
+    loadEnv({ LAPTOP_ENABLED: 'false', LAPTOP_MODEL: 'qwen35-2b-64k' });
     const ids = buildModelList().map((m) => m.id);
-    expect(ids).not.toContain('qwen35-2b-64k:latest');
+    expect(ids).not.toContain('qwen35-2b-64k');
   });
 });
 

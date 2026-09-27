@@ -1,9 +1,11 @@
 /**
  * Provider-factory wiring tests for the laptop slot.
  *
- * The laptop slot targets the travelmate's tailnet Ollama (Qwen3.5 2B, 64K
- * context) since 2026-09-27; the prompt-token guard must admit prompts that
- * fit that window and fast-fail larger ones with the pinned budget.
+ * The laptop slot targets the travelmate's tailnet Ollama (Qwen3.5 2B, single
+ * slot) since 2026-09-27. Policy (user, 2026-09-27): large contexts and slow
+ * responses are preferable to no response when every remote is down, so the
+ * prompt guard only enforces the server's 131072-token context window minus
+ * headroom (pinned at 100K); it must NOT reject big cache-warm conversations.
  */
 import type pino from 'pino';
 import { describe, expect, it } from 'vitest';
@@ -31,29 +33,29 @@ function attemptWith(promptChars: number): Promise<ProviderCallResult> {
     ...process.env,
     LAPTOP_ENABLED: 'true',
     LAPTOP_BASE_URL: UNROUTABLE_BASE,
-    LAPTOP_MODEL: 'qwen35-2b-64k:latest',
+    LAPTOP_MODEL: 'qwen35-2b-64k',
   });
   const laptop = buildProviders(silent).laptop;
   return laptop.attempt(
     {
-      model: 'qwen35-2b-64k:latest',
+      model: 'qwen35-2b-64k',
       messages: [{ role: 'user', content: 'x'.repeat(promptChars) }],
     },
     new AbortController().signal,
-    { model: 'qwen35-2b-64k:latest' },
+    { model: 'qwen35-2b-64k' },
   );
 }
 
-describe('laptop slot prompt guard (64K tailnet model)', () => {
-  it('admits a ~45K-token prompt (over the old 32K budget, under the new one)', async () => {
-    const res = await attemptWith(45_000 * 4);
+describe('laptop slot prompt guard (large-context policy)', () => {
+  it('admits a ~90K-token prompt (large contexts allowed by policy)', async () => {
+    const res = await attemptWith(90_000 * 4);
     expect(res.kind).not.toBe('BAD_REQUEST');
   });
 
-  it('fast-fails a ~70K-token prompt with the pinned 52K budget', async () => {
-    const res = await attemptWith(70_000 * 4);
+  it('fast-fails a prompt beyond the 100K window guard', async () => {
+    const res = await attemptWith(110_000 * 4);
     expect(res.kind).toBe('BAD_REQUEST');
     const msg = (res as { message: string }).message;
-    expect(msg).toContain('max 52000');
+    expect(msg).toContain('max 100000');
   });
 });

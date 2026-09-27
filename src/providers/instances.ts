@@ -167,18 +167,24 @@ export function buildProviders(log: Logger): Providers {
       env.LMSTUDIO_TIMEOUT_MS,
       log,
     ),
-    // Laptop slot: the travelmate's tailnet Ollama (Qwen3.5 2B, 64K ctx; was
-    // the local qwen35-gw 0.8B gateway until 2026-09-27). OpenAI-compatible
-    // /v1 via tailnet-only HTTPS, no API key. 52K prompt guard: 64K window
-    // minus 8K output headroom minus ~4K chat-template/estimator slack.
-    // Own local-class timeout (LAPTOP_TIMEOUT_MS): slow tailnet prefills can
-    // exceed UPSTREAM_TIMEOUT_MS.
+    // Laptop slot: the travelmate's tailnet Ollama (Qwen3.5 2B; was the local
+    // qwen35-gw 0.8B gateway until 2026-09-27). OpenAI-compatible /v1 via
+    // tailnet-only HTTPS, no API key. 100K prompt guard = the server's 131072
+    // num_ctx minus output/template/estimator headroom: LARGE contexts are
+    // allowed by policy (2026-09-27: a slow answer beats no answer when every
+    // remote is down), and cache-warm conversations prefill only their fresh
+    // tail so large totals are cheap. Known trade-off: a COLD request with
+    // >~4K fresh tokens can crash the server's single-slot runner (measured
+    // 2026-09-27; it self-recovers) - accepted rather than fast-failing.
+    // reasoning_effort "none" is injected (the 1.9B model's thinking tokens
+    // are pure latency at ~8 tok/s decode).
     laptop: new LocalProvider(
       {
         id: 'laptop',
         baseUrl: env.LAPTOP_BASE_URL,
         defaultModel: env.LAPTOP_MODEL,
-        maxPromptTokens: 52_000,
+        maxPromptTokens: 100_000,
+        suppressReasoning: true,
       },
       env.LAPTOP_TIMEOUT_MS,
       log,
