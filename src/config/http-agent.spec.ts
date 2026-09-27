@@ -14,6 +14,7 @@
  * Binds a real 127.0.0.1 socket; no external network is touched.
  */
 import { createServer, type Server } from 'node:http';
+
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { slowUpstreamFetch } from './http-agent.js';

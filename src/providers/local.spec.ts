@@ -13,8 +13,8 @@
 import type pino from 'pino';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { LocalProvider } from './local.js';
 import { setPostFetchForTests } from './fetch.js';
+import { LocalProvider } from './local.js';
 
 const silent = {
   warn: vi.fn(),
@@ -31,7 +31,7 @@ function makeProvider(baseUrl = 'http://127.0.0.1:11434/v1') {
 
 function stubFetchOnce(responseBody: unknown, status = 200) {
   const fetchMock = vi.fn(async () => new Response(JSON.stringify(responseBody), { status }));
-  setPostFetchForTests(fetchMock as never);
+  setPostFetchForTests(fetchMock);
   return fetchMock;
 }
 
@@ -142,7 +142,7 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
 
   it('supports streaming requests', async () => {
     const fetchMock = vi.fn(async () => streamingResponse('Hi there'));
-    setPostFetchForTests(fetchMock as never);
+    setPostFetchForTests(fetchMock);
     const p = makeProvider();
     const res = await p.attempt({ ...baseBody, stream: true }, new AbortController().signal, {
       model: 'qwen3.5:2b',
@@ -156,7 +156,7 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
 
   it('fast-fails oversized prompts beyond 128K tokens', async () => {
     const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
-    setPostFetchForTests(fetchMock as never);
+    setPostFetchForTests(fetchMock);
     // ~150k tokens by the chars/4 heuristic: well past the 128K guard.
     const big = 'x'.repeat(600_000);
     const res = await makeProvider().attempt(
@@ -212,7 +212,7 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
 
   it('includes tool definitions in prompt token estimate', async () => {
     const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
-    setPostFetchForTests(fetchMock as never);
+    setPostFetchForTests(fetchMock);
     // Messages under limit, but tools push over
     const tools = Array.from({ length: 200 }, (_, i) => ({
       type: 'function',
@@ -230,7 +230,7 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
 
   it('rejects when tools push prompt over 128K', async () => {
     const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
-    setPostFetchForTests(fetchMock as never);
+    setPostFetchForTests(fetchMock);
     // Messages near limit + large tool definitions = over limit
     const big = 'x'.repeat(490_000); // ~122.5K tokens from messages alone
     const tools = Array.from({ length: 50 }, (_, i) => ({
@@ -287,7 +287,7 @@ describe('LocalProvider (llama-server /v1/chat/completions)', () => {
 
   it('error message says "context window" not "300s budget"', async () => {
     const fetchMock = vi.fn(async () => new Response('{}', { status: 200 }));
-    setPostFetchForTests(fetchMock as never);
+    setPostFetchForTests(fetchMock);
     const big = 'x'.repeat(600_000);
     const res = await makeProvider().attempt(
       { ...baseBody, messages: [{ role: 'user', content: big }] },
