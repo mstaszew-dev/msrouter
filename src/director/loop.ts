@@ -362,12 +362,15 @@ export class DirectorLoop {
       // tick emits new ones. No-op when the outbox is empty.
       await this.opts.surface.flushOutbox();
       this.opts.log.info('Phase 1: Campaign supervision');
-      // 0. Ensure Chrome CDP is running (Playwright MCP depends on it)
-      await ensureCdpRunning(e.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222');
-      // 0a. Ensure infrastructure (Playwright MCP, OpenClaw gateway) is healthy.
+      // 0. Ensure Chrome CDP is running (Playwright MCP depends on it).
+      // Autostart-gated since 2026-09-18: msrouter must not open Chrome by
+      // default; in observe-only mode Chrome is the campaign agent's concern
+      // (start it with `scripts/run.sh chrome` or the autostart supervisor).
+      // 0a. Ensure infrastructure (Playwright MCP, campaign worker) is healthy.
       // Skipped in observe-only mode: its only remedy is a worker restart,
       // which would kill a worker the user started manually.
       if (autostartEnabled(e)) {
+        await ensureCdpRunning(e.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222');
         const restarted = await ensureInfrastructureHealthy({
           entryCommand: e.DIRECTOR_RUNNER || DEFAULT_RUNNER,
           workspace: e.DIRECTOR_OPENCLAW_WORKSPACE,

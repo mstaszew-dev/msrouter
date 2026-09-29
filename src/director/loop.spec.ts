@@ -11,6 +11,7 @@ import type * as itermModule from './iterm.js';
 import { kafkaProduce } from './kafka.js';
 import { DirectorLoop } from './loop.js';
 import {
+  ensureCdpRunning,
   ensureInfrastructureHealthy,
   restartWorker,
   rotateVpnIp,
@@ -623,6 +624,52 @@ describe('DIRECTOR_AUTOSTART=false: observe-only supervision', () => {
     expect(vi.mocked(rotateVpnIp)).toHaveBeenCalled();
     expect(vi.mocked(restartWorker)).not.toHaveBeenCalled();
     expect(vi.mocked(startWorkerInIterm)).not.toHaveBeenCalled();
+  });
+
+  it('does NOT ensure/start Chrome CDP in observe-only mode (2026-09-18: no Chrome by default)', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'director-noauto-'));
+    const loop = new DirectorLoop({
+      env: makeEnv({
+        DIRECTOR_AUTOSTART: false,
+        DIRECTOR_CAMPAIGN_DIR: makeCampaign(),
+        DIRECTOR_LEDGER: join(stateDir, 'l.jsonl'),
+      }) as never,
+      chain: {
+        handle: vi.fn(async () => ({
+          response: new Response('{"choices":[{"message":{"content":"{\"patches\":[]}"}}]}'),
+          servedBy: {},
+        })),
+      } as never,
+      surface: nullSurface(),
+      log: silent,
+      checkpointPath: join(stateDir, 'cp.json'),
+    });
+    vi.mocked(ensureCdpRunning).mockClear();
+    await loop.runOnce();
+    expect(vi.mocked(ensureCdpRunning)).not.toHaveBeenCalled();
+  });
+
+  it('ensures Chrome CDP only when autostart supervision is on', async () => {
+    const stateDir = mkdtempSync(join(tmpdir(), 'director-auto-'));
+    const loop = new DirectorLoop({
+      env: makeEnv({
+        DIRECTOR_AUTOSTART: true,
+        DIRECTOR_CAMPAIGN_DIR: makeCampaign(),
+        DIRECTOR_LEDGER: join(stateDir, 'l.jsonl'),
+      }) as never,
+      chain: {
+        handle: vi.fn(async () => ({
+          response: new Response('{"choices":[{"message":{"content":"{\"patches\":[]}"}}]}'),
+          servedBy: {},
+        })),
+      } as never,
+      surface: nullSurface(),
+      log: silent,
+      checkpointPath: join(stateDir, 'cp.json'),
+    });
+    vi.mocked(ensureCdpRunning).mockClear();
+    await loop.runOnce();
+    expect(vi.mocked(ensureCdpRunning)).toHaveBeenCalledTimes(1);
   });
 
   it('still observes the campaign (supervision remains observe-only, not off)', async () => {
