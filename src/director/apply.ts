@@ -7,8 +7,8 @@
  * the serializer sorts keys for deterministic diffs in the ledger/git.
  */
 
-import { homedir } from 'node:os';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import type { Patch } from './types.js';

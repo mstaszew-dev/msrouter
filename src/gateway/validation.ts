@@ -22,7 +22,7 @@ export const chatCompletionSchema = z
     messages: z.array(messageSchema).min(1),
     stream: z.boolean().optional(),
     temperature: z.number().optional(),
-    // Default 512 so reasoning models (nemotron, big-pickle, etc. picked by
+    // Default 512 so reasoning models picked by
     // openrouter/free) have room to think AND emit content. Omitting it let
     // upstreams default low and return content=null.
     max_tokens: z.number().int().positive().default(512),

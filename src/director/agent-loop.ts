@@ -1,6 +1,6 @@
 /**
  * agent-loop.ts: Self-contained agent loop for the Director. Separate from the
- * router's AgentLoop (src/agent/loop.ts) so changes to one don't affect the other.
+ * router's AgentLoop (the (since-removed) standalone agent loop) so changes to one don't affect the other.
  *
  * Drives the model with the Director's tools (terminal, web_search, write_prompt_override).
  * The model calls tools freely. Patches are extracted from the final response.
@@ -147,8 +147,12 @@ export function parseAgentPatches(text: string): Patch[] {
   let started = false;
   for (let i = startIdx; i < text.length; i++) {
     const ch = text[i]!;
-    if (ch === '{') { depth++; started = true; }
-    else if (ch === '}') { depth--; }
+    if (ch === '{') {
+      depth++;
+      started = true;
+    } else if (ch === '}') {
+      depth--;
+    }
     if (started) jsonStr += ch;
     if (started && depth === 0) break;
   }

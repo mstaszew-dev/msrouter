@@ -60,8 +60,6 @@ describe('applyPatch', () => {
   });
 });
 
-
-
 describe('tilde expansion (DIRECTOR_OVERRIDES default is ~/...)', () => {
   // 2026-09-18 audit: the zod default is '~/.campaign-agent/...' but apply.ts
   // never expanded '~', so approved patches silently wrote into a literal

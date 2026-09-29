@@ -1,7 +1,6 @@
 /**
- * Generic single-key provider for OpenAI-compatible upstreams. OpenAI, ZAI
- * (GLM), and OpenCode Zen all speak the same OpenAI-compatible chat-completions
- * wire format and differ only in (baseUrl, apiKey, defaultModel). This base
+ * Generic single-key provider for OpenAI-compatible upstreams. OpenAI, ZAI (GLM),
+ * OpenCodeGo and the extras all speak the same OpenAI-compatible chat-completions wire format and differ only in (baseUrl, apiKey, defaultModel). This base
  * class factors that out; each provider is a one-line specialization.
  *
  * Model resolution: the chain passes the already-resolved model id; if the

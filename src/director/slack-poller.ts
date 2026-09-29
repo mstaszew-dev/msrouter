@@ -3,7 +3,7 @@
  * polls conversations.history on the configured channel, and fills an in-memory
  * queue of messages. The Director's pollSlackMessages drains the queue on each tick.
  *
- * Replaces the standalone director-kafka-poller.ts process.
+ * Successor of the removed standalone director-kafka-poller process.
  */
 
 import type { Logger } from 'pino';
@@ -32,10 +32,7 @@ export class SlackPoller {
     if (this.timer) return;
     void this.poll();
     this.timer = setInterval(() => void this.poll(), this.intervalSec * 1000);
-    this.log.info(
-      { channel: this.channel, intervalSec: this.intervalSec },
-      'Slack poller started',
-    );
+    this.log.info({ channel: this.channel, intervalSec: this.intervalSec }, 'Slack poller started');
   }
 
   /** Stop polling. */
@@ -73,10 +70,9 @@ export class SlackPoller {
     try {
       const params = new URLSearchParams({ channel: this.channel, limit: '20' });
       if (this.lastTs) params.set('oldest', this.lastTs);
-      const res = await fetch(
-        `https://slack.com/api/conversations.history?${params.toString()}`,
-        { headers: { Authorization: `Bearer ${this.botToken}` } },
-      );
+      const res = await fetch(`https://slack.com/api/conversations.history?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${this.botToken}` },
+      });
       const data = (await res.json()) as {
         ok?: boolean;
         messages?: Array<{ text?: string; ts?: string; user?: string }>;
@@ -95,10 +91,16 @@ export class SlackPoller {
         count++;
       }
       if (count > 0) {
-        this.log.info({ count, queueSize: this.queue.length, lastTs: this.lastTs }, 'Slack poll: new messages');
+        this.log.info(
+          { count, queueSize: this.queue.length, lastTs: this.lastTs },
+          'Slack poll: new messages',
+        );
       }
     } catch (e) {
-      this.log.warn({ err: e instanceof Error ? e.message : String(e) }, 'Slack poll failed (transient, will retry)');
+      this.log.warn(
+        { err: e instanceof Error ? e.message : String(e) },
+        'Slack poll failed (transient, will retry)',
+      );
     } finally {
       this.busy = false;
     }

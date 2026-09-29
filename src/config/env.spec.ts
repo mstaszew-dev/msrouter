@@ -331,7 +331,11 @@ describe('initEnv', () => {
 describe('loadEnv - production guard with extra providers', () => {
   it('accepts a groq-only production config (key + model)', () => {
     expect(() =>
-      loadEnv({ NODE_ENV: 'production', GROQ_API_KEY: 'gsk-x', GROQ_MODEL: 'llama-3.3-70b-versatile' }),
+      loadEnv({
+        NODE_ENV: 'production',
+        GROQ_API_KEY: 'gsk-x',
+        GROQ_MODEL: 'llama-3.3-70b-versatile',
+      }),
     ).not.toThrow();
   });
 

@@ -3,7 +3,7 @@
  * Each rule inspects the recentEvents in the snapshot and emits zero or more
  * DecisionClassifications. The propose() step later turns these into patches.
  *
- * Rules mirror the campaign's existing policy (score_candidate.py hard-negative
+ * Rules mirror the campaign's existing policy (hard-negative titles from the retired score_candidate.py (kept:
  * titles, the 60-day dedupe contract, and observed portal-error patterns).
  */
 

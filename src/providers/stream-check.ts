@@ -7,7 +7,7 @@
 /**
  * Check whether a parsed chat-completion JSON body represents an empty response:
  * HTTP 200, no error, but choices[].message.content is empty/null and
- * finish_reason is not 'stop'. Models like big-pickle return this pattern when
+ * finish_reason is not 'stop'. Models like an upstream model return this pattern when
  * they are reasoning-only models that don't generate user-facing text.
  *
  * "Empty" is defined by what the caller receives: NO content AND NO tool calls
@@ -56,7 +56,7 @@ export function isEmptyCompletion(json: unknown): boolean {
  *
  * Empty responses (return { ok: false, reason }):
  * - No events at all (stream ended immediately)
- * - Only finish_reason=length with no content AND no tool_calls — e.g. big-pickle
+ * - Only finish_reason=length with no content AND no tool_calls — e.g. an upstream model
  * - Embedded error field (rate limit reached, etc.) — also KEY_FAILURE so the
  *   provider demotes the triple instead of retrying in place
  */
@@ -163,21 +163,21 @@ export async function checkStreamContent(
     start(controller) {
       controller.enqueue(allData);
       void (async () => {
-          try {
-            while (true) {
-              const r = await reader.read();
-              if (r.done) break;
-              controller.enqueue(r.value);
-            }
-          } catch {
-            // stream terminated by abort/timeout
-          } finally {
-            try {
-              controller.close();
-            } catch {
-              // controller already closed by consumer disconnect — ignore
-            }
+        try {
+          while (true) {
+            const r = await reader.read();
+            if (r.done) break;
+            controller.enqueue(r.value);
           }
+        } catch {
+          // stream terminated by abort/timeout
+        } finally {
+          try {
+            controller.close();
+          } catch {
+            // controller already closed by consumer disconnect — ignore
+          }
+        }
       })();
     },
   });

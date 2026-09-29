@@ -1,5 +1,5 @@
 /**
- * Numbered-key pool collectors (OPENROUTER_KEY1..N, OPENCODE_KEY1..N). One
+ * Numbered-key pool collectors (OPENROUTER_KEY1..N (the OpenCode pool was removed 2026-09-18)). One
  * generic implementation shared by both pooled providers; extracted from
  * env.ts so env.ts stays under its 250-line module-size budget.
  */

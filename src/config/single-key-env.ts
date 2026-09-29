@@ -29,7 +29,7 @@ export const singleKeyEnvFields = {
   OPENAI_MODEL: z.string().default('gpt-4o-mini'),
   ZAI_API_KEY: z.string().optional(),
   ZAI_BASE_URL: z.string().url().default('https://api.z.ai/api/paas/v4'),
-    // Coding-plan default (verified 200 on /api/coding/paas/v4, 2026-09-18).
+  // Coding-plan default (verified 200 on /api/coding/paas/v4, 2026-09-18).
   ZAI_MODEL: z.string().default('glm-5.3-flash'),
   // TokenRouter (tokenrouter.com): OpenAI-compatible aggregator. Single key,
   // free GLM tier. Key verified against api.tokenrouter.com 2026-08-30.

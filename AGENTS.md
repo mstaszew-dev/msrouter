@@ -19,7 +19,7 @@ If it is down and you need it up:
 
 1. Open an iTerm tab yourself and run the command above, or
 2. Use osascript exactly as the Director does (`create tab with default
-   profile` + `write text`) - this is the only sanctioned programmatic path.
+profile` + `write text`) - this is the only sanctioned programmatic path.
 
 Never `nohup`, never background it from a non-iTerm shell, never start a
 second instance while one is listening on :8787 (`scripts/run.sh down` first).
@@ -35,9 +35,11 @@ If a task needs the gateway, start it (iTerm rule above), do the work, then
 
 ## Layout
 
-- `src/config/` - zod env schema (`env.ts`, 250-line module budget), providers
-- `src/providers/` - chain + routing (openrouter pool, openai, zai, tokenrouter,
-  opencode triples, opencodego, lmstudio, local)
+- `src/config/` - zod env schema (`env.ts` + `single-key-env.ts`, 250-line
+  module budget per file)
+- `src/providers/` - chain + routing (openrouter pool, openai, zai,
+  tokenrouter, opencodego, extras [unorouter/groq/sambanova/mistral/
+  cloudflare], lmstudio, local, laptop tail; zen pool removed 2026-09-18)
 - `src/director/` - campaign supervision: `loop.ts` (5-min ticks,
   `DIRECTOR_AUTOSTART`), `iterm.ts` (worker spawn), `classify.ts`
 - `src/gateway/` - HTTP handlers (`/v1/chat/completions`, `/v1/models`, 10MB body cap)

@@ -87,7 +87,7 @@ export async function postChatCompletion(
               message: `upstream returned 200 with error: ${truncate(errMsg, 300)}`,
             };
           }
-          // Detect empty-content responses (e.g. big-pickle reasoning-only model
+          // Detect empty-content responses (e.g. an upstream model reasoning-only model
           // returns HTTP 200 with empty content and finish_reason=length; a
           // thinking model truncated mid-thought also yields content="" +
           // reasoning_content). Either way the caller gets no deliverable.
@@ -112,7 +112,7 @@ export async function postChatCompletion(
         }
       }
       // Streaming: peek at the first SSE event before forwarding the stream.
-      // Models like big-pickle return an SSE stream with no content tokens
+      // Models like an upstream model return an SSE stream with no content tokens
       // and finish_reason=length. Detect this upfront so the provider can
       // demote the triple instead of passing an empty stream to the caller.
       const streamResult = await checkStreamContent(res);

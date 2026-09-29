@@ -1,164 +1,130 @@
 # msrouter
 
-A local, **OpenRouter-compatible gateway** written in TypeScript/Node.js. Point
-any OpenAI/OpenRouter client at `http://localhost:8787/api/v1` and it routes
-your request across a pool of OpenRouter free-model keys, falling back to
-OpenAI, ZAI (GLM), and OpenCode Zen (BigPickle). Ships with a separate scheduled
-agent worker that drives a prompt+goal loop using direct terminal + browser
-tools.
+A local LLM routing gateway: one OpenAI-compatible API over a failover chain of
+free-tier providers, plus an observe-only Director that watches the job-search
+campaign agent, surfaces it to Slack, and rotates the VPN IP. Everything runs on
+this machine; nothing leaves it except upstream LLM calls.
 
-## What it does
+## The chain (2026-09-18)
 
-- **Gateway** (`POST /api/v1/chat/completions`, `GET /api/v1/models`): an
-  OpenAI-compatible proxy. Pools `OPENROUTER_KEY1..N`, rotates keys on
-  per-key failure (401/402/429), then walks a fallback chain: OpenAI -> ZAI ->
-  OpenCode Zen (BigPickle). SSE streaming is passed through unchanged.
-- **Alias `mst/free`**: send `model: "mst/free"` to walk **every** provider,
-  each using its own configured default model. Maximize the success rate across
-  free tiers without naming a model each provider hosts.
-- **Short-circuit by `direct:` prefix**: `direct:openai/*`, `direct:glm-*` /
-  `direct:zai/*`, `direct:opencode/*` pin a single provider. (Bare `openai/*`
-  etc. are treated as OpenRouter vendor/model ids and go through the default
-  chain.)
-- **Scheduled agent** (`src/worker.ts`): runs every
-  `SCHEDULE_INTERVAL_MINUTES` (`-1` disables), using terminal
-  (`child_process` + allowlist) and browser (`playwright-core` over CDP) tools.
+Requests with `model: "mst/free"` (or `free`) walk every provider with its own
+default model, in this order, demoting failures to the back and parking
+rate-limited entries for a cooldown:
 
-## Quick start
+1. **OpenRouter pool** - 15 keys x `openrouter/free` (the free auto-router)
+   - explicit stealth previews (`stealth/union-alpha`, `stealth/space-bunny-alpha`)
+2. **ZAI** - GLM coding plan, `glm-5.3-flash` on `api.z.ai/api/coding/paas/v4`
+3. **TokenRouter** - `z-ai/glm-5.3-free`
+4. **OpenCodeGo** - `glm-5.3-flash` on `/zen/go/v1` (monthly-capped)
+5. **Extras** - UnoRouter (`glm-5.3-flash:free` + CSV models), Groq
+   (`openai/gpt-oss-120b` + CSV), Mistral (`mistral-small-latest` + CSV),
+   Cloudflare Workers AI (4 models). SambaNova is retired: every model 402s
+   without a payment method.
+6. **Local tail** - laptop tailnet Ollama `qwen3.5:2b` (32K ctx, 30-min
+   timeout; ABSOLUTE LAST). LM Studio and the llama-server local slot are
+   parked (disabled flags); the tail is always reachable.
 
-```bash
-cp .env.example .env            # fill in your keys
-scripts/run.sh                  # gateway, dev mode
-# or:
-scripts/run.sh prod             # build + run compiled
-scripts/run.sh worker           # start the scheduled agent
-scripts/run.sh chrome           # launch Chrome w/ remote debugging (for the browser tool)
-scripts/run.sh down             # stop gateway + worker
+The OpenCode `/zen/v1` free pool was removed: every model 403s
+`FreeTierError` ("free tier can only be used from within OpenCode") for
+non-OpenCode clients, so it can never serve this gateway.
+
+## Direct pinning
+
+`model: "direct:<provider>/<model>"` pins a single provider, no fallback:
+
+```
+direct:openrouter/<model>     direct:zai/<model>          direct:groq/<model>
+direct:opencodego/<model>     direct:tokenrouter/<model>  direct:unorouter/<model>
+direct:mistral/<model>        direct:cloudflare/<model>   direct:sambanova/<model>
+direct:local/<model>          direct:lmstudio/<model>     direct:laptop/<model>
 ```
 
-Smoke:
+`direct:zai/glm-...` and `direct:glm-...` strip/alias the ZAI prefix;
+`direct:openrouter/<model>` applies the FORCE_FREE `:free` rewrite except for
+the `stealth/` namespace (natively free, no `:free` variant exists upstream).
 
-```bash
-curl -s http://localhost:8787/api/v1/chat/completions \
-  -H 'content-type: application/json' \
-  -d '{"model":"mst/free","messages":[{"role":"user","content":"say hi"}]}'
+## Run
+
+```
+./scripts/run.sh dev       # gateway, dev mode (tsx watch); MUST run inside iTerm
+./scripts/run.sh prod      # build + run compiled
+./scripts/run.sh down      # stop it
+./scripts/run.sh chrome    # Chrome with CDP 9222 (campaign browser)
+npx tsx scripts/check-env.ts   # what the chain will actually route to
 ```
 
-Point an OpenAI SDK at it:
+The gateway refuses to start outside iTerm by design (supervision depends on
+visible tabs; see AGENTS.md).
 
-```python
-client = OpenAI(base_url="http://localhost:8787/api/v1", api_key="anything")
-client.chat.completions.create(model="mst/free", messages=[{"role":"user","content":"hi"}])
-```
+## Surfaces
 
-## Provider chain
+- `POST /v1/chat/completions` (+ `/api/v1` alias) - OpenAI-compatible,
+  streaming via SSE. `X-Served-By-Provider` / `X-Served-By-Model` on every OK.
+- `GET /v1/models` - the configured models (walk aliases, per-provider
+  defaults, extras CSV models).
+- `GET /health/live`, `GET /health/ready`.
+- Read-only GraphQL at `/graphql` (`models`, `completion` demo).
+- Admin API (`src/admin/`, JWT, SQL console over the Director ledger) + React
+  console in `web/` (`npm run web:dev`, demo/viewer accounts via
+  `npm run seed:users`).
 
-| Requested model                 | Behavior                                                                          |
-| ------------------------------- | --------------------------------------------------------------------------------- |
-| `mst/free`                      | Walk every OpenRouter key, then OpenAI, ZAI, OpenCode (per-provider defaults)     |
-| `direct:openai/<id>`            | OpenAI only                                                                       |
-| `direct:glm-*` / `direct:zai/*` | ZAI only                                                                          |
-| `direct:opencode/<id>`          | OpenCode Zen only                                                                 |
-| `openai/gpt-4o-mini`            | OpenRouter model (vendor/model id) -> default chain                               |
-| any other                       | OpenRouter pool (model + `:free` if `FORCE_FREE`), then OpenAI -> ZAI -> OpenCode |
+## The Director (observe-only)
 
-> **Why `direct:`?** OpenRouter uses `vendor/model` ids (`openai/gpt-4o`,
-> `google/gemma-...`). A bare `openai/...` is therefore an OpenRouter model, not
-> a provider pin. The `direct:` namespace disambiguates "force this fallback
-> provider" from "use this OpenRouter-hosted model".
-
-Result classification: `KEY_FAILURE` (401/402/429) rotates; `TRANSIENT`
-(408/502/503) retries with backoff; `BAD_REQUEST` (400/422) rejects.
-
-## Web console
-
-A React 18 + Vite + TypeScript dashboard lives in [`web/`](web/) and is served
-by a separate admin API (`src/admin/`, port 8790) that never touches routing:
-
-- **Login** - users live in the flat file `data/users.json` (scrypt-hashed
-  passwords, per-user salt, constant-time compare). Sessions are JWTs signed
-  HS256 (symmetric, single service). Roles: `admin` (full console) and
-  `viewer` (read-only).
-- **Dashboard** - read-only observability: gateway live/ready + models,
-  Director checkpoint + ledger tail, Kafka broker probe, Slack and RAG status.
-  Polls every 5s; never mutates.
-- **Users & SQL** - a quasi-SQL console (AlaSQL) over the users array,
-  parser-verified to be a single read-only `SELECT ... FROM ?`; admin forms
-  for adding columns (schema evolution with backfill) and creating users.
-- **Profile** - update your own email/display name and change password.
-- **About** - the architecture documentation page.
-
-One zod schema (`src/shared/schema.ts`) defines every request/response/persisted
-shape for both server and client.
-
-Run it:
-
-```bash
-npm run seed:users        # (re)generate data/users.json with demo accounts
-npm run web:build         # build the SPA into web/dist
-npm run admin:dev         # serve API + console on http://127.0.0.1:8790
-# dev mode with HMR: npm run admin:dev  +  npm run web   (Vite on :5173)
-```
-
-Demo accounts (also printed on the login page): `demo / demo1234` (admin) and
-`viewer / viewer1234` (read-only). Set `JWT_SECRET` in `.env` for stable
-sessions; see `.env.example` (`ADMIN_PORT`, `USERS_FILE`, `WEB_DIST`,
-`GATEWAY_URL`, `JWT_TTL_SECONDS`). Known trade-offs, accepted for a local
-single-service demo: HS256 access tokens are stateless (a password change does
-not revoke outstanding tokens) and live in localStorage (CSP restricts scripts
-to self-origin as mitigation). The production hardening path - RS256, rotating
-refresh tokens, per-user token versions - is documented on the console's About
-page.
+`DIRECTOR_AUTOSTART=false` is the default and the standing policy: the Director
+observes the campaign (`/Users/mst/Downloads/job-search/job-apply`), classifies
+ticks, dedupes observations into a ledger, drafts read-only proposals, applies
+approved patches to `~/.campaign-agent/director-overrides.env`, rotates the
+Proton VPN IP (periodic + stale-campaign), keeps Chrome CDP alive, and mirrors
+everything to Slack. It never spawns/kills/restarts the campaign worker unless
+you opt in with `DIRECTOR_AUTOSTART=true`. Kafka event streaming
+(`scripts/kafka.sh`, port 19092) is dormant: `KAFKA_ENABLED=false`, nothing
+consumes the topic; the monitor tab in the console still works if re-enabled.
 
 ## Configuration
 
-All config is validated via zod at boot. See [`.env.example`](.env.example) for
-every variable. Key ones:
+Everything is env-driven (`.env`; see `.env.example` for the annotated
+template). The load-bearing groups:
 
-- `OPENROUTER_KEY1..N` / `OPENROUTER_API_KEY` - the key pool.
-- `OPENAI_API_KEY`, `ZAI_API_KEY`, `OPENCODE_API_KEY` - fallback providers.
-- `OPENROUTER_MODEL`, `OPENAI_MODEL`, `ZAI_MODEL`, `OPENCODE_MODEL` - per-provider defaults for the alias.
-- `WALK_ALIAS` - the model id(s) that mean "walk all" (default `mst/free`).
-- `FORCE_FREE=true` - append `:free` to OpenRouter models.
-- `UPSTREAM_TIMEOUT_MS`, `MAX_TRANSIENT_RETRIES`, `RATE_LIMIT_COOLDOWN_MS` (429 parking window; 0 disables) - upstream call behavior.
-- `SCHEDULE_INTERVAL_MINUTES`, `AGENT_PROMPT`, `AGENT_GOAL`, `AGENT_MAX_STEPS` - the scheduled agent.
-- `CDP_URL`, `TERMINAL_ALLOWLIST` - agent tools.
-- `LOG_LEVEL`, `LOG_REDACT` - structured logging with secret redaction.
+- OpenRouter: `OPENROUTER_KEY1..N`, `OPENROUTER_MODEL`, `OPENROUTER_MODELS` (CSV),
+  `FORCE_FREE`.
+- Single-key providers (incl. `ZAI_*`, `TOKENROUTER_*`, `OPENCODEGO_*` and the
+  2026-09-18 extras `UNOROUTER_*/GROQ_*/SAMBANOVA_*/MISTRAL_*/CLOUDFLARE_*`):
+  each joins the walk when key AND model are set; an empty model var retires
+  the slot; `<PROVIDER>_MODELS` CSV adds models per provider.
+- Locals: `LOCAL_*` (parked), `LMSTUDIO_*` (parked, port 1235), `LAPTOP_*`
+  (active tail).
+- Walk behavior: `WALK_ALIAS`, `WALK_DEADLINE_MS` (300s), `UPSTREAM_TIMEOUT_MS`
+  (60s), `RATE_LIMIT_COOLDOWN_MS`, `SUCCESS_DEMOTE_LIMIT`.
+- Director: `DIRECTOR_INTERVAL_MINUTES`, `DIRECTOR_AUTOSTART`,
+  `STALE_THRESHOLD_MINUTES`, `VPN_ROTATION_INTERVAL_MINUTES`,
+  `DIRECTOR_OVERRIDES` (`~` expanded), `DIRECTOR_RUNNER` (python campaign
+  agent), Slack vars.
 
-## Project layout
+Timeout stack, sized additively: walk deadline 300s + LM Studio first try 300s
+
+- laptop 1800s = 2400s, which is exactly the python campaign agent's
+  `TIMEOUT_SECONDS` (its hard deadline is 2520s).
+
+## Layout
 
 ```
-src/
-  config/     env (zod), pino logger
-  common/     errors, http router, retry predicates
-  shared/     one zod schema for admin API + users file + console types
-  providers/  types, openrouter (pool), single-key, openai/zai/opencode, chain
-  gateway/    server (node:http), handlers, sse stream, validation
-  director/   supervise loop: observe/classify/propose/apply, slack, kafka, rag
-  admin/      web console API: jwt auth, users store, sql console, observability
-  main.ts     gateway + director entrypoint
-web/          React 18 + Vite console (login, dashboard, profile, about)
-data/         users.json (flat-file users store for the console)
-docs/adr/     0001 gateway surface, 0002 chain+alias, 0003 direct tools, 0004 scheduling
+src/gateway/     OpenAI-compatible surface, model list, SSE, validation
+src/providers/   chain, rotation queue, per-provider adapters, extras
+src/director/    observe-only supervisor (loop, classify, vpn, slack, ledger)
+src/admin/       JWT admin API (SQL console, observability)
+src/config/      zod env schema (single-key fields in single-key-env.ts)
+web/             React console (own vitest config)
+scripts/         run.sh, check-env.ts, kafka.sh (dormant), seed-users.ts
+docs/adr/        architecture decision records
 ```
 
-## Quality gates
+## Out of scope
 
-- TypeScript `strict` + `noUncheckedIndexedAccess`; zod at boundaries.
-- `AbortController` + timeout on every upstream call; SSE streamed, never buffered.
-- Secrets only from env; `LOG_REDACT` redacts `openrouter_key`, api keys, `authorization`.
-- vitest specs cover the chain logic (alias walk, short-circuit, all-fail),
-  retry predicates, env parsing, tool allowlisting, the admin API (real-server
-  integration tests incl. role isolation), and the web console (Testing
-  Library) with coverage gates in CI for both packages.
-- SIGTERM graceful shutdown on both processes.
+- Multi-tenant anything: this is a single-user, single-machine gateway.
+- Queueing/persistence of requests: a failed walk fails the request; the
+  adaptive rotation (demote + 429 parking) is the whole availability story.
+- Byzantine provider selection: env-declared order + failure demotion, nothing
+  model-aware beyond `openrouter/free` upstream.
 
-## Out of scope (documented)
-
-- No persistent key-quota tracking across restarts (in-memory rotation only).
-- Single `GATEWAY_TOKEN` for local client auth (not multi-tenant).
-- LLM-judge for goal-met detection is off by default (cheap heuristic first).
-
-## License
-
-MIT.
+`LOG_REDACT` (CSV of secret fragments) scrubs upstream error bodies before
+they reach logs or clients; `.env.example` ships a sensible list.

@@ -5,8 +5,7 @@
  * walks - until their cooldown window expires. No persistence; restart
  * rebuilds the queue from env (original declared order).
  *
- * Used by OpenRouterProvider (key pool), OpenCodeProvider ((model, key)
- * pool), and the chain (inter-provider walk). All three share one contract.
+ * Used by OpenRouterProvider (key pool) and the chain (inter-provider walk).
  *
  * Pure data structure: no I/O, no timers. Cooldown expiry is evaluated
  * lazily on read (eligible()); the clock is Date.now().
