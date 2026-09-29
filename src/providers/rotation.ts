@@ -91,6 +91,12 @@ export class RotationQueue<T> {
     return live.length > 0 ? live : [...this.order];
   }
 
+  /** True while `item` is parked (rate-limit cooldown window active). */
+  isParked(item: T): boolean {
+    const until = this.parkedUntil.get(item);
+    return until !== undefined && until > Date.now();
+  }
+
   /** Current order, for tests and debug snapshots. */
   snapshot(): readonly T[] {
     return [...this.order];

@@ -111,6 +111,7 @@ describe('constraint: source files stay under 250 lines (module size budget)', (
     'providers/chain.ts',
     'providers/chain-routing.ts',
     'providers/extras.ts',
+    'providers/failure-axes.ts',
     'providers/shortcircuit.ts',
     'providers/fetch.ts',
     'providers/openrouter.ts',

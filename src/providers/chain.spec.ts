@@ -1413,7 +1413,10 @@ describe('ProviderChain - extra free-tier providers (groq/sambanova/...)', () =>
     (p.openai as unknown as { available: boolean }).available = false;
     (p.zai as unknown as { available: boolean }).available = false;
     (p.tokenrouter as unknown as { available: boolean }).available = false;
-    const groq = p.extras.groq as unknown as { available: boolean; attempt: ReturnType<typeof vi.fn> };
+    const groq = p.extras.groq as unknown as {
+      available: boolean;
+      attempt: ReturnType<typeof vi.fn>;
+    };
     groq.available = true;
     groq.attempt = vi.fn(async (): Promise<ProviderCallResult> => ({
       kind: 'OK',
@@ -1435,7 +1438,10 @@ describe('ProviderChain - extra free-tier providers (groq/sambanova/...)', () =>
   it('pins direct:groq/<model> as a single attempt with no fallback', async () => {
     loadEnv({ ...DEFAULT_ENV });
     const p = makeProviders({ openrouterKeys: 1 });
-    const groq = p.extras.groq as unknown as { available: boolean; attempt: ReturnType<typeof vi.fn> };
+    const groq = p.extras.groq as unknown as {
+      available: boolean;
+      attempt: ReturnType<typeof vi.fn>;
+    };
     groq.available = true;
     groq.attempt = vi.fn(async (): Promise<ProviderCallResult> => ({
       kind: 'OK',
@@ -1450,5 +1456,131 @@ describe('ProviderChain - extra free-tier providers (groq/sambanova/...)', () =>
     expect(groq.attempt).toHaveBeenCalledTimes(1);
     // The pin must not leak into the OpenRouter pool.
     expect(p.openrouter.attempt).not.toHaveBeenCalled();
+  });
+});
+
+describe('ProviderChain - triple-axis failure propagation', () => {
+  // The chain entry is a (provider, model, key) triple; failures propagate
+  // along the axis they indict (2026-09-18): single-key providers share one
+  // account, so a 429/401/403 on ANY of their models demotes/parks ALL their
+  // entries; a BAD_REQUEST (404 model-gone) demotes every key of that model.
+  const DEFAULT_ENV = {
+    NODE_ENV: 'test',
+    PORT: '8788',
+    OPENROUTER_KEY1: 'sk-or-test-key-1111',
+    FORCE_FREE: 'true',
+    UPSTREAM_TIMEOUT_MS: '5000',
+    OPENROUTER_MODELS: 'vendor/extra',
+    RATE_LIMIT_COOLDOWN_MS: '60000',
+    LAPTOP_ENABLED: 'true',
+  };
+  afterEach(() => loadEnv(DEFAULT_ENV));
+
+  function wireGroq(results: ProviderCallResult[]) {
+    const p = makeProviders({ openrouterKeys: 0 });
+    (p.openai as unknown as { available: boolean }).available = false;
+    (p.zai as unknown as { available: boolean }).available = false;
+    (p.tokenrouter as unknown as { available: boolean }).available = false;
+    const g = p.extras.groq as unknown as { available: boolean; attempt: ReturnType<typeof vi.fn> };
+    g.available = true;
+    let n = 0;
+    g.attempt = vi.fn(async () => results[Math.min(n++, results.length - 1)]!);
+    (p.laptop as unknown as { available: boolean }).available = true;
+    (p.laptop as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(async () => ({
+      kind: 'OK',
+      response: okResponse(),
+    }));
+    return { p, g };
+  }
+
+  it('429 on one groq model parks every groq entry (account-wide limit)', async () => {
+    loadEnv({
+      ...DEFAULT_ENV,
+      GROQ_API_KEY: 'gsk-1',
+      GROQ_MODELS: 'qwen/qwen3.8-27b,openai/gpt-oss-20b',
+    });
+    const { p, g } = wireGroq([{ kind: 'KEY_FAILURE', status: 429, message: 'rl' }]);
+    const chain = new ProviderChain(p, silentLogger);
+    expect(chain.queueSnapshot().filter((e) => e.provider === 'groq')).toHaveLength(3);
+    const res = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
+    expect(res.servedBy.provider).toBe('laptop');
+    // The walk attempted the first groq entry, 429'd, and must NOT have
+    // tried the sibling models (parked with it for the cooldown).
+    expect(g.attempt).toHaveBeenCalledTimes(1);
+  });
+
+  it('401 on one groq model demotes all groq entries to the back', async () => {
+    loadEnv({
+      ...DEFAULT_ENV,
+      GROQ_API_KEY: 'gsk-1',
+      GROQ_MODELS: 'qwen/qwen3.8-27b,openai/gpt-oss-20b',
+    });
+    const { p } = wireGroq([{ kind: 'KEY_FAILURE', status: 401, message: 'bad key' }]);
+    const chain = new ProviderChain(p, silentLogger);
+    const res = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
+    expect(res.servedBy.provider).toBe('laptop');
+    const after = chain.queueSnapshot().map((e) => e.label);
+    expect(after.indexOf('groq')).toBeGreaterThan(after.indexOf('laptop'));
+    expect(after.indexOf('groq/qwen/qwen3.8-27b')).toBeGreaterThan(after.indexOf('laptop'));
+    expect(after.filter((l) => l.startsWith('groq')).length).toBe(3);
+  });
+
+  it('BAD_REQUEST on an OpenRouter model demotes every key of that model', async () => {
+    loadEnv({ ...DEFAULT_ENV });
+    const p = makeProviders({ openrouterKeys: 2 });
+    (p.openai as unknown as { available: boolean }).available = false;
+    (p.zai as unknown as { available: boolean }).available = false;
+    (p.tokenrouter as unknown as { available: boolean }).available = false;
+    (p.laptop as unknown as { available: boolean }).available = true;
+    (p.laptop as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(async () => ({
+      kind: 'OK',
+      response: okResponse(),
+    }));
+    (p.openrouter as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(
+      async (_b: ChatRequestBody, _s: AbortSignal, o: { model?: string }) =>
+        (o.model ?? '').includes('vendor')
+          ? { kind: 'BAD_REQUEST', status: 404, message: 'model gone' }
+          : { kind: 'KEY_FAILURE', status: 401, message: 'key bad' },
+    );
+    const chain = new ProviderChain(p, silentLogger);
+    const res = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
+    expect(res.servedBy.provider).toBe('laptop');
+    // All vendor/extra entries (the 404ing model) moved behind the laptop.
+    const labels = chain.queueSnapshot().map((e) => e.label);
+    labels.forEach((l, i) => {
+      if (l.includes('vendor/extra')) expect(i).toBeGreaterThan(labels.indexOf('laptop'));
+    });
+  });
+
+  it('direct: pins do not propagate failures into the walk queue', async () => {
+    loadEnv({ ...DEFAULT_ENV, GROQ_API_KEY: 'gsk-1', GROQ_MODELS: 'qwen/qwen3.8-27b' });
+    const { p, g } = wireGroq([{ kind: 'KEY_FAILURE', status: 429, message: 'rl' }]);
+    const chain = new ProviderChain(p, silentLogger);
+    const before = chain
+      .queueSnapshot()
+      .map((e) => e.label)
+      .join('|');
+    await expect(
+      chain.handle(
+        { ...baseBody, model: 'direct:groq/openai/gpt-oss-120b' },
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(NoProviderAvailableError);
+    expect(g.attempt).toHaveBeenCalledTimes(1);
+    expect(
+      chain
+        .queueSnapshot()
+        .map((e) => e.label)
+        .join('|'),
+    ).toBe(before);
   });
 });
