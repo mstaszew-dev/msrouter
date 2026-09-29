@@ -44,23 +44,20 @@ spawn_sleeper() {
   run bash "${RUN}" frobnicate
   [ "$status" -ne 0 ]
   [[ "$output" == *"unknown command: frobnicate"* ]]
-  [[ "$output" == *"dev | prod | worker | chrome | logs"* ]]
+  [[ "$output" == *"dev | prod | chrome | logs"* ]]
 }
 
 @test "down with no pidfiles is a clean no-op" {
   run bash "${RUN}" down
   [ "$status" -eq 0 ]
   [ ! -f .run/gateway.pid ]
-  [ ! -f .run/worker.pid ]
 }
 
 @test "down reaps a stale (dead) pidfile without killing anything" {
   echo 999999999 > .run/gateway.pid
-  echo 999999998 > .run/worker.pid
   run bash "${RUN}" down
   [ "$status" -eq 0 ]
   [ ! -f .run/gateway.pid ]
-  [ ! -f .run/worker.pid ]
   [[ "$output" != *"stopped gateway"* ]]  # dead pid: no stop message expected
 }
 
@@ -79,19 +76,16 @@ spawn_sleeper() {
   [ ! -f .run/gateway.pid ]
 }
 
-@test "down kills gateway and worker together" {
+@test "down kills the gateway pid it owns (worker command was removed)" {
   spawn_sleeper; local gwpid="$SPAWNED_PID"
-  spawn_sleeper; local wkpid="$SPAWNED_PID"
   echo "$gwpid" > .run/gateway.pid
-  echo "$wkpid" > .run/worker.pid
   run bash "${RUN}" down
   [ "$status" -eq 0 ]
   [[ "$output" == *"stopped gateway"* ]]
-  [[ "$output" == *"stopped worker"* ]]
+  [[ "$output" != *"stopped worker"* ]]
   sleep 0.3
   local leak=0
   kill -0 "$gwpid" 2>/dev/null && leak=1
-  kill -0 "$wkpid" 2>/dev/null && leak=1
   [ "$leak" -eq 0 ]
 }
 
