@@ -39,14 +39,16 @@ export const singleKeyEnvFields = {
   // entry even when its key is configured. ---
   UNOROUTER_API_KEY: z.string().optional(),
   UNOROUTER_BASE_URL: z.string().url().default('https://api.unorouter.com/v1'),
-  // No verified default id yet (catalog needs a key); set after first probe.
-  UNOROUTER_MODEL: z.string().default(''),
+  // Verified free-tier id 2026-09-18 (no auto-router alias exists upstream).
+  UNOROUTER_MODEL: z.string().default('glm-5.3-flash:free'),
   GROQ_API_KEY: z.string().optional(),
   GROQ_BASE_URL: z.string().url().default('https://api.groq.com/openai/v1'),
-  GROQ_MODEL: z.string().default('llama-3.3-70b-versatile'),
+  GROQ_MODEL: z.string().default('openai/gpt-oss-120b'),
   SAMBANOVA_API_KEY: z.string().optional(),
   SAMBANOVA_BASE_URL: z.string().url().default('https://api.sambanova.ai/v1'),
-  SAMBANOVA_MODEL: z.string().default('Meta/Llama-4-Maverick-17B-12E-Instruct'),
+    // 2026-09-18 audit: account-wide PAYMENT_METHOD_REQUIRED (balance_units 0)
+  // on every model; retire by emptying SAMBANOVA_MODEL until a card is added.
+  SAMBANOVA_MODEL: z.string().default('DeepSeek-V3.2'),
   MISTRAL_API_KEY: z.string().optional(),
   MISTRAL_BASE_URL: z.string().url().default('https://api.mistral.ai/v1'),
   MISTRAL_MODEL: z.string().default('mistral-small-latest'),

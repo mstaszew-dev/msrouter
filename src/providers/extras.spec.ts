@@ -65,7 +65,7 @@ describe('extraRoutingEntries - walk entries', () => {
     });
     const entries = extraRoutingEntries();
     expect(entries.map((e) => e.provider)).toEqual(['groq', 'mistral']);
-    expect(entries[0]).toMatchObject({ model: 'llama-3.3-70b-versatile', attemptIndex: 0 });
+    expect(entries[0]).toMatchObject({ model: 'openai/gpt-oss-120b', attemptIndex: 0 });
     expect(entries[1]).toMatchObject({ model: 'mistral-small-latest', attemptIndex: 0 });
   });
 
@@ -87,9 +87,9 @@ describe('extraRoutingEntries - walk entries', () => {
   });
 
   it('routes to the env-declared models (sambanova case preserved)', () => {
-    loadEnv({ SAMBANOVA_API_KEY: 'sk-1' });
+    loadEnv({ SAMBANOVA_API_KEY: 'sk-1', SAMBANOVA_MODEL: 'Meta/Llama-4-Maverick-X' });
     const entries = extraRoutingEntries();
-    expect(entries[0]!.model).toBe('Meta/Llama-4-Maverick-17B-12E-Instruct');
+    expect(entries[0]!.model).toBe('Meta/Llama-4-Maverick-X');
   });
 });
 

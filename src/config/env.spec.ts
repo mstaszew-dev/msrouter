@@ -426,8 +426,8 @@ describe('loadEnv - production guard with extra providers', () => {
   });
 
   it('rejects a production config with only an empty-model extra key', () => {
-    expect(() => loadEnv({ NODE_ENV: 'production', UNOROUTER_API_KEY: 'uk-x' })).toThrow(
-      /No provider configured/,
-    );
+    expect(() =>
+      loadEnv({ NODE_ENV: 'production', UNOROUTER_API_KEY: 'uk-x', UNOROUTER_MODEL: '' }),
+    ).toThrow(/No provider configured/);
   });
 });

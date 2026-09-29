@@ -217,7 +217,7 @@ describe('buildModelList - opencode gone-slot filtering', () => {
 describe('model-list - extra free-tier providers', () => {
   it('advertises a configured extra default (owned_by the provider id)', () => {
     loadEnv({ GROQ_API_KEY: 'gsk-test' });
-    const entry = buildModelList().find((m) => m.id === 'llama-3.3-70b-versatile');
+    const entry = buildModelList().find((m) => m.id === 'openai/gpt-oss-120b');
     expect(entry).toMatchObject({ owned_by: 'groq' });
   });
 
@@ -225,15 +225,15 @@ describe('model-list - extra free-tier providers', () => {
     loadEnv({});
     const ids = buildModelList().map((m) => m.id);
     expect(ids).not.toContain('');
-    expect(ids).not.toContain('llama-3.3-70b-versatile');
+    expect(ids).not.toContain('openai/gpt-oss-120b');
     expect(ids).not.toContain('mistral-small-latest');
   });
 
   it('resolveModel passes a configured extra default through verbatim', () => {
     loadEnv({ GROQ_API_KEY: 'gsk-test' });
-    expect(resolveModel('llama-3.3-70b-versatile')).toBe('llama-3.3-70b-versatile');
+    expect(resolveModel('openai/gpt-oss-120b')).toBe('openai/gpt-oss-120b');
     // Unconfigured: rewritten to the walk alias.
     loadEnv({});
-    expect(resolveModel('llama-3.3-70b-versatile')).toBe('mst/free');
+    expect(resolveModel('openai/gpt-oss-120b')).toBe('mst/free');
   });
 });
