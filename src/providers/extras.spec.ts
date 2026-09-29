@@ -11,7 +11,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadEnv } from '../config/env.js';
 
 import { shortCircuit } from './chain-routing.js';
-import { EXTRA_PROVIDER_ORDER, buildExtras, extraRoutingEntries, isExtraProvider } from './extras.js';
+import {
+  EXTRA_PROVIDER_ORDER,
+  buildExtras,
+  extraRoutingEntries,
+  isExtraProvider,
+} from './extras.js';
 
 const silent = {
   warn: vi.fn(),
@@ -75,7 +80,10 @@ describe('extraRoutingEntries - walk entries', () => {
   });
 
   it('cloudflare requires key + account id + model for an entry', () => {
-    loadEnv({ CLOUDFLARE_API_KEY: 'cf-1', CLOUDFLARE_MODEL: '@cf/meta/llama-3.3-70b-instruct-fp8-fast' });
+    loadEnv({
+      CLOUDFLARE_API_KEY: 'cf-1',
+      CLOUDFLARE_MODEL: '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+    });
     expect(extraRoutingEntries()).toEqual([]);
     loadEnv({
       CLOUDFLARE_API_KEY: 'cf-1',
@@ -130,5 +138,50 @@ describe('isExtraProvider', () => {
     expect(isExtraProvider('cloudflare')).toBe(true);
     expect(isExtraProvider('openrouter')).toBe(false);
     expect(isExtraProvider('zai')).toBe(false);
+  });
+});
+
+describe('extraRoutingEntries - additional models (<PROVIDER>_MODELS CSV)', () => {
+  it('adds CSV models as extra walk entries after the primary', () => {
+    loadEnv({
+      GROQ_API_KEY: 'gsk-1',
+      GROQ_MODELS: 'qwen/qwen3.8-27b,openai/gpt-oss-20b',
+    });
+    const entries = extraRoutingEntries();
+    expect(entries.map((e) => [e.provider, e.model])).toEqual([
+      ['groq', 'openai/gpt-oss-120b'],
+      ['groq', 'qwen/qwen3.8-27b'],
+      ['groq', 'openai/gpt-oss-20b'],
+    ]);
+    // Labels carry the model so servedBy logs stay unambiguous.
+    expect(entries[1]!.label).toBe('groq/qwen/qwen3.8-27b');
+  });
+
+  it('ignores the CSV when the primary model is empty (retired slot)', () => {
+    loadEnv({ GROQ_API_KEY: 'gsk-1', GROQ_MODEL: '', GROQ_MODELS: 'a,b' });
+    expect(extraRoutingEntries()).toEqual([]);
+  });
+
+  it('dedupes a CSV entry that repeats the primary model', () => {
+    loadEnv({ GROQ_API_KEY: 'gsk-1', GROQ_MODELS: 'openai/gpt-oss-120b, qwen/x ,,' });
+    const entries = extraRoutingEntries();
+    expect(entries.map((e) => e.model)).toEqual(['openai/gpt-oss-120b', 'qwen/x']);
+  });
+
+  it('cloudflare CSV entries still require key + account id', () => {
+    loadEnv({
+      CLOUDFLARE_API_KEY: 'cf-1',
+      CLOUDFLARE_MODELS: '@cf/openai/gpt-oss-120b',
+    });
+    expect(extraRoutingEntries()).toEqual([]);
+    loadEnv({
+      CLOUDFLARE_API_KEY: 'cf-1',
+      CLOUDFLARE_ACCOUNT_ID: 'acct-1',
+      CLOUDFLARE_MODELS: '@cf/openai/gpt-oss-120b',
+    });
+    expect(extraRoutingEntries().map((e) => e.model)).toEqual([
+      '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+      '@cf/openai/gpt-oss-120b',
+    ]);
   });
 });

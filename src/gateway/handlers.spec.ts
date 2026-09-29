@@ -237,3 +237,26 @@ describe('model-list - extra free-tier providers', () => {
     expect(resolveModel('openai/gpt-oss-120b')).toBe('mst/free');
   });
 });
+
+describe('model-list - CSV extra models', () => {
+  it('advertises CSV models and passes them through resolveModel verbatim', () => {
+    // Regression pin: without extraRoutingEntries() flowing into
+    // isProviderDefaultModel, withFree would rewrite qwen/qwen3.8-27b into
+    // qwen/qwen3.8-27b:free and groq would 400 on the explicit path.
+    loadEnv({ GROQ_API_KEY: 'gsk-1', GROQ_MODELS: 'qwen/qwen3.8-27b' });
+    expect(buildModelList()).toContainEqual({
+      id: 'qwen/qwen3.8-27b',
+      object: 'model',
+      owned_by: 'groq',
+    });
+    expect(resolveModel('qwen/qwen3.8-27b')).toBe('qwen/qwen3.8-27b');
+  });
+
+  it('retire variant: emptied primary hides the provider including its CSV models', () => {
+    loadEnv({ GROQ_API_KEY: 'gsk-1', GROQ_MODEL: '', GROQ_MODELS: 'qwen/qwen3.8-27b' });
+    const ids = buildModelList().map((m) => m.id);
+    expect(ids).not.toContain('qwen/qwen3.8-27b');
+    expect(ids).not.toContain('openai/gpt-oss-120b');
+    expect(resolveModel('qwen/qwen3.8-27b')).toBe('mst/free');
+  });
+});

@@ -93,20 +93,41 @@ export function buildExtras(log: Logger): Extras {
   };
 }
 
-/** Configured extras' walk entries, in EXTRA_PROVIDER_ORDER (env-only). */
+/** Configured extras' walk entries, in EXTRA_PROVIDER_ORDER (env-only).
+ *  Each provider contributes its primary model plus every <PROVIDER>_MODELS
+ *  CSV entry (deduped against the primary); an empty primary retires the
+ *  whole provider, CSV included. */
 export function extraRoutingEntries(): RoutingEntry[] {
   const e = env();
   const list: RoutingEntry[] = [];
   const set = (v?: string): string => (v ?? '').trim();
-  const add = (provider: ExtraProviderId, model: string): void => {
-    list.push({ provider, label: provider, model, attemptIndex: 0 });
+  // The PRIMARY entry keeps the bare provider label (servedBy.provider is
+  // populated from it); CSV additions carry the model for uniqueness.
+  const add = (provider: ExtraProviderId, primary: string, more: string[]): void => {
+    const uniq = [...new Set(more)].filter((m) => m !== primary);
+    const models = [primary, ...uniq];
+    for (let i = 0; i < models.length; i++) {
+      const model = models[i]!;
+      list.push({
+        provider,
+        label: i === 0 ? provider : `${provider}/${model}`,
+        model,
+        attemptIndex: 0,
+      });
+    }
   };
-  if (e.UNOROUTER_API_KEY && set(e.UNOROUTER_MODEL)) add('unorouter', set(e.UNOROUTER_MODEL));
-  if (e.GROQ_API_KEY && set(e.GROQ_MODEL)) add('groq', set(e.GROQ_MODEL));
-  if (e.SAMBANOVA_API_KEY && set(e.SAMBANOVA_MODEL)) add('sambanova', set(e.SAMBANOVA_MODEL));
-  if (e.MISTRAL_API_KEY && set(e.MISTRAL_MODEL)) add('mistral', set(e.MISTRAL_MODEL));
+  if (e.UNOROUTER_API_KEY && set(e.UNOROUTER_MODEL)) {
+    add('unorouter', set(e.UNOROUTER_MODEL), e.UNOROUTER_MODELS);
+  }
+  if (e.GROQ_API_KEY && set(e.GROQ_MODEL)) add('groq', set(e.GROQ_MODEL), e.GROQ_MODELS);
+  if (e.SAMBANOVA_API_KEY && set(e.SAMBANOVA_MODEL)) {
+    add('sambanova', set(e.SAMBANOVA_MODEL), e.SAMBANOVA_MODELS);
+  }
+  if (e.MISTRAL_API_KEY && set(e.MISTRAL_MODEL)) {
+    add('mistral', set(e.MISTRAL_MODEL), e.MISTRAL_MODELS);
+  }
   if (e.CLOUDFLARE_API_KEY && e.CLOUDFLARE_ACCOUNT_ID && set(e.CLOUDFLARE_MODEL)) {
-    add('cloudflare', set(e.CLOUDFLARE_MODEL));
+    add('cloudflare', set(e.CLOUDFLARE_MODEL), e.CLOUDFLARE_MODELS);
   }
   return list;
 }
