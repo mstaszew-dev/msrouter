@@ -151,7 +151,10 @@ describe('loadEnv - production guard', () => {
 describe('loadEnv - Director config', () => {
   it('applies Director defaults when no DIRECTOR_* vars are set', () => {
     const cfg = loadEnv({});
-    expect(cfg.env.DIRECTOR_INTERVAL_MINUTES).toBe(1);
+    // 2026-09-30: default -1 (disabled) per the standing policy - the
+    // Director is opt-in; observation/Slack/VPN stay off without explicit
+    // opt-in via DIRECTOR_INTERVAL_MINUTES>=1.
+    expect(cfg.env.DIRECTOR_INTERVAL_MINUTES).toBe(-1);
     expect(cfg.env.DIRECTOR_CAMPAIGN_DIR).toBe('/Users/mst/Downloads/job-search/job-apply');
     expect(cfg.env.DIRECTOR_OVERRIDES).toBe('~/.campaign-agent/director-overrides.env');
     expect(cfg.env.DIRECTOR_CDP_URL).toBe('http://127.0.0.1:9222');
@@ -190,6 +193,10 @@ describe('loadEnv - Director config', () => {
     expect(cfg.env.DIRECTOR_CDP_URL).toBe('http://127.0.0.1:9999');
   });
 
+  it('rejects DIRECTOR_INTERVAL_MINUTES=0 (hot loop; -1 or >=1 only)', () => {
+    expect(() => loadEnv({ DIRECTOR_INTERVAL_MINUTES: '0' })).toThrow(/must be -1/);
+  });
+
   it('rejects a non-numeric DIRECTOR_INTERVAL_MINUTES', () => {
     expect(() => loadEnv({ DIRECTOR_INTERVAL_MINUTES: 'soon' })).toThrow(/Invalid environment/);
   });
@@ -224,9 +231,9 @@ describe('loadEnv - OPENROUTER_MODELS', () => {
 });
 
 describe('loadEnv - VPN rotation', () => {
-  it('defaults VPN_ROTATION_INTERVAL_MINUTES to 30', () => {
+  it('defaults VPN_ROTATION_INTERVAL_MINUTES to 0 (rotation off)', () => {
     const cfg = loadEnv({});
-    expect(cfg.env.VPN_ROTATION_INTERVAL_MINUTES).toBe(30);
+    expect(cfg.env.VPN_ROTATION_INTERVAL_MINUTES).toBe(0);
   });
 
   it('accepts an explicit VPN_ROTATION_INTERVAL_MINUTES override', () => {

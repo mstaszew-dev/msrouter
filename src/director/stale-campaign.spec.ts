@@ -21,7 +21,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ProviderChain } from '../providers/chain.js';
 
-
 vi.mock('./kafka.js', () => ({ kafkaProduce: vi.fn(async () => {}) }));
 vi.mock('./restart.js', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- importOriginal needs an inline typeof import(); a type-only namespace breaks the factory's return typing
@@ -63,7 +62,14 @@ function makeIdleCampaign(idleMs: number, submitted = 5, target = 2000): string 
       target,
       applyQueue: [],
       updatedAt: new Date(Date.now() - idleMs).toISOString(),
-      stats: { submitted, skippedDuplicate: 0, skippedSalary: 0, skippedFilter: 0, blockedManual: 0, errors: 0 },
+      stats: {
+        submitted,
+        skippedDuplicate: 0,
+        skippedSalary: 0,
+        skippedFilter: 0,
+        blockedManual: 0,
+        errors: 0,
+      },
     }),
   );
   // Empty events file: the checkpoint offset sits at EOF, nothing new.
@@ -75,6 +81,14 @@ function makeLoop(campaign: string, checkpointSeed?: string) {
   const stateDir = mkdtempSync(join(tmpdir(), 'stale-state-'));
   const checkpointPath = join(stateDir, 'cp.json');
   if (checkpointSeed) writeFileSync(checkpointPath, checkpointSeed);
+  else
+    writeFileSync(
+      checkpointPath,
+      // Complete structure + far-future lastVpnRotation: keeps the PERIODIC
+      // rotation quiet so stale-path assertions count only stale rotations
+      // (env carries VPN_ROTATION_INTERVAL_MINUTES=1; 2026-09-30).
+      '{"eventsReadOffset":0,"lastTickAt":"","lastVpnRotation":"2999-01-01T00:00:00Z"}',
+    );
   const surface = {
     postProposal: vi.fn(),
     postDecision: vi.fn(),
@@ -92,6 +106,9 @@ function makeLoop(campaign: string, checkpointSeed?: string) {
         DIRECTOR_INTERVAL_MINUTES: -1,
         DIRECTOR_MODEL: 'mst/free',
         WALK_ALIAS: ['mst/free'],
+        // Rotation tests run with the knob ON (>=1); the default 0 means
+        // opt-out, including stall recovery (2026-09-30).
+        VPN_ROTATION_INTERVAL_MINUTES: 1,
       } as never,
       chain: {
         handle: vi.fn(async () => ({
@@ -163,6 +180,7 @@ describe('stale-campaign detection (idle worker)', () => {
     // fire block must.
     const seed = JSON.stringify({
       eventsReadOffset: 0,
+      lastVpnRotation: '2999-01-01T00:00:00Z', // periodic rotation quiet; stale path only
       lastProposalHash: createHash('md5').update('stale-campaign:warn:180m idle').digest('hex'),
     });
     const { loop, stateDir } = makeLoop(makeIdleCampaign(3 * 60 * 60_000), seed);
@@ -198,16 +216,28 @@ describe('stale-campaign detection (idle worker)', () => {
     const { loop, surface } = makeLoop(campaign);
     await loop.runOnce(new AbortController().signal);
     // Simulate a submission between ticks: rewrite the tracker + event.
-    const tracker = JSON.parse(
-      readFileSync(join(campaign, 'tracker.json'), 'utf8'),
-    ) as { submittedCount: number; stats: { submitted: number }; updatedAt: string };
+    const tracker = JSON.parse(readFileSync(join(campaign, 'tracker.json'), 'utf8')) as {
+      submittedCount: number;
+      stats: { submitted: number };
+      updatedAt: string;
+    };
     tracker.submittedCount = 6;
     tracker.stats.submitted = 6;
     tracker.updatedAt = new Date().toISOString();
     writeFileSync(join(campaign, 'tracker.json'), JSON.stringify(tracker));
     writeFileSync(
       join(campaign, 'events.jsonl'),
-      JSON.stringify({ at: new Date().toISOString(), action: 'submitted', record: { id: 'y', company: 'New', companyKey: 'new', roleTitle: 'Dev', status: 'submitted' } }) + '\n',
+      JSON.stringify({
+        at: new Date().toISOString(),
+        action: 'submitted',
+        record: {
+          id: 'y',
+          company: 'New',
+          companyKey: 'new',
+          roleTitle: 'Dev',
+          status: 'submitted',
+        },
+      }) + '\n',
     );
     await loop.runOnce(new AbortController().signal);
     expect(vi.mocked(surface.postObservation)).toHaveBeenCalledTimes(2);

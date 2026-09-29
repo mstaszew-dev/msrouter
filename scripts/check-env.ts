@@ -24,6 +24,8 @@ console.log(
       laptop: e.LAPTOP_ENABLED,
       kafkaEnabled: e.KAFKA_ENABLED,
       directorAutostart: e.DIRECTOR_AUTOSTART,
+      directorInterval: e.DIRECTOR_INTERVAL_MINUTES,
+      vpnRotationInterval: e.VPN_ROTATION_INTERVAL_MINUTES,
       walkAlias: e.WALK_ALIAS,
       forceFree: e.FORCE_FREE,
     },

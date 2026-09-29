@@ -51,7 +51,10 @@ vi.mock('node:child_process', () => ({
 vi.mock('./restart.js', () => ({
   ensureCdpRunning: vi.fn(async () => undefined),
   ensureInfrastructureHealthy: vi.fn(async () => false),
-  restartWorker: vi.fn(async () => ({ iterm: true, state: { pids: [1], running: true, orphaned: false } })),
+  restartWorker: vi.fn(async () => ({
+    iterm: true,
+    state: { pids: [1], running: true, orphaned: false },
+  })),
   rotateVpnIp: vi.fn(async () => true),
   shouldRotateVpn: vi.fn(() => false),
   snapshot: vi.fn(() => ({ pids: [1], running: true, orphaned: false })),
@@ -157,7 +160,7 @@ function makeEnv(over: Record<string, unknown> = {}): Record<string, unknown> {
     DIRECTOR_LEDGER: '/tmp/ledger.jsonl',
     DIRECTOR_MODEL: 'mst/free',
     WALK_ALIAS: ['mst/free', 'free'],
-    VPN_ROTATION_INTERVAL_MINUTES: '0',
+    VPN_ROTATION_INTERVAL_MINUTES: '1',
     ...over,
   };
 }
@@ -366,9 +369,7 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
       checkpoint: { eventsReadOffset: 0, lastTickAt: 't' },
     }));
     // Tick 1: stale-campaign fires (classifications=1); tick 2: cleared (=0).
-    vi.mocked(classify)
-      .mockReturnValueOnce(staleCritical)
-      .mockReturnValueOnce([]);
+    vi.mocked(classify).mockReturnValueOnce(staleCritical).mockReturnValueOnce([]);
 
     await loop.runOnce(freshSignal());
     await loop.runOnce(freshSignal());
@@ -457,11 +458,14 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
     // KAFKA_ENABLED=true so the tick also spawns the broker 'status' probe
     // through the same execFile mock (previously this assertion passed on
     // leftover probe calls leaked from earlier tests - pre-mockClear era).
-    const { loop } = buildLoop({
-      KAFKA_ENABLED: 'true',
-      KAFKA_HOME: '/plain/kafka',
-      KAFKA_BOOTSTRAP: 'localhost:19092',
-    }, { lastSubmitted: undefined });
+    const { loop } = buildLoop(
+      {
+        KAFKA_ENABLED: 'true',
+        KAFKA_HOME: '/plain/kafka',
+        KAFKA_BOOTSTRAP: 'localhost:19092',
+      },
+      { lastSubmitted: undefined },
+    );
 
     const result = await loop.runOnce(freshSignal());
 
@@ -469,9 +473,7 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
     const calls = vi.mocked(execFile).mock.calls;
     // Exactly one rebuild spawn (python index_builder.py)...
     expect(
-      calls.filter((c) =>
-        String((c[1] as string[])?.[0]).endsWith('index_builder.py'),
-      ),
+      calls.filter((c) => String((c[1] as string[])?.[0]).endsWith('index_builder.py')),
     ).toHaveLength(1);
     // ...plus the broker supervision probe (status; broker "up" via mock).
     expect(calls.some((c) => (c[1] as string[])?.[1] === 'status')).toBe(true);
@@ -654,5 +656,19 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
       expect.objectContaining({ entryCommand: '/tmp/launch' }),
     );
     expect(vi.mocked(startWorkerInIterm)).toHaveBeenCalled();
+  });
+});
+
+describe('VPN rotation opt-out (VPN_ROTATION_INTERVAL_MINUTES=0)', () => {
+  it('stale campaign does NOT rotate the VPN when the knob is 0/disabled', async () => {
+    const { loop } = buildLoop({ VPN_ROTATION_INTERVAL_MINUTES: 0, DIRECTOR_AUTOSTART: false });
+    vi.mocked(classify).mockReturnValue(staleCritical);
+
+    await loop.runOnce(freshSignal());
+
+    // Stale detection ran (classification present) but no rotation fired:
+    // the knob governs BOTH the periodic and the stall-recovery path.
+    expect(vi.mocked(rotateVpnIp)).not.toHaveBeenCalled();
+    expect(vi.mocked(restartWorker)).not.toHaveBeenCalled();
   });
 });

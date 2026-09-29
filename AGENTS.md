@@ -40,7 +40,8 @@ If a task needs the gateway, start it (iTerm rule above), do the work, then
 - `src/providers/` - chain + routing (openrouter pool, openai, zai,
   tokenrouter, opencodego, extras [unorouter/groq/sambanova/mistral/
   cloudflare], lmstudio, local, laptop tail; zen pool removed 2026-09-18)
-- `src/director/` - campaign supervision: `loop.ts` (5-min ticks,
+- `src/director/` - campaign supervision (DISABLED by default since 2026-09-30:
+  DIRECTOR_INTERVAL_MINUTES=-1; opt-in): `loop.ts` (ticks when enabled,
   `DIRECTOR_AUTOSTART`), `iterm.ts` (worker spawn), `classify.ts`
 - `src/gateway/` - HTTP handlers (`/v1/chat/completions`, `/v1/models`, 10MB body cap)
 

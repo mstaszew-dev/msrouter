@@ -101,8 +101,14 @@ const schema = z.object({
   SUCCESS_DEMOTE_LIMIT: z.coerce.number().int().positive().default(5),
 
   // Director agent (observe-only supervisor)
-  // Minutes between Director observation cycles. -1 disables.
-  DIRECTOR_INTERVAL_MINUTES: z.coerce.number().int().default(1),
+  // Minutes between Director observation cycles. -1 disables. Default -1
+  // (2026-09-30): the Director is opt-in - observation, Slack and VPN
+  // rotation stay off unless DIRECTOR_INTERVAL_MINUTES>=1 is set explicitly.
+  DIRECTOR_INTERVAL_MINUTES: z.coerce
+    .number()
+    .int()
+    .refine((n) => n === -1 || n >= 1, 'must be -1 (disabled) or >= 1')
+    .default(-1),
   // Model the Director uses for proposal drafting. Empty -> WALK_ALIAS[0] at runtime.
   DIRECTOR_MODEL: z.string().default(''),
   // Campaign state the Director observes.
@@ -128,8 +134,9 @@ const schema = z.object({
   DIRECTOR_CDP_URL: z.string().url().default('http://127.0.0.1:9222'),
   // Director-owned SQLite RAG db (separate from OpenClaw's rag/index.db).
   DIRECTOR_RAG_DB: z.string().default(''),
-  // Minutes between Proton VPN IP rotations. 0 or negative disables. Default 30.
-  VPN_ROTATION_INTERVAL_MINUTES: z.coerce.number().int().default(30),
+  // Minutes between Proton VPN IP rotations. 0 or negative disables.
+  // Default 0 (2026-09-30): rotation is opt-in, like the Director itself.
+  VPN_ROTATION_INTERVAL_MINUTES: z.coerce.number().int().default(0),
 
   // Kafka (Director event streaming). Disabled by default (observation
   // shows nothing consumes the topic; scripts/kafka.sh is dormant).

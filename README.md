@@ -68,17 +68,19 @@ visible tabs; see AGENTS.md).
   console in `web/` (`npm run web:dev`, demo/viewer accounts via
   `npm run seed:users`).
 
-## The Director (observe-only)
+## The Director (fully opt-in)
 
-`DIRECTOR_AUTOSTART=false` is the default and the standing policy: the Director
-observes the campaign (`/Users/mst/Downloads/job-search/job-apply`), classifies
-ticks, dedupes observations into a ledger, drafts read-only proposals, applies
-approved patches to `~/.campaign-agent/director-overrides.env`, rotates the
-Proton VPN IP (periodic + stale-campaign), keeps Chrome CDP alive, and mirrors
-everything to Slack. It never spawns/kills/restarts the campaign worker unless
-you opt in with `DIRECTOR_AUTOSTART=true`. Kafka event streaming
-(`scripts/kafka.sh`, port 19092) is dormant: `KAFKA_ENABLED=false`, nothing
-consumes the topic; the monitor tab in the console still works if re-enabled.
+The Director - observation, Slack mirroring, Proton VPN rotation, worker
+supervision - is DISABLED by default (`DIRECTOR_INTERVAL_MINUTES=-1`,
+`VPN_ROTATION_INTERVAL_MINUTES=0`, no Slack token, `DIRECTOR_AUTOSTART=false`,
+`KAFKA_ENABLED=false`). The gateway boots as a pure LLM router. To turn the
+supervisor back on: set `DIRECTOR_INTERVAL_MINUTES>=1`, provide the Slack vars,
+and optionally `VPN_ROTATION_INTERVAL_MINUTES=30`; in that mode it observes
+`/Users/mst/Downloads/job-search/job-apply`, classifies ticks, keeps a ledger,
+drafts read-only proposals, applies approved patches to
+`~/.campaign-agent/director-overrides.env`, keeps Chrome CDP alive, and never
+spawns/kills/restarts the campaign worker unless `DIRECTOR_AUTOSTART=true`.
+Kafka (`scripts/kafka.sh`, port 19092) stays dormant.
 
 ## Configuration
 

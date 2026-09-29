@@ -491,8 +491,15 @@ export class DirectorLoop {
       // current IP. Rotate the VPN IP and restart the agent to get a fresh IP.
       const hasStale = classifications.some((c) => c.kind === 'stale-campaign');
       if (hasStale && !checkpoint.staleWarningActive && !staleHandledThisTick) {
-        this.opts.log.warn('Campaign stale; rotating Proton VPN IP and restarting agent');
-        const ok = await rotateVpnIp();
+        // Stale detection itself stays on, but the rotation is opt-in with
+        // the VPN knob (2026-09-30): 0/negative means NO rotation anywhere,
+        // including stall recovery (the docs say so and the machine obeys).
+        const vpnEnabled = e.VPN_ROTATION_INTERVAL_MINUTES > 0;
+        this.opts.log.warn(
+          'Campaign stale; %s and restarting agent',
+          vpnEnabled ? 'rotating Proton VPN IP' : 'VPN rotation disabled (skipping)',
+        );
+        const ok = vpnEnabled ? await rotateVpnIp() : false;
         // Back off a full interval even on failure (a failed rotation still
         // flapped the tunnel; retrying next tick would repeat the disruption).
         checkpoint.lastVpnRotation = new Date().toISOString();
