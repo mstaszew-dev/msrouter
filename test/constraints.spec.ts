@@ -114,7 +114,6 @@ describe('constraint: source files stay under 250 lines (module size budget)', (
     'providers/shortcircuit.ts',
     'providers/fetch.ts',
     'providers/openrouter.ts',
-    'providers/opencode.ts',
     'providers/rotation.ts',
     'providers/single-key.ts',
     'providers/local.ts',
@@ -218,11 +217,10 @@ describe('constraint: provider chain uses adaptive flat-sequence rotation', () =
   it('chain-routing.ts builds the env-declared initial order', () => {
     const code = src('providers/chain-routing.ts');
     expect(code).toContain('buildRoutingEntries');
-    // Initial order: OpenRouter keys, then OpenAI, then ZAI, then OpenCode triples.
+    // Initial order: OpenRouter keys, then single-key providers, then extras.
     expect(code).toContain("'openrouter'");
     expect(code).toContain("'openai'");
     expect(code).toContain("'zai'");
-    expect(code).toContain("'opencode'");
   });
 
   it('rotation.ts is the shared demote-to-back primitive', () => {
@@ -245,37 +243,3 @@ describe('constraint: short-circuit uses direct: namespace (no OpenRouter collis
   });
 });
 
-describe('constraint: OpenCode is a pooled provider (OPENCODE_KEY1..N)', () => {
-  // The OLD architecture had 9 separate SingleKeyProvider instances for OpenCode
-  // all sharing one OPENCODE_API_KEY. The NEW architecture has one pooled
-  // OpenCodeProvider fed by collectOpenCodeKeys, with one routing entry per
-  // (model, key) triple.
-  it('instances.ts builds a single pooled OpenCodeProvider', () => {
-    const code = src('providers/instances.ts');
-    expect(code).toContain('OpenCodeProvider');
-    expect(code).toContain('opencodeKeys');
-    // The old per-model SingleKeyProvider instances must NOT come back.
-    expect(code).not.toContain("id: 'opencode-bigpickle'");
-    expect(code).not.toContain("id: 'opencode-nemotron'");
-  });
-
-  it('opencode.ts is a pooled provider keyed on (model, key) triples', () => {
-    const code = src('providers/opencode.ts');
-    expect(code).toMatch(/class OpenCodeProvider/);
-    expect(code).toMatch(/OpenCodeTriple/);
-    expect(code).toMatch(/tripleIndex/);
-  });
-
-  it('env.ts collects OPENCODE_KEY1..N into opencodeKeys', () => {
-    const code = src('config/env.ts');
-    // Collector extracted to config/keys.ts (collectNumberedKeys); env.ts must
-    // still wire the OPENCODE pool through it (pooling guard, see above).
-    expect(code).toContain("collectNumberedKeys(raw, 'OPENCODE')");
-    expect(code).toContain('opencodeKeys: string[]');
-  });
-
-  it('env.ts includes free in default WALK_ALIAS', () => {
-    const code = src('config/env.ts');
-    expect(code).toContain("default('mst/free,free')");
-  });
-});

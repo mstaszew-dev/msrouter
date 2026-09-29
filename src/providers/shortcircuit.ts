@@ -3,7 +3,7 @@
  * chain-routing.ts 2026-09-18 to respect the 250-line module budget).
  * Case rules: provider prefix is matched case-insensitively; the model id
  * keeps the caller's case (SambaNova ships mixed-case 'Meta/Llama-...'),
- * except opencode/opencodego which are lowercased upstream by contract.
+ * except opencodego which is lowercased upstream by contract.
  */
 
 import { env } from '../config/env.js';
@@ -20,9 +20,6 @@ export function shortCircuit(model: string): { provider: ChainProvider; model: s
   const restLower = rest.toLowerCase();
   if (restLower.startsWith('openai/')) {
     return { provider: 'openai', model: rest.slice('openai/'.length) };
-  }
-  if (restLower.startsWith('opencode/')) {
-    return { provider: 'opencode', model: rest.slice('opencode/'.length).toLowerCase() };
   }
   if (restLower.startsWith('opencodego/')) {
     return { provider: 'opencodego', model: rest.slice('opencodego/'.length).toLowerCase() };

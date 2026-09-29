@@ -4,9 +4,8 @@
  * /v1/models handler and the GraphQL `models` query.
  */
 
-import { config, env } from '../config/env.js';
+import { env } from '../config/env.js';
 import { extraDefaultModels } from '../providers/extras.js';
-import { opencodePoolModels } from '../providers/instances.js';
 
 /**
  * Resolve the requested model. A known model (a walk alias, a `direct:` prefix,
@@ -25,13 +24,10 @@ export function resolveModel(requested: string): string {
     cfg.OPENAI_MODEL,
     cfg.ZAI_MODEL,
     cfg.TOKENROUTER_MODEL,
-    cfg.OPENCODE_MODEL,
     cfg.OPENCODEGO_MODEL,
     cfg.LOCAL_MODEL,
     cfg.LMSTUDIO_MODEL,
     cfg.LAPTOP_MODEL,
-    // Live OpenCode pool slots must pass through verbatim, not alias-rewrite.
-    ...opencodePoolModels(cfg),
     // Configured extra free-tier defaults (groq/..., sambanova Meta/...).
     ...extraDefaultModels().map((x) => x.model),
   ]);
@@ -63,22 +59,5 @@ export function buildModelList(): Array<{ id: string; object: string; owned_by: 
   if (cfg.LOCAL_ENABLED) data.push({ id: cfg.LOCAL_MODEL, object: 'model', owned_by: 'local' });
   if (cfg.LMSTUDIO_ENABLED) data.push({ id: cfg.LMSTUDIO_MODEL, object: 'model', owned_by: 'lmstudio' });
   if (cfg.LAPTOP_ENABLED) data.push({ id: cfg.LAPTOP_MODEL, object: 'model', owned_by: 'laptop' });
-  if (config().opencodeKeys.length > 0) {
-    // Mirror the pool filter (instances.ts): an emptied OPENCODE_*_MODEL slot
-    // is gone-for-gateway and must not be advertised as an empty id.
-    const ocModels: ReadonlyArray<readonly [string, string]> = [
-      [cfg.OPENCODE_MODEL, 'opencode-bigpickle'],
-      [cfg.OPENCODE_NEMOTRON_MODEL, 'opencode-nemotron'],
-      [cfg.OPENCODE_DEEPSEEK_FLASH_MODEL, 'opencode-deepseek-flash'],
-      [cfg.OPENCODE_MIMO_MODEL, 'opencode-mimo'],
-      [cfg.OPENCODE_LAGUNA_MODEL, 'opencode-muse-spark-1.3'],
-      [cfg.OPENCODE_LING_MODEL, 'opencode-ling'],
-      [cfg.OPENCODE_QWEN_MODEL, 'opencode-muse-spark'],
-      [cfg.OPENCODE_MINIMAX_MODEL, 'opencode-nemotron-lightning'],
-    ];
-    for (const [id, owner] of ocModels) {
-      if (id.trim()) data.push({ id, object: 'model', owned_by: owner });
-    }
-  }
   return data;
 }

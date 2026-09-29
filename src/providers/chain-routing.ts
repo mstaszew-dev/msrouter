@@ -5,15 +5,15 @@
  *
  * A RoutingEntry is one entry in the flat adaptive-rotation queue: which
  * provider, which model, which key slot. The order here is the env-declared
- * initial order (OpenRouter keys, then OpenAI, then ZAI, then OpenCode
- * triples). The chain wraps the result in a RotationQueue which reorders on
+ * initial order (OpenRouter keys, then single-key providers, then extras).
+ * The chain wraps the result in a RotationQueue which reorders on
  * KEY_FAILURE.
  */
 
 import { env } from '../config/env.js';
 
 import { extraRoutingEntries, isExtraProvider, type ExtraProviderId } from './extras.js';
-import { opencodePoolModels, type Providers } from './instances.js';
+import { type Providers } from './instances.js';
 import { withFree } from './openrouter.js';
 import type { ChatRequestBody, Provider, ProviderCallResult } from './types.js';
 
@@ -25,7 +25,6 @@ export interface RoutingEntry {
     | 'openai'
     | 'zai'
     | 'tokenrouter'
-    | 'opencode'
     | 'opencodego'
     | 'local'
     | 'lmstudio'
@@ -83,15 +82,7 @@ export async function dispatchProvider(
   if (entry.provider === 'openrouter') {
     return p.attempt(body, signal, { model, keyIndex: entry.attemptIndex });
   }
-  if (entry.provider === 'opencode') {
-    return p.attempt(body, signal, { model, tripleIndex: entry.attemptIndex });
-  }
   return p.attempt(body, signal, { model });
-}
-
-/** Count OpenCode triples whose model matches (for direct:opencode/<model>). */
-export function dispatchProviderCount(providers: Providers, model: string): number {
-  return providers.opencode.queueSnapshot().filter((t) => t.model === model).length;
 }
 
 /** Provider id union used by shortCircuit + runSingle. */
@@ -104,8 +95,8 @@ export function providerFor(providers: Providers, id: ChainProvider): Provider {
 
 /**
  * Build the initial flat routing-entry list from env-declared order:
- *   OpenRouter keys -> OpenAI -> ZAI -> OpenCode triples (model-major,
- *   key-minor) -> local (when LOCAL_ENABLED) -> lmstudio (when LMSTUDIO_ENABLED).
+ *   OpenRouter keys -> OpenAI -> ZAI -> TokenRouter -> OpenCodeGo ->
+ *   extras -> local (when LOCAL_ENABLED) -> lmstudio (when LMSTUDIO_ENABLED).
  * Unavailable providers are skipped.
  *
  * Local providers (llama-server, LM Studio) come LAST on purpose: remote free
@@ -146,20 +137,6 @@ export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
       model: e.TOKENROUTER_MODEL,
       attemptIndex: 0,
     });
-  }
-  const oc = providers.opencode;
-  if (oc.available) {
-    const snapshot = oc.queueSnapshot();
-    for (let t = 0; t < snapshot.length; t++) {
-      const triple = snapshot[t]!;
-      // Include model in label for uniqueness (multiple models per key)
-      list.push({
-        provider: 'opencode',
-        label: `opencode[key${triple.keyIdx + 1}/${triple.model}]`,
-        model: triple.model,
-        attemptIndex: t,
-      });
-    }
   }
   // OpenCode Go: single-key sibling of the OPENCODE pool (same vendor
   // family), routed after the OPENCODE triples.
@@ -206,17 +183,13 @@ export function isProviderDefaultModel(model: string): boolean {
     model === e.OPENAI_MODEL ||
     model === e.ZAI_MODEL ||
     model === e.TOKENROUTER_MODEL ||
-    model === e.OPENCODE_MODEL ||
     model === e.OPENCODEGO_MODEL ||
     model === e.LOCAL_MODEL ||
     model === e.LMSTUDIO_MODEL ||
     model === e.LAPTOP_MODEL ||
     // Extra free-tier defaults (groq llama-..., sambanova Meta/Llama-...) must
     // not be FORCE_FREE-rewritten either.
-    extraRoutingEntries().some((entry) => entry.model === model) ||
-    // Any live OpenCode pool slot (big-pickle, nemotron-3-ultra-free, ...)
-    // must bypass the FORCE_FREE :free rewrite on the explicit-model path.
-    opencodePoolModels(e).includes(model)
+    extraRoutingEntries().some((entry) => entry.model === model)
   );
 }
 

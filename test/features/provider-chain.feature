@@ -42,7 +42,6 @@ Feature: Provider chain failover
     Examples:
       | model                     | provider   |
       | direct:openai/gpt-4o-mini | openai     |
-      | direct:opencode/big-pickle| opencode   |
       | direct:zai/glm-4.6        | zai        |
       | direct:glm-4.6            | zai        |
 

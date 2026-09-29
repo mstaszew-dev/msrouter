@@ -67,25 +67,6 @@ const schema = z.object({
     .default('https://mstro-travelmate-p215-52.taila0a683.ts.net/v1'),
   LAPTOP_MODEL: z.string().default('qwen35-2b-64k'),
   LAPTOP_TIMEOUT_MS: z.coerce.number().int().positive().default(1_800_000),
-  OPENCODE_API_KEY: z.string().optional(),
-  OPENCODE_BASE_URL: z.string().url().default('https://opencode.ai/zen/v1'),
-  // /zen/v1 free tier requires x-opencode-session (factory auto-generates a
-  // per-process id; OPENCODE_SESSION_ID pins it for stable attribution).
-  OPENCODE_SESSION_ID: z.string().optional(),
-  OPENCODE_MODEL: z.string().default('big-pickle'),
-  // OpenCode Zen free models (all share OPENCODE_API_KEY / OPENCODE_BASE_URL)
-  OPENCODE_NEMOTRON_MODEL: z.string().default('nemotron-3-ultra-free'),
-  OPENCODE_DEEPSEEK_FLASH_MODEL: z.string().default('deepseek-v4-flash-free'),
-  OPENCODE_MIMO_MODEL: z.string().default('mimo-v2.5-free'),
-  OPENCODE_LAGUNA_MODEL: z.string().default('muse-spark-1.3-contributor-free'),
-  // 2026-08-31 reshuffle: qwen3.6-plus/minimax-m3/north-mini-code-free gone;
-  // kimi-k3/gemini-3.7-flash/grok-4.6/muse-spark-1.2 demand payment. Var
-  // names are historical; they carry the strongest surviving free models.
-  // 2026-09-11 audit: laguna-s-2.1-free removed upstream (401 ModelError) -
-  // LAGUNA slot now carries muse-spark-1.3-contributor-free (verified live).
-  OPENCODE_MINIMAX_MODEL: z.string().default('nemotron-3.5-lightning-free'),
-  OPENCODE_QWEN_MODEL: z.string().default('muse-spark-1.2-contributor-free'),
-  OPENCODE_LING_MODEL: z.string().default('ling-3.0-flash-fin-free'),
 
   // Slack (Director surface)
   SLACK_BOT_TOKEN: z.string().optional(),
@@ -181,8 +162,6 @@ export interface ResolvedConfig {
   env: Env;
   /** OpenRouter keys in stable numeric order (deduped, trimmed). */
   openrouterKeys: string[];
-  /** OpenCode Zen keys in stable numeric order (deduped, trimmed). */
-  opencodeKeys: string[];
 }
 
 let cached: ResolvedConfig | undefined;
@@ -198,12 +177,10 @@ export function loadEnv(raw: NodeJS.ProcessEnv = process.env): ResolvedConfig {
     throw new Error(`Invalid environment configuration: ${parsed.error.message}`);
   }
   const openrouterKeys = collectNumberedKeys(raw, 'OPENROUTER');
-  const opencodeKeys = collectNumberedKeys(raw, 'OPENCODE');
 
   // Production safety: at least one provider must be configured, or the
   // gateway has nothing to route to.
   const hasOpenRouter = openrouterKeys.length > 0;
-  const hasOpenCode = opencodeKeys.length > 0;
   const hasOpenCodeGo = !!parsed.data.OPENCODEGO_API_KEY;
   // Extra free-tier providers count when key AND model are set (mirrors
   // extraRoutingEntries gating; unorouter ships an empty default model).
@@ -218,15 +195,14 @@ export function loadEnv(raw: NodeJS.ProcessEnv = process.env): ResolvedConfig {
     !!parsed.data.OPENAI_API_KEY ||
     !!parsed.data.ZAI_API_KEY ||
     !!parsed.data.TOKENROUTER_API_KEY ||
-    hasOpenCode ||
     hasOpenCodeGo ||
     hasExtra;
   if (parsed.data.NODE_ENV === 'production' && !hasOpenRouter && !hasAnyFallback) {
     throw new Error(
-      'No provider configured: set at least one OPENROUTER_KEY* or OPENAI/ZAI/TOKENROUTER/OPENCODE/OPENCODEGO key, or an extra provider key+model (UNOROUTER/GROQ/SAMBANOVA/MISTRAL/CLOUDFLARE)',
+      'No provider configured: set at least one OPENROUTER_KEY* or OPENAI/ZAI/TOKENROUTER/OPENCODEGO key, or an extra provider key+model (UNOROUTER/GROQ/SAMBANOVA/MISTRAL/CLOUDFLARE)',
     );
   }
-  cached = { env: parsed.data, openrouterKeys, opencodeKeys };
+  cached = { env: parsed.data, openrouterKeys };
   return cached;
 }
 

@@ -56,14 +56,6 @@ describe('loadEnv - OpenCode Go config', () => {
     expect(cfg.env.OPENCODEGO_BASE_URL).toBe('https://opencode.ai/zen/go/v1');
     expect(cfg.env.OPENCODEGO_MODEL).toBe('glm-5.3-flash');
   });
-
-  it('does NOT swallow OPENCODEGO_* into the OPENCODE numbered-key pool', () => {
-    const cfg = loadEnv({
-      OPENCODEGO_API_KEY: 'sk-opencodego-test',
-      OPENCODE_KEY1: 'sk-opencode-test',
-    });
-    expect(cfg.opencodeKeys).toEqual(['sk-opencode-test']);
-  });
 });
 
 describe('loadEnv - ZAI (GLM) config', () => {
@@ -183,7 +175,7 @@ describe('loadEnv - Director config', () => {
   it('accepts overrides for all DIRECTOR_* vars', () => {
     const cfg = loadEnv({
       DIRECTOR_INTERVAL_MINUTES: '15',
-      DIRECTOR_MODEL: 'direct:opencode/big-pickle',
+      DIRECTOR_MODEL: 'direct:groq/openai/gpt-oss-120b',
       DIRECTOR_CAMPAIGN_DIR: '/tmp/campaign',
       DIRECTOR_OPENCLAW_WORKSPACE: '/tmp/oc',
       DIRECTOR_RUNNER: '/tmp/launch',
@@ -194,94 +186,13 @@ describe('loadEnv - Director config', () => {
       DIRECTOR_RAG_DB: '/tmp/index.db',
     });
     expect(cfg.env.DIRECTOR_INTERVAL_MINUTES).toBe(15);
-    expect(cfg.env.DIRECTOR_MODEL).toBe('direct:opencode/big-pickle');
+    expect(cfg.env.DIRECTOR_MODEL).toBe('direct:groq/openai/gpt-oss-120b');
     expect(cfg.env.DIRECTOR_CAMPAIGN_DIR).toBe('/tmp/campaign');
     expect(cfg.env.DIRECTOR_CDP_URL).toBe('http://127.0.0.1:9999');
   });
 
   it('rejects a non-numeric DIRECTOR_INTERVAL_MINUTES', () => {
     expect(() => loadEnv({ DIRECTOR_INTERVAL_MINUTES: 'soon' })).toThrow(/Invalid environment/);
-  });
-});
-
-describe('loadEnv - OpenCode key pool', () => {
-  it('collects numbered OPENCODE_KEY1..N in ascending order', () => {
-    const cfg = loadEnv({
-      OPENCODE_KEY3: 'k3',
-      OPENCODE_KEY1: 'k1',
-      OPENCODE_KEY2: 'k2',
-    });
-    expect(cfg.opencodeKeys).toEqual(['k1', 'k2', 'k3']);
-  });
-
-  it('defaults every pool model to a LIVE catalog id (2026-09-11 audit)', () => {
-    // Every OPENCODE_*_MODEL default must exist in opencode's /zen/v1
-    // catalog. laguna-s-2.1-free was removed upstream (401 ModelError on
-    // every key, all day, inflating walks); its slot now carries
-    // muse-spark-1.3-contributor-free. If opencode reshuffles again, update
-    // this list from `curl /zen/v1/models`.
-    const e = loadEnv({}).env;
-    expect(e.OPENCODE_MODEL).toBe('big-pickle');
-    expect(e.OPENCODE_MINIMAX_MODEL).toBe('nemotron-3.5-lightning-free');
-    expect(e.OPENCODE_QWEN_MODEL).toBe('muse-spark-1.2-contributor-free');
-    expect(e.OPENCODE_NEMOTRON_MODEL).toBe('nemotron-3-ultra-free');
-    expect(e.OPENCODE_MIMO_MODEL).toBe('mimo-v2.5-free');
-    expect(e.OPENCODE_DEEPSEEK_FLASH_MODEL).toBe('deepseek-v4-flash-free');
-    expect(e.OPENCODE_LAGUNA_MODEL).toBe('muse-spark-1.3-contributor-free');
-    expect(e.OPENCODE_LING_MODEL).toBe('ling-3.0-flash-fin-free');
-  });
-
-  it('accepts an optional OPENCODE_SESSION_ID override (free-tier session pin)', () => {
-    // The /zen/v1 free tier rejects requests without x-opencode-session
-    // (400 MissingSessionID); the factory sends one on every pool call.
-    // OPENCODE_SESSION_ID pins it for stable attribution, else per-process UUID.
-    expect(loadEnv({}).env.OPENCODE_SESSION_ID).toBeUndefined();
-    expect(loadEnv({ OPENCODE_SESSION_ID: 'stable-session' }).env.OPENCODE_SESSION_ID).toBe(
-      'stable-session',
-    );
-  });
-
-  it('dedupes OpenCode keys', () => {
-    const cfg = loadEnv({
-      OPENCODE_KEY1: 'dup',
-      OPENCODE_KEY2: 'dup',
-    });
-    expect(cfg.opencodeKeys).toEqual(['dup']);
-  });
-
-  it('appends OPENCODE_API_KEY last if not already present', () => {
-    const cfg = loadEnv({
-      OPENCODE_KEY1: 'k1',
-      OPENCODE_API_KEY: 'legacy',
-    });
-    expect(cfg.opencodeKeys).toEqual(['k1', 'legacy']);
-  });
-
-  it('does not append OPENCODE_API_KEY if it duplicates a numbered key', () => {
-    const cfg = loadEnv({
-      OPENCODE_KEY1: 'same',
-      OPENCODE_API_KEY: 'same',
-    });
-    expect(cfg.opencodeKeys).toEqual(['same']);
-  });
-
-  it('falls back to OPENCODE_API_KEY alone when no numbered keys', () => {
-    const cfg = loadEnv({ OPENCODE_API_KEY: 'only' });
-    expect(cfg.opencodeKeys).toEqual(['only']);
-  });
-
-  it('returns empty array when no OpenCode keys configured', () => {
-    const cfg = loadEnv({});
-    expect(cfg.opencodeKeys).toEqual([]);
-  });
-
-  it('ignores blank/whitespace values', () => {
-    const cfg = loadEnv({
-      OPENCODE_KEY1: '   ',
-      OPENCODE_KEY2: 'k2',
-      OPENCODE_API_KEY: '  ',
-    });
-    expect(cfg.opencodeKeys).toEqual(['k2']);
   });
 });
 

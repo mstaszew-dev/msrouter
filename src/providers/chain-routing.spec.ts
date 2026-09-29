@@ -2,11 +2,9 @@
  * Tests for chain-routing: shortCircuit parsing and buildRoutingEntries.
  */
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
-import { loadEnv } from '../config/env.js';
-
-import { isProviderDefaultModel, shortCircuit } from './chain-routing.js';
+import { shortCircuit } from './chain-routing.js';
 import { withFree } from './openrouter.js';
 
 describe('shortCircuit', () => {
@@ -19,11 +17,6 @@ describe('shortCircuit', () => {
   it('parses direct:openai/<model>', () => {
     const r = shortCircuit('direct:openai/gpt-4o-mini');
     expect(r).toEqual({ provider: 'openai', model: 'gpt-4o-mini' });
-  });
-
-  it('parses direct:opencode/<model> (lowercased)', () => {
-    const r = shortCircuit('direct:opencode/Big-Pickle');
-    expect(r).toEqual({ provider: 'opencode', model: 'big-pickle' });
   });
 
   it('parses direct:zai/<model> and STRIPS the zai/ prefix', () => {
@@ -102,31 +95,6 @@ describe('shortCircuit', () => {
     // rather than being pinned to a nonexistent provider.
     expect(shortCircuit('direct:unknown-provider/some-model')).toBeNull();
     expect(shortCircuit('direct:/')).toBeNull();
-  });
-});
-
-describe('isProviderDefaultModel - opencode pool variants', () => {
-  afterEach(() => loadEnv({}));
-
-  it('recognizes the opencode primary model (big-pickle)', () => {
-    loadEnv({ OPENCODE_KEY1: 'sk-opencode-test-1', OPENCODE_MODEL: 'big-pickle' });
-    expect(isProviderDefaultModel('big-pickle')).toBe(true);
-  });
-
-  it('recognizes a configured opencode NEMOTRON pool model (no :free rewrite)', () => {
-    // An explicit nemotron-3-ultra-free request must reach the pool triple
-    // with the bare id; withFree() would otherwise mangle it into
-    // "nemotron-3-ultra-free:free" which no upstream accepts.
-    loadEnv({
-      OPENCODE_KEY1: 'sk-opencode-test-1',
-      OPENCODE_NEMOTRON_MODEL: 'nemotron-3-ultra-free',
-    });
-    expect(isProviderDefaultModel('nemotron-3-ultra-free')).toBe(true);
-  });
-
-  it('does not claim a retired (emptied) opencode slot', () => {
-    loadEnv({ OPENCODE_NEMOTRON_MODEL: '' });
-    expect(isProviderDefaultModel('nemotron-3-ultra-free')).toBe(false);
   });
 });
 

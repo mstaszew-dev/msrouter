@@ -20,7 +20,6 @@ import { env } from '../config/env.js';
 
 import { buildRoutingEntries,
   dispatchProvider,
-  dispatchProviderCount,
   isOverWalkDeadline,
   isProviderDefaultModel,
   shortCircuit,
@@ -78,14 +77,9 @@ export class ProviderChain {
       throw new NoProviderAvailableError(`${provider}: not configured`);
     }
     const failures: string[] = [];
-    // For openrouter direct, iterate keys; opencode, matching triples;
-    // single-key providers, one attempt with retries.
-    const maxIdx =
-      provider === 'openrouter'
-        ? this.providers.openrouter.keyCount
-        : provider === 'opencode'
-          ? Math.max(1, this.opencodeTripleCountForModel(model))
-          : 1;
+    // For openrouter direct, iterate keys; single-key providers, one attempt
+    // with retries.
+    const maxIdx = provider === 'openrouter' ? this.providers.openrouter.keyCount : 1;
     for (let i = 0; i < maxIdx; i++) {
       if (signal.aborted) throw new NoProviderAvailableError('aborted');
       const res = await this.tryEntry(
@@ -228,11 +222,6 @@ export class ProviderChain {
       break;
     }
     return undefined;
-  }
-
-  /** Count OpenCode triples whose model matches (for direct:opencode/<model>). */
-  private opencodeTripleCountForModel(model: string): number {
-    return dispatchProviderCount(this.providers, model);
   }
 
   /** White-box: current routing-entry queue order (for tests/debug). */

@@ -35,7 +35,6 @@ function main(): void {
         openai: providers.openai.available,
         zai: providers.zai.available,
         tokenrouter: providers.tokenrouter.available,
-        opencode: providers.opencode.available,
         opencodego: providers.opencodego.available,
         laptop: env.LAPTOP_ENABLED,
       },
