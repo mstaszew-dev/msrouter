@@ -45,7 +45,10 @@ vi.mock('./restart.js', async (importOriginal) => {
     startWorkerInIterm: vi.fn(),
     startKafkaInIterm: itermSpies.startKafkaInIterm,
     stopWorker: vi.fn(async () => ({ killed: [] })),
-    restartWorker: vi.fn(async () => ({ iterm: true, state: { pids: [], running: true, orphaned: false } })),
+    restartWorker: vi.fn(async () => ({
+      iterm: true,
+      state: { pids: [], running: true, orphaned: false },
+    })),
     rotateVpnIp: vi.fn(async () => false),
   };
 });
@@ -147,8 +150,6 @@ function nullSurface(): DirectorSurface {
     flushOutbox: vi.fn(async () => 0),
   };
 }
-
-
 
 describe('DirectorLoop.runOnce', () => {
   it('observes, classifies, and records the run in the checkpoint', async () => {
@@ -408,7 +409,11 @@ describe('ensureKafkaRunning supervision', () => {
     itermSpies.isRunningInIterm.mockReturnValue(true);
   });
 
-  function kafkaLoop(stateDir: string, campaign: string, envOverrides: Record<string, unknown> = {}) {
+  function kafkaLoop(
+    stateDir: string,
+    campaign: string,
+    envOverrides: Record<string, unknown> = {},
+  ) {
     return new DirectorLoop({
       env: makeEnv({
         KAFKA_ENABLED: true,
@@ -417,7 +422,12 @@ describe('ensureKafkaRunning supervision', () => {
         DIRECTOR_LEDGER: join(stateDir, 'l.jsonl'),
         ...envOverrides,
       }) as never,
-      chain: { handle: vi.fn(async () => ({ response: new Response('{"choices":[{"message":{"content":"{\\"patches\\":[]}"}}]}'), servedBy: {} })) } as never,
+      chain: {
+        handle: vi.fn(async () => ({
+          response: new Response('{"choices":[{"message":{"content":"{\\"patches\\":[]}"}}]}'),
+          servedBy: {},
+        })),
+      } as never,
       surface: nullSurface(),
       log: silent,
       checkpointPath: join(stateDir, 'cp.json'),
@@ -425,24 +435,18 @@ describe('ensureKafkaRunning supervision', () => {
   }
 
   function fakeExecStatus(ok: boolean) {
-    execFileMock.mockImplementation(
-      ((...cbArgs: unknown[]) => {
-        const cb = cbArgs[3] as (
-          err: Error | null,
-          out?: { stdout: string; stderr: string },
-        ) => void;
-        if ((cbArgs[1] as string[])[1] === 'status') {
-          if (ok) cb(null, { stdout: '[ok] running', stderr: '' });
-          else cb(new Error('kafka not running'));
-        } else {
-          cb(null, { stdout: '', stderr: '' });
-        }
-      }) as never,
-    );
+    execFileMock.mockImplementation(((...cbArgs: unknown[]) => {
+      const cb = cbArgs[3] as (err: Error | null, out?: { stdout: string; stderr: string }) => void;
+      if ((cbArgs[1] as string[])[1] === 'status') {
+        if (ok) cb(null, { stdout: '[ok] running', stderr: '' });
+        else cb(new Error('kafka not running'));
+      } else {
+        cb(null, { stdout: '', stderr: '' });
+      }
+    }) as never);
   }
 
-  const subsCalled = () =>
-    execFileMock.mock.calls.map((c) => ((c[1] as string[]) ?? [])[1]);
+  const subsCalled = () => execFileMock.mock.calls.map((c) => ((c[1] as string[]) ?? [])[1]);
 
   it('does nothing when the broker is up', async () => {
     fakeExecStatus(true);
@@ -509,7 +513,12 @@ describe('ensureKafkaRunning headless failure arm', () => {
         DIRECTOR_CAMPAIGN_DIR: campaign,
         DIRECTOR_LEDGER: join(stateDir, 'l.jsonl'),
       }) as never,
-      chain: { handle: vi.fn(async () => ({ response: new Response('{"choices":[{"message":{"content":"{\\"patches\\":[]}"}}]}'), servedBy: {} })) } as never,
+      chain: {
+        handle: vi.fn(async () => ({
+          response: new Response('{"choices":[{"message":{"content":"{\\"patches\\":[]}"}}]}'),
+          servedBy: {},
+        })),
+      } as never,
       surface: nullSurface(),
       log: silent,
       checkpointPath: join(stateDir, 'cp.json'),
@@ -524,21 +533,16 @@ describe('ensureKafkaRunning headless failure arm', () => {
   });
 
   it('warns and returns false when headless start-or-init fails', async () => {
-    execFileMock.mockImplementation(
-      ((...cbArgs: unknown[]) => {
-        const cb = cbArgs[3] as (
-          err: Error | null,
-          out?: { stdout: string; stderr: string },
-        ) => void;
-        if ((cbArgs[1] as string[])[1] === 'status') {
-          cb(new Error('kafka not running'));
-        } else if ((cbArgs[1] as string[])[1] === 'start-or-init') {
-          cb(new Error('broker did not become ready'));
-        } else {
-          cb(null, { stdout: '', stderr: '' });
-        }
-      }) as never,
-    );
+    execFileMock.mockImplementation(((...cbArgs: unknown[]) => {
+      const cb = cbArgs[3] as (err: Error | null, out?: { stdout: string; stderr: string }) => void;
+      if ((cbArgs[1] as string[])[1] === 'status') {
+        cb(new Error('kafka not running'));
+      } else if ((cbArgs[1] as string[])[1] === 'start-or-init') {
+        cb(new Error('broker did not become ready'));
+      } else {
+        cb(null, { stdout: '', stderr: '' });
+      }
+    }) as never);
     const stateDir = mkdtempSync(join(tmpdir(), 'director-state-'));
     await expect(
       kafkaLoop2(stateDir, makeCampaign()).runOnce(new AbortController().signal),
@@ -550,7 +554,11 @@ describe('ensureKafkaRunning headless failure arm', () => {
 });
 
 describe('DIRECTOR_AUTOSTART=false: observe-only supervision', () => {
-  function autostartLoop(stateDir: string, campaign: string, envOver: Record<string, unknown> = {}) {
+  function autostartLoop(
+    stateDir: string,
+    campaign: string,
+    envOver: Record<string, unknown> = {},
+  ) {
     return new DirectorLoop({
       env: makeEnv({
         DIRECTOR_AUTOSTART: false,
@@ -636,7 +644,7 @@ describe('DIRECTOR_AUTOSTART=false: observe-only supervision', () => {
       }) as never,
       chain: {
         handle: vi.fn(async () => ({
-          response: new Response('{"choices":[{"message":{"content":"{\"patches\":[]}"}}]}'),
+          response: new Response('{"choices":[{"message":{"content":"{\\\"patches\\":[]}"}}]}'),
           servedBy: {},
         })),
       } as never,
@@ -644,8 +652,8 @@ describe('DIRECTOR_AUTOSTART=false: observe-only supervision', () => {
       log: silent,
       checkpointPath: join(stateDir, 'cp.json'),
     });
-    vi.mocked(ensureCdpRunning).mockClear();
-    await loop.runOnce();
+    vi.mocked(ensureCdpRunning).mock.calls.length = 0;
+    await loop.runOnce(new AbortController().signal);
     expect(vi.mocked(ensureCdpRunning)).not.toHaveBeenCalled();
   });
 
@@ -659,7 +667,7 @@ describe('DIRECTOR_AUTOSTART=false: observe-only supervision', () => {
       }) as never,
       chain: {
         handle: vi.fn(async () => ({
-          response: new Response('{"choices":[{"message":{"content":"{\"patches\":[]}"}}]}'),
+          response: new Response('{"choices":[{"message":{"content":"{\\\"patches\\":[]}"}}]}'),
           servedBy: {},
         })),
       } as never,
@@ -667,8 +675,8 @@ describe('DIRECTOR_AUTOSTART=false: observe-only supervision', () => {
       log: silent,
       checkpointPath: join(stateDir, 'cp.json'),
     });
-    vi.mocked(ensureCdpRunning).mockClear();
-    await loop.runOnce();
+    vi.mocked(ensureCdpRunning).mock.calls.length = 0;
+    await loop.runOnce(new AbortController().signal);
     expect(vi.mocked(ensureCdpRunning)).toHaveBeenCalledTimes(1);
   });
 

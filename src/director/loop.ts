@@ -57,7 +57,6 @@ function autostartEnabled(env: Env): boolean {
   return env.DIRECTOR_AUTOSTART !== false;
 }
 
-
 const MODULE_DIR = dirname(new URL(import.meta.url).pathname);
 
 function readDirectorPrompt(): string {
@@ -128,7 +127,10 @@ export class DirectorLoop {
     try {
       await kafkaProduce('director-events', key, value, this.kafkaOpts);
     } catch (e) {
-      this.opts.log.warn({ err: e instanceof Error ? e.message : String(e), key }, 'kafka publish failed');
+      this.opts.log.warn(
+        { err: e instanceof Error ? e.message : String(e), key },
+        'kafka publish failed',
+      );
     }
   }
 
@@ -201,7 +203,7 @@ export class DirectorLoop {
     }
   }
 
-  /** Run the read-only agent loop and post proposals to Slack. Returns count proposed. */  private async proposePatches(
+  /** Run the read-only agent loop and post proposals to Slack. Returns count proposed. */ private async proposePatches(
     actionable: DecisionClassification[],
     snapshot: { tracker: { submitted: number; target: number } },
     e: Env,
@@ -556,10 +558,7 @@ export class DirectorLoop {
           submitted: snapshot.tracker.submitted,
           target: snapshot.tracker.target,
         });
-        this.opts.log.debug(
-          { subChanged, observationChanged },
-          'Observation event published',
-        );
+        this.opts.log.debug({ subChanged, observationChanged }, 'Observation event published');
       }
 
       // Auto-rebuild RAG when new submissions are detected
