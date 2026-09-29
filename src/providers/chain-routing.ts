@@ -34,7 +34,7 @@ export interface RoutingEntry {
   label: string;
   /** Model id to send upstream (alias substitution applied at handle time). */
   model: string;
-  /** OpenRouter: logical key index. OpenCode: triple index. Single-key: 0. */
+  /** OpenRouter: logical key index. Single-key providers: 0. */
   attemptIndex: number;
 }
 
@@ -67,7 +67,7 @@ export function isOverWalkDeadline(
 }
 
 /** Dispatch one attempt to the right provider with the right opts shape
- *  (openrouter: keyIndex; opencode: tripleIndex; others: model only). */
+ *  (openrouter: keyIndex; others: model only). */
 export async function dispatchProvider(
   providers: Providers,
   entry: RoutingEntry,
@@ -138,8 +138,8 @@ export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
       attemptIndex: 0,
     });
   }
-  // OpenCode Go: single-key sibling of the OPENCODE pool (same vendor
-  // family), routed after the OPENCODE triples.
+  // OpenCode Go: single-key glm-5.3-flash provider (same vendor family as
+  // the removed zen pool; /zen/go/v1 works from any client).
   if (providers.opencodego.available) {
     list.push({
       provider: 'opencodego',
@@ -173,7 +173,7 @@ export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
 
 /**
  * True when the model id is a configured per-provider default (e.g. the
- * TokenRouter z-ai/glm-5.3-free, ZAI glm-4.6). Such ids are advertised verbatim in
+ * TokenRouter z-ai/glm-5.3-free, ZAI glm-5.3-flash). Such ids are advertised verbatim in
  * /v1/models and accepted by resolveModel, so the explicit-model path must not
  * FORCE_FREE-rewrite them into an id no upstream accepts ('z-ai/glm-5.3-free:free').
  */

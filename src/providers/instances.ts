@@ -1,5 +1,5 @@
 /** Provider factory: builds the concrete providers from validated env. Keeps
- *  construction in one place so main.ts / worker.ts and tests all wire the same.
+ *  construction in one place so main.ts and tests all wire the same.
  *  (The OpenCode /zen/v1 pooled provider was removed 2026-09-18: every model
  *  403s FreeTierError for non-OpenCode clients; OPENCODEGO /zen/go/v1 stays.) */
 
@@ -22,7 +22,7 @@ export interface Providers {
   zai: SingleKeyProvider;
   /** TokenRouter (tokenrouter.com): OpenAI-compatible single-key aggregator. */ tokenrouter: SingleKeyProvider;
   /** OpenCode Go ("go" endpoint): single-key provider for glm-5.3-flash.
-   *  Distinct key pool from OPENCODE_*; routed after the OPENCODE triples. */
+   *  /zen/go/v1 works from any client, unlike the removed /zen/v1 pool. */
   opencodego: SingleKeyProvider;
   /** Extra free-tier single-key providers (2026-09-18): unorouter, groq,
    *  sambanova, mistral, cloudflare. Entries gated on key+model. */
@@ -76,8 +76,8 @@ export function buildProviders(log: Logger): Providers {
       timeoutMs,
       log,
     ),
-    // OpenCode Go: single-key provider (distinct OPENCODEGO_* pool), routed
-    // after the OPENCODE triples in chain-routing.ts (same vendor family).
+    // OpenCode Go: single-key provider (distinct OPENCODEGO_* pool); routed
+    // after tokenrouter in chain-routing.ts.
     // The /go endpoint requires x-opencode-session: the factory auto-generates
     // a stable per-process id (OPENCODEGO_SESSION_ID overrides it).
     opencodego: new SingleKeyProvider(

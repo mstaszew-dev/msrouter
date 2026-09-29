@@ -29,3 +29,6 @@ src/director/rag/htmlcov/
 web/node_modules/
 web/dist/
 web/coverage/
+
+# Test-run artifacts of the tilde-expansion spec (never commit a literal ~ dir)
+~/

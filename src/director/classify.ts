@@ -3,8 +3,9 @@
  * Each rule inspects the recentEvents in the snapshot and emits zero or more
  * DecisionClassifications. The propose() step later turns these into patches.
  *
- * Rules mirror the campaign's existing policy (hard-negative titles from the retired score_candidate.py (kept:
- * titles, the 60-day dedupe contract, and observed portal-error patterns).
+ * Rules mirror the campaign's existing policy (hard-negative titles inherited
+ * from the retired score_candidate.py - kept because they encode real skip
+ * lessons - plus the 60-day dedupe contract and observed portal-error patterns).
  */
 
 import { env } from '../config/env.js';

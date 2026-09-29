@@ -100,7 +100,7 @@ const schema = z.object({
   // Demote after N consecutive successes (local tail must not monopolize).
   SUCCESS_DEMOTE_LIMIT: z.coerce.number().int().positive().default(5),
 
-  // Director agent (separate worker: `npm run director-worker`)
+  // Director agent (observe-only supervisor)
   // Minutes between Director observation cycles. -1 disables.
   DIRECTOR_INTERVAL_MINUTES: z.coerce.number().int().default(1),
   // Model the Director uses for proposal drafting. Empty -> WALK_ALIAS[0] at runtime.

@@ -59,9 +59,9 @@ describe('loadEnv - OpenCode Go config', () => {
 });
 
 describe('loadEnv - ZAI (GLM) config', () => {
-  it('defaults ZAI to the intl endpoint and the coding-plan glm-5.3-flash', () => {
+  it('defaults ZAI to the coding-plan endpoint and glm-5.3-flash', () => {
     const cfg = loadEnv({});
-    expect(cfg.env.ZAI_BASE_URL).toBe('https://api.z.ai/api/paas/v4');
+    expect(cfg.env.ZAI_BASE_URL).toBe('https://api.z.ai/api/coding/paas/v4');
     expect(cfg.env.ZAI_MODEL).toBe('glm-5.3-flash');
     expect(cfg.env.ZAI_API_KEY).toBeUndefined();
   });

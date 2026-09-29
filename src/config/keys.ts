@@ -1,6 +1,6 @@
 /**
  * Numbered-key pool collectors (OPENROUTER_KEY1..N (the OpenCode pool was removed 2026-09-18)). One
- * generic implementation shared by both pooled providers; extracted from
+ * generic implementation used by the OpenRouter key pool; extracted from
  * env.ts so env.ts stays under its 250-line module-size budget.
  */
 
@@ -13,7 +13,7 @@ type RawEnv = Record<string, string | undefined>;
  * Blank/whitespace values are ignored.
  */
 export function collectNumberedKeys(raw: RawEnv, prefix: string): string[] {
-  // prefix is an internal literal ('OPENROUTER'/'OPENCODE'); it is interpolated
+  // prefix is an internal literal ('OPENROUTER'); it is interpolated
   // unescaped, so it must stay regex-safe.
   const re = new RegExp(`^${prefix}_KEY(\\d+)$`, 'i');
   const numbered: Array<{ n: number; key: string }> = [];

@@ -100,10 +100,9 @@ template). The load-bearing groups:
   `DIRECTOR_OVERRIDES` (`~` expanded), `DIRECTOR_RUNNER` (python campaign
   agent), Slack vars.
 
-Timeout stack, sized additively: walk deadline 300s + LM Studio first try 300s
-
-- laptop 1800s = 2400s, which is exactly the python campaign agent's
-  `TIMEOUT_SECONDS` (its hard deadline is 2520s).
+Timeout stack, sized additively: walk deadline 300s + LM Studio first try
+300s + laptop 1800s = 2400s, which is exactly the python campaign agent's
+`TIMEOUT_SECONDS` (its hard deadline is 2520s).
 
 ## Layout
 

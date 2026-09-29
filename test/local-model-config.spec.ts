@@ -102,8 +102,10 @@ describe.skipIf(!ON_DEV_MACHINE)(
     // no longer pinned.)
     const REQUIRED_PROVIDERS = [
       'ab7e04f9-8a56-4473-b5bb-996b1a17df85', // OpenRouter
-      '68c67047-dc84-4e0f-80c8-b0743d2150ef', // OpenCode
       '8757853b-86fa-4d49-a17f-883d147d7891', // MSRouter (mst/free)
+      // The OpenCode zen provider (68c67047-...) was removed 2026-09-18: its
+      // /zen/v1 models 403 FreeTierError from any non-OpenCode client, zcode
+      // included.
     ];
 
     it('contains every remote custom provider id', () => {
@@ -114,16 +116,13 @@ describe.skipIf(!ON_DEV_MACHINE)(
       }
     });
 
-    it('ships the OpenCode provider with its base URL and model pool', () => {
+    it('no longer ships the dead OpenCode zen provider', () => {
       const cfg = readJson(ZCODE_CONFIG);
-      const p = (cfg['provider'] as Record<string, unknown>)[
-        '68c67047-dc84-4e0f-80c8-b0743d2150ef'
-      ] as {
-        options?: { baseURL?: string };
-        models?: Record<string, unknown>;
-      };
-      expect(p.options?.baseURL).toBe('https://opencode.ai/zen/v1');
-      expect(Object.keys(p.models ?? {})).toContain('big-pickle');
+      // /zen/v1 403s FreeTierError from any non-OpenCode client (zcode
+      // included); the provider entry was removed 2026-09-18.
+      expect(Object.keys(cfg['provider'] as Record<string, unknown>)).not.toContain(
+        '68c67047-dc84-4e0f-80c8-b0743d2150ef',
+      );
     });
 
     it('ships the MSRouter provider pointing at the local gateway (mst/free)', () => {

@@ -28,7 +28,7 @@ export const singleKeyEnvFields = {
   OPENAI_BASE_URL: z.string().url().default('https://api.openai.com/v1'),
   OPENAI_MODEL: z.string().default('gpt-4o-mini'),
   ZAI_API_KEY: z.string().optional(),
-  ZAI_BASE_URL: z.string().url().default('https://api.z.ai/api/paas/v4'),
+  ZAI_BASE_URL: z.string().url().default('https://api.z.ai/api/coding/paas/v4'),
   // Coding-plan default (verified 200 on /api/coding/paas/v4, 2026-09-18).
   ZAI_MODEL: z.string().default('glm-5.3-flash'),
   // TokenRouter (tokenrouter.com): OpenAI-compatible aggregator. Single key,
@@ -36,8 +36,9 @@ export const singleKeyEnvFields = {
   TOKENROUTER_API_KEY: z.string().optional(),
   TOKENROUTER_BASE_URL: z.string().url().default('https://api.tokenrouter.com/v1'),
   TOKENROUTER_MODEL: z.string().default('z-ai/glm-5.3-free'),
-  // OpenCode Go: single-key glm-5.3-flash provider (never routed into the
-  // OPENCODE pool; SESSION_ID feeds the x-opencode-session header).
+  // OpenCode Go: single-key glm-5.3-flash provider on /zen/go/v1 (works
+  // from any client, unlike the removed /zen/v1 pool; SESSION_ID feeds the
+  // x-opencode-session header).
   OPENCODEGO_API_KEY: z.string().optional(),
   OPENCODEGO_BASE_URL: z.string().url().default('https://opencode.ai/zen/go/v1'),
   OPENCODEGO_MODEL: z.string().default('glm-5.3-flash'),
