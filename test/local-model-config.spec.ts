@@ -47,9 +47,12 @@ const ON_DEV_MACHINE =
   existsSync(ZCODE_CONFIG) && existsSync(OPENCODE_CONFIG) && existsSync(MSROUTER_ENV);
 
 describe.skipIf(!ON_DEV_MACHINE)('constraint: the 4B on port 1235 is the only local model', () => {
-  it('msrouter .env prefers the 4b alias and points at the live llama-server port', () => {
+  it('msrouter .env keeps the 4b alias + live llama-server port, provider disabled', () => {
     const env = readFileSync(MSROUTER_ENV, 'utf8');
-    expect(env).toMatch(/^LMSTUDIO_ENABLED=true$/m);
+    // 2026-09-18: LM Studio disabled by user order (app rarely running; the
+    // laptop tailnet Ollama is the local fallback now). Base/model stay pinned
+    // so flipping the flag back on needs no other change.
+    expect(env).toMatch(/^LMSTUDIO_ENABLED=false$/m);
     expect(env).toMatch(/^LMSTUDIO_BASE_URL=http:\/\/127\.0\.0\.1:1235\/v1$/m);
     expect(env).toMatch(/^LMSTUDIO_MODEL=qwen3\.5-4b$/m);
     // The retired gemma consolidation must not come back.

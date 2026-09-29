@@ -12,6 +12,8 @@ import type { Logger } from 'pino';
 
 import { config } from '../config/env.js';
 
+import type { Extras } from './extras.js';
+import { buildExtras } from './extras.js';
 import { LmStudioProvider } from './lmstudio.js';
 import { LocalProvider } from './local.js';
 import { OpenCodeProvider } from './opencode.js';
@@ -27,6 +29,9 @@ export interface Providers {
   /** OpenCode Go ("go" endpoint): single-key provider for glm-5.3-flash.
    *  Distinct key pool from OPENCODE_*; routed after the OPENCODE triples. */
   opencodego: SingleKeyProvider;
+  /** Extra free-tier single-key providers (2026-09-18): unorouter, groq,
+   *  sambanova, mistral, cloudflare. Entries gated on key+model. */
+  extras: Extras;
   /** Local (llama-server) provider; always built, only routed when
    *  LOCAL_ENABLED=true (chain-routing gates the entry). */
   local: LocalProvider;
@@ -144,6 +149,9 @@ export function buildProviders(log: Logger): Providers {
       timeoutMs,
       log,
     ),
+    // Extra free-tier providers (unorouter/groq/sambanova/mistral/cloudflare);
+    // routed after opencodego, before the local tail (see chain-routing.ts).
+    extras: buildExtras(log),
     // Local llama-server: speaks its OpenAI-compatible /v1/chat/completions
     // endpoint (the ollama daemon is NOT in use; llama-server does not implement
     // /api/chat). Routed last when LOCAL_ENABLED=true (see chain-routing.ts) as

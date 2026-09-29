@@ -110,6 +110,8 @@ describe('constraint: source files stay under 250 lines (module size budget)', (
   const files = [
     'providers/chain.ts',
     'providers/chain-routing.ts',
+    'providers/extras.ts',
+    'providers/shortcircuit.ts',
     'providers/fetch.ts',
     'providers/openrouter.ts',
     'providers/opencode.ts',
@@ -120,9 +122,11 @@ describe('constraint: source files stay under 250 lines (module size budget)', (
     'providers/instances.ts',
     'gateway/server.ts',
     'gateway/handlers.ts',
+    'gateway/model-list.ts',
     'gateway/stream.ts',
     'gateway/validation.ts',
     'config/env.ts',
+    'config/single-key-env.ts',
     'config/keys.ts',
     'config/logger.ts',
     'common/errors.ts',
@@ -232,9 +236,9 @@ describe('constraint: short-circuit uses direct: namespace (no OpenRouter collis
   // OpenRouter uses vendor/model ids (openai/gpt-4o, google/gemma-...). A bare
   // "openai/..." must NOT be treated as a provider pin, or OpenRouter models
   // break. Provider pinning requires the "direct:" prefix. shortCircuit lives
-  // in chain-routing.ts (extracted from chain.ts).
-  it('chain-routing.ts shortCircuit requires the direct: prefix', () => {
-    const code = src('providers/chain-routing.ts');
+  // in shortcircuit.ts (extracted from chain.ts, then chain-routing.ts).
+  it('shortcircuit.ts shortCircuit requires the direct: prefix', () => {
+    const code = src('providers/shortcircuit.ts');
     expect(code).toMatch(/startsWith\('direct:'\)/);
     // And it must NOT pin on bare openai/ (regression guard).
     expect(code).not.toMatch(/m\.startsWith\('openai\/'\)/);

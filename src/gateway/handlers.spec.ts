@@ -213,3 +213,27 @@ describe('buildModelList - opencode gone-slot filtering', () => {
     expect(oc.find((m) => m.id === 'nemotron-3-ultra-free')?.owned_by).toBe('opencode-nemotron');
   });
 });
+
+describe('model-list - extra free-tier providers', () => {
+  it('advertises a configured extra default (owned_by the provider id)', () => {
+    loadEnv({ GROQ_API_KEY: 'gsk-test' });
+    const entry = buildModelList().find((m) => m.id === 'llama-3.3-70b-versatile');
+    expect(entry).toMatchObject({ owned_by: 'groq' });
+  });
+
+  it('never advertises unconfigured extras (no empty unorouter id)', () => {
+    loadEnv({});
+    const ids = buildModelList().map((m) => m.id);
+    expect(ids).not.toContain('');
+    expect(ids).not.toContain('llama-3.3-70b-versatile');
+    expect(ids).not.toContain('mistral-small-latest');
+  });
+
+  it('resolveModel passes a configured extra default through verbatim', () => {
+    loadEnv({ GROQ_API_KEY: 'gsk-test' });
+    expect(resolveModel('llama-3.3-70b-versatile')).toBe('llama-3.3-70b-versatile');
+    // Unconfigured: rewritten to the walk alias.
+    loadEnv({});
+    expect(resolveModel('llama-3.3-70b-versatile')).toBe('mst/free');
+  });
+});

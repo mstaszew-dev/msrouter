@@ -417,3 +417,17 @@ describe('initEnv', () => {
     }
   });
 });
+
+describe('loadEnv - production guard with extra providers', () => {
+  it('accepts a groq-only production config (key + model)', () => {
+    expect(() =>
+      loadEnv({ NODE_ENV: 'production', GROQ_API_KEY: 'gsk-x', GROQ_MODEL: 'llama-3.3-70b-versatile' }),
+    ).not.toThrow();
+  });
+
+  it('rejects a production config with only an empty-model extra key', () => {
+    expect(() => loadEnv({ NODE_ENV: 'production', UNOROUTER_API_KEY: 'uk-x' })).toThrow(
+      /No provider configured/,
+    );
+  });
+});

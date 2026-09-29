@@ -119,7 +119,17 @@ function makeProviders(
     return laptopResults.shift() ?? { kind: 'TRANSIENT', status: 0, message: 'laptop stub' };
   });
 
+  // Per-id extra stubs so a test can flip one provider's availability and
+  // script its attempt results without touching the others.
+  const extraStub = (id: string) => ({ id, available: false, attempt: vi.fn() });
   return {
+    extras: {
+      unorouter: extraStub('unorouter'),
+      groq: extraStub('groq'),
+      sambanova: extraStub('sambanova'),
+      mistral: extraStub('mistral'),
+      cloudflare: extraStub('cloudflare'),
+    } as never,
     openrouter: {
       id: 'openrouter',
       available: orKeys > 0,
@@ -1527,5 +1537,70 @@ describe('ProviderChain - walk deadline (WALK_DEADLINE_MS)', () => {
     // TRANSIENT never retried: not 3 x timestamp-burning hangs.
     const laptopAttempt = (p.laptop as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt;
     expect(laptopAttempt).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ProviderChain - extra free-tier providers (groq/sambanova/...)', () => {
+  const DEFAULT_ENV = {
+    NODE_ENV: 'test',
+    PORT: '8788',
+    OPENROUTER_KEY1: 'sk-or-test-key-1111',
+    FORCE_FREE: 'true',
+    SCHEDULE_INTERVAL_MINUTES: '-1',
+    UPSTREAM_TIMEOUT_MS: '5000',
+    OPENROUTER_MODELS: 'vendor/extra',
+  };
+  afterEach(() => loadEnv(DEFAULT_ENV));
+
+  it('walks into a configured extra when the legacy remotes fail', async () => {
+    loadEnv({ ...DEFAULT_ENV, GROQ_API_KEY: 'gsk-test', GROQ_MODEL: 'llama-3.3-70b-versatile' });
+    const p = makeProviders({ openrouterKeys: 1 });
+    (p.openrouter as never as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(
+      async (): Promise<ProviderCallResult> => ({
+        kind: 'KEY_FAILURE',
+        status: 429,
+        message: 'or down',
+      }),
+    );
+    (p.openai as unknown as { available: boolean }).available = false;
+    (p.zai as unknown as { available: boolean }).available = false;
+    (p.tokenrouter as unknown as { available: boolean }).available = false;
+    const groq = p.extras.groq as unknown as { available: boolean; attempt: ReturnType<typeof vi.fn> };
+    groq.available = true;
+    groq.attempt = vi.fn(async (): Promise<ProviderCallResult> => ({
+      kind: 'OK',
+      response: okResponse(),
+    }));
+    const chain = new ProviderChain(p, silentLogger);
+    const res = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
+    expect(res.servedBy.provider).toBe('groq');
+    expect(groq.attempt).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ model: 'llama-3.3-70b-versatile' }),
+    );
+  });
+
+  it('pins direct:groq/<model> as a single attempt with no fallback', async () => {
+    loadEnv({ ...DEFAULT_ENV });
+    const p = makeProviders({ openrouterKeys: 1 });
+    const groq = p.extras.groq as unknown as { available: boolean; attempt: ReturnType<typeof vi.fn> };
+    groq.available = true;
+    groq.attempt = vi.fn(async (): Promise<ProviderCallResult> => ({
+      kind: 'OK',
+      response: okResponse(),
+    }));
+    const chain = new ProviderChain(p, silentLogger);
+    const res = await chain.handle(
+      { ...baseBody, model: 'direct:groq/llama-3.3-70b-versatile' },
+      new AbortController().signal,
+    );
+    expect(res.servedBy.provider).toBe('groq');
+    expect(groq.attempt).toHaveBeenCalledTimes(1);
+    // The pin must not leak into the OpenRouter pool.
+    expect(p.openrouter.attempt).not.toHaveBeenCalled();
   });
 });

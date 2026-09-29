@@ -12,13 +12,14 @@
 
 import { env } from '../config/env.js';
 
+import { extraRoutingEntries, isExtraProvider, type ExtraProviderId } from './extras.js';
 import { opencodePoolModels, type Providers } from './instances.js';
 import { withFree } from './openrouter.js';
-import type { ChatRequestBody, ProviderCallResult } from './types.js';
+import type { ChatRequestBody, Provider, ProviderCallResult } from './types.js';
 
 /** A single flat routing entry: which provider, which model, which key slot. */
 export interface RoutingEntry {
-  /** Lookup key into `Providers`. */
+  /** Lookup key into `Providers` (extras resolve via `providers.extras`). */
   provider:
     | 'openrouter'
     | 'openai'
@@ -28,7 +29,8 @@ export interface RoutingEntry {
     | 'opencodego'
     | 'local'
     | 'lmstudio'
-    | 'laptop';
+    | 'laptop'
+    | ExtraProviderId;
   /** Display label for servedBy / logs. */
   label: string;
   /** Model id to send upstream (alias substitution applied at handle time). */
@@ -74,6 +76,9 @@ export async function dispatchProvider(
   body: ChatRequestBody,
   signal: AbortSignal,
 ): Promise<ProviderCallResult> {
+  if (isExtraProvider(entry.provider)) {
+    return providers.extras[entry.provider].attempt(body, signal, { model });
+  }
   const p = providers[entry.provider];
   if (entry.provider === 'openrouter') {
     return p.attempt(body, signal, { model, keyIndex: entry.attemptIndex });
@@ -91,6 +96,11 @@ export function dispatchProviderCount(providers: Providers, model: string): numb
 
 /** Provider id union used by shortCircuit + runSingle. */
 export type ChainProvider = RoutingEntry['provider'];
+
+/** Resolve a provider id to its instance (extras live in providers.extras). */
+export function providerFor(providers: Providers, id: ChainProvider): Provider {
+  return isExtraProvider(id) ? providers.extras[id] : providers[id];
+}
 
 /**
  * Build the initial flat routing-entry list from env-declared order:
@@ -161,6 +171,10 @@ export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
       attemptIndex: 0,
     });
   }
+  // Extra free-tier providers (unorouter/groq/sambanova/mistral/cloudflare):
+  // remote entries before the local tail; each gated on key+model (cloudflare
+  // also account id) inside extraRoutingEntries.
+  list.push(...extraRoutingEntries());
   if (e.LOCAL_ENABLED) {
     list.push({ provider: 'local', label: 'local', model: e.LOCAL_MODEL, attemptIndex: 0 });
   }
@@ -197,50 +211,14 @@ export function isProviderDefaultModel(model: string): boolean {
     model === e.LOCAL_MODEL ||
     model === e.LMSTUDIO_MODEL ||
     model === e.LAPTOP_MODEL ||
+    // Extra free-tier defaults (groq llama-..., sambanova Meta/Llama-...) must
+    // not be FORCE_FREE-rewritten either.
+    extraRoutingEntries().some((entry) => entry.model === model) ||
     // Any live OpenCode pool slot (big-pickle, nemotron-3-ultra-free, ...)
     // must bypass the FORCE_FREE :free rewrite on the explicit-model path.
     opencodePoolModels(e).includes(model)
   );
 }
 
-/** Detect direct:<provider>/<model> prefix to pin a single provider. */
-export function shortCircuit(model: string): { provider: ChainProvider; model: string } | null {
-  const m = model.toLowerCase();
-  if (!m.startsWith('direct:')) return null;
-  const rest = model.slice('direct:'.length);
-  const restLower = rest.toLowerCase();
-  if (restLower.startsWith('openai/')) {
-    return { provider: 'openai', model: rest.slice('openai/'.length) };
-  }
-  if (restLower.startsWith('opencode/')) {
-    return { provider: 'opencode', model: rest.slice('opencode/'.length).toLowerCase() };
-  }
-  if (restLower.startsWith('opencodego/')) {
-    return { provider: 'opencodego', model: rest.slice('opencodego/'.length).toLowerCase() };
-  }
-  if (restLower.startsWith('zai/')) {
-    // Strip the prefix: the upstream must receive the bare model id
-    // ("glm-5.3-flash"), not "zai/glm-5.3-flash" (Z.ai 400s on it).
-    return { provider: 'zai', model: rest.slice('zai/'.length) };
-  }
-  if (restLower.startsWith('glm-')) {
-    return { provider: 'zai', model: rest };
-  }
-  if (restLower.startsWith('tokenrouter/')) {
-    return { provider: 'tokenrouter', model: rest.slice('tokenrouter/'.length) };
-  }
-  if (restLower.startsWith('openrouter/')) {
-    const model = rest.slice('openrouter/'.length);
-    return { provider: 'openrouter', model: withFree(model, env().FORCE_FREE) };
-  }
-  if (restLower.startsWith('local/')) {
-    return { provider: 'local', model: rest.slice('local/'.length) };
-  }
-  if (restLower.startsWith('lmstudio/')) {
-    return { provider: 'lmstudio', model: rest.slice('lmstudio/'.length) };
-  }
-  if (restLower.startsWith('laptop/')) {
-    return { provider: 'laptop', model: rest.slice('laptop/'.length) };
-  }
-  return null;
-}
+/** shortCircuit moved to shortcircuit.ts (2026-09-18 module budget); re-exported for compat. */
+export { shortCircuit } from './shortcircuit.js';

@@ -18,8 +18,7 @@ import { NoProviderAvailableError } from '../common/errors.js';
 import { backoffMs, sleep } from '../common/retry.js';
 import { env } from '../config/env.js';
 
-import {
-  buildRoutingEntries,
+import { buildRoutingEntries,
   dispatchProvider,
   dispatchProviderCount,
   isOverWalkDeadline,
@@ -27,6 +26,7 @@ import {
   shortCircuit,
   type ChainProvider,
   type RoutingEntry,
+  providerFor,
 } from './chain-routing.js';
 import type { Providers } from './instances.js';
 import { withFree } from './openrouter.js';
@@ -73,7 +73,7 @@ export class ProviderChain {
     body: ChatRequestBody,
     signal: AbortSignal,
   ): Promise<ChainResult> {
-    const p = this.providers[provider];
+    const p = providerFor(this.providers, provider);
     if (!p.available) {
       throw new NoProviderAvailableError(`${provider}: not configured`);
     }
@@ -162,7 +162,7 @@ export class ProviderChain {
     failures: string[],
     behavior: { demoteOnKeyFailure: boolean; walk?: { startedAt: number; deadlineMs: number } },
   ): Promise<ChainResult | undefined> {
-    const p = this.providers[entry.provider];
+    const p = providerFor(this.providers, entry.provider);
     if (!p.available) {
       failures.push(`${entry.label}:not-configured`);
       return undefined;

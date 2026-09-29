@@ -10,6 +10,7 @@
 import { z } from 'zod';
 
 import { collectNumberedKeys } from './keys.js';
+import { singleKeyEnvFields } from './single-key-env.js';
 
 const csv = z.string().transform((s) =>
   s
@@ -37,19 +38,11 @@ const schema = z.object({
   PORT: z.coerce.number().int().positive().default(8787),
   GATEWAY_TOKEN: z.string().default(''),
 
-  // Fallback providers
-  OPENAI_API_KEY: z.string().optional(),
-  OPENAI_BASE_URL: z.string().url().default('https://api.openai.com/v1'),
-  OPENAI_MODEL: z.string().default('gpt-4o-mini'),
-  ZAI_API_KEY: z.string().optional(),
-  ZAI_BASE_URL: z.string().url().default('https://api.z.ai/api/paas/v4'),
-  ZAI_MODEL: z.string().default('glm-4.6'),
-  // TokenRouter (tokenrouter.com): OpenAI-compatible aggregator. Single key,
-  // free GLM tier. Key verified against api.tokenrouter.com 2026-08-30
-  // (the .io/.me domains want tr_-prefixed keys - this one is a .com key).
-  TOKENROUTER_API_KEY: z.string().optional(),
-  TOKENROUTER_BASE_URL: z.string().url().default('https://api.tokenrouter.com/v1'),
-  TOKENROUTER_MODEL: z.string().default('z-ai/glm-5.3-free'),
+  // Single-key OpenAI-compatible providers (OPENAI/ZAI/TOKENROUTER/
+  // OPENCODEGO + the 2026-09-18 extras: UNOROUTER/GROQ/SAMBANOVA/MISTRAL/
+  // CLOUDFLARE) live in single-key-env.ts to respect the module budget.
+  ...singleKeyEnvFields,
+
   // Local llama-server: OpenAI /v1/chat/completions on a patched 128K GGUF.
   LOCAL_ENABLED: flag('false'),
   LOCAL_BASE_URL: z.string().url().default('http://127.0.0.1:11434/v1'),
@@ -93,11 +86,6 @@ const schema = z.object({
   OPENCODE_MINIMAX_MODEL: z.string().default('nemotron-3.5-lightning-free'),
   OPENCODE_QWEN_MODEL: z.string().default('muse-spark-1.2-contributor-free'),
   OPENCODE_LING_MODEL: z.string().default('ling-3.0-flash-fin-free'),
-  // OpenCode Go: single-key glm-5.3-flash provider (never routed into the OPENCODE pool; SESSION_ID feeds the x-opencode-session header).
-  OPENCODEGO_API_KEY: z.string().optional(),
-  OPENCODEGO_BASE_URL: z.string().url().default('https://opencode.ai/zen/go/v1'),
-  OPENCODEGO_MODEL: z.string().default('glm-5.3-flash'),
-  OPENCODEGO_SESSION_ID: z.string().optional(),
 
   // Slack (Director surface)
   SLACK_BOT_TOKEN: z.string().optional(),
@@ -217,15 +205,25 @@ export function loadEnv(raw: NodeJS.ProcessEnv = process.env): ResolvedConfig {
   const hasOpenRouter = openrouterKeys.length > 0;
   const hasOpenCode = opencodeKeys.length > 0;
   const hasOpenCodeGo = !!parsed.data.OPENCODEGO_API_KEY;
+  // Extra free-tier providers count when key AND model are set (mirrors
+  // extraRoutingEntries gating; unorouter ships an empty default model).
+  const d = parsed.data;
+  const hasExtra =
+    (!!d.UNOROUTER_API_KEY && !!d.UNOROUTER_MODEL) ||
+    (!!d.GROQ_API_KEY && !!d.GROQ_MODEL) ||
+    (!!d.SAMBANOVA_API_KEY && !!d.SAMBANOVA_MODEL) ||
+    (!!d.MISTRAL_API_KEY && !!d.MISTRAL_MODEL) ||
+    (!!d.CLOUDFLARE_API_KEY && !!d.CLOUDFLARE_ACCOUNT_ID && !!d.CLOUDFLARE_MODEL);
   const hasAnyFallback =
     !!parsed.data.OPENAI_API_KEY ||
     !!parsed.data.ZAI_API_KEY ||
     !!parsed.data.TOKENROUTER_API_KEY ||
     hasOpenCode ||
-    hasOpenCodeGo;
+    hasOpenCodeGo ||
+    hasExtra;
   if (parsed.data.NODE_ENV === 'production' && !hasOpenRouter && !hasAnyFallback) {
     throw new Error(
-      'No provider configured: set at least one OPENROUTER_KEY* or OPENAI/ZAI/TOKENROUTER/OPENCODE/OPENCODEGO API key',
+      'No provider configured: set at least one OPENROUTER_KEY* or OPENAI/ZAI/TOKENROUTER/OPENCODE/OPENCODEGO key, or an extra provider key+model (UNOROUTER/GROQ/SAMBANOVA/MISTRAL/CLOUDFLARE)',
     );
   }
   cached = { env: parsed.data, openrouterKeys, opencodeKeys };

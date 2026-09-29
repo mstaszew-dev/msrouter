@@ -1,0 +1,56 @@
+/**
+ * Zod fields for every single-key OpenAI-compatible provider (moved out of
+ * env.ts to respect the 250-line module budget). env.ts spreads these into
+ * the root schema, so the parsed shape is unchanged.
+ *
+ * 2026-09-18 additions (free-tier providers, no payment method on any):
+ *   UNOROUTER   - unorouter.com router, free tier 220+ models (rate-limited)
+ *   GROQ        - console.groq.com, fast inference free tier
+ *   SAMBANOVA   - cloud.sambanova.ai, free tier, no card
+ *   MISTRAL     - console.mistral.ai, La Plateforme experimental free tier
+ *   CLOUDFLARE  - Workers AI: 10k free neurons/day; the OpenAI-compatible
+ *                 base URL embeds the account id, hence CLOUDFLARE_ACCOUNT_ID.
+ */
+import { z } from 'zod';
+
+// Concrete inferred type (NOT annotated as ZodRawShape, which would erase the
+// specific keys when env.ts spreads this into the root schema).
+export const singleKeyEnvFields = {
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_BASE_URL: z.string().url().default('https://api.openai.com/v1'),
+  OPENAI_MODEL: z.string().default('gpt-4o-mini'),
+  ZAI_API_KEY: z.string().optional(),
+  ZAI_BASE_URL: z.string().url().default('https://api.z.ai/api/paas/v4'),
+  ZAI_MODEL: z.string().default('glm-4.6'),
+  // TokenRouter (tokenrouter.com): OpenAI-compatible aggregator. Single key,
+  // free GLM tier. Key verified against api.tokenrouter.com 2026-08-30.
+  TOKENROUTER_API_KEY: z.string().optional(),
+  TOKENROUTER_BASE_URL: z.string().url().default('https://api.tokenrouter.com/v1'),
+  TOKENROUTER_MODEL: z.string().default('z-ai/glm-5.3-free'),
+  // OpenCode Go: single-key glm-5.3-flash provider (never routed into the
+  // OPENCODE pool; SESSION_ID feeds the x-opencode-session header).
+  OPENCODEGO_API_KEY: z.string().optional(),
+  OPENCODEGO_BASE_URL: z.string().url().default('https://opencode.ai/zen/go/v1'),
+  OPENCODEGO_MODEL: z.string().default('glm-5.3-flash'),
+  OPENCODEGO_SESSION_ID: z.string().optional(),
+
+  // --- Extra free-tier providers (2026-09-18). Model vars follow the
+  // empty-slot convention: an EMPTY model var drops the provider's walk
+  // entry even when its key is configured. ---
+  UNOROUTER_API_KEY: z.string().optional(),
+  UNOROUTER_BASE_URL: z.string().url().default('https://api.unorouter.com/v1'),
+  // No verified default id yet (catalog needs a key); set after first probe.
+  UNOROUTER_MODEL: z.string().default(''),
+  GROQ_API_KEY: z.string().optional(),
+  GROQ_BASE_URL: z.string().url().default('https://api.groq.com/openai/v1'),
+  GROQ_MODEL: z.string().default('llama-3.3-70b-versatile'),
+  SAMBANOVA_API_KEY: z.string().optional(),
+  SAMBANOVA_BASE_URL: z.string().url().default('https://api.sambanova.ai/v1'),
+  SAMBANOVA_MODEL: z.string().default('Meta/Llama-4-Maverick-17B-12E-Instruct'),
+  MISTRAL_API_KEY: z.string().optional(),
+  MISTRAL_BASE_URL: z.string().url().default('https://api.mistral.ai/v1'),
+  MISTRAL_MODEL: z.string().default('mistral-small-latest'),
+  CLOUDFLARE_API_KEY: z.string().optional(),
+  CLOUDFLARE_ACCOUNT_ID: z.string().optional(),
+  CLOUDFLARE_MODEL: z.string().default('@cf/meta/llama-3.3-70b-instruct-fp8-fast'),
+} satisfies z.ZodRawShape;
