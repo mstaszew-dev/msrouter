@@ -2,7 +2,7 @@
  * LM Studio (Bionic) provider tests.
  *
  * LM Studio exposes an OpenAI-compatible /v1/chat/completions endpoint
- * (default http://127.0.0.1:1234/v1) that accepts any API key. LmStudioProvider
+ * (default http://127.0.0.1:1235/v1) that accepts any API key. LmStudioProvider
  * reuses SingleKeyProvider with a placeholder key, so these tests assert the
  * OpenAI-shaped contract: body passthrough with model rewritten, endpoint
  * {base}/chat/completions, and a Bearer placeholder that LM Studio ignores.
@@ -26,7 +26,7 @@ const silent = {
   debug: vi.fn(),
 } as unknown as pino.Logger;
 
-function makeProvider(baseUrl = 'http://127.0.0.1:1234/v1', defaultModel = 'google/gemma-4-e4b') {
+function makeProvider(baseUrl = 'http://127.0.0.1:1235/v1', defaultModel = 'qwen3.5-4b') {
   return new LmStudioProvider({ baseUrl, defaultModel }, 5000, silent);
 }
 
@@ -101,7 +101,7 @@ it('rewrites the model to the chain-resolved id and posts to {base}/chat/complet
   vi.stubGlobal('fetch', fetchMock);
   const p = makeProvider();
   const res = await p.attempt(baseBody, new AbortController().signal, {
-    model: 'google/gemma-4-e4b',
+    model: 'qwen3.5-4b',
   });
   expect(res.kind).toBe('OK');
   // Discovery GETs /models first; the completion is the POST call.
@@ -109,16 +109,16 @@ it('rewrites the model to the chain-resolved id and posts to {base}/chat/complet
     string,
     RequestInit,
   ];
-  expect(post[0]).toBe('http://127.0.0.1:1234/v1/chat/completions');
+  expect(post[0]).toBe('http://127.0.0.1:1235/v1/chat/completions');
   const rawBody = typeof post[1].body === 'string' ? post[1].body : '';
   const body = JSON.parse(rawBody) as Record<string, unknown>;
-  expect(body.model).toBe('google/gemma-4-e4b');
+  expect(body.model).toBe('qwen3.5-4b');
   // LM Studio accepts any bearer token; the placeholder is sent as-is.
   expect((post[1].headers as Record<string, string>).authorization).toBe('Bearer lm-studio');
 });
 
 it('resolvedDefaultModel is the configured default', () => {
-  expect(makeProvider().resolvedDefaultModel).toBe('google/gemma-4-e4b');
+  expect(makeProvider().resolvedDefaultModel).toBe('qwen3.5-4b');
 });
 
 describe('normalizeModelToken', () => {

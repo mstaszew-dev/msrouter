@@ -1,5 +1,5 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
@@ -57,5 +57,24 @@ describe('applyPatch', () => {
     const path = overridesPath();
     await applyPatch(patch({ X: '1' }), path);
     expect(existsSync(`${path}.pending`)).toBe(false);
+  });
+});
+
+
+
+describe('tilde expansion (DIRECTOR_OVERRIDES default is ~/...)', () => {
+  // 2026-09-18 audit: the zod default is '~/.campaign-agent/...' but apply.ts
+  // never expanded '~', so approved patches silently wrote into a literal
+  // './~/.campaign-agent/' under CWD and never reached the real file.
+  it('applyPatch expands a leading ~ to the real home dir', async () => {
+    const path = '~/.campaign-agent-tilde-test/overrides.env';
+    try {
+      await applyPatch(patch({ FOO: 'bar' }), path);
+      const real = join(homedir(), '.campaign-agent-tilde-test/overrides.env');
+      expect(existsSync(real)).toBe(true);
+      expect(await readOverrides(path)).toEqual({ FOO: 'bar' });
+    } finally {
+      rmSync(join(homedir(), '.campaign-agent-tilde-test'), { recursive: true, force: true });
+    }
   });
 });

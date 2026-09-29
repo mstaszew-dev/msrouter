@@ -125,7 +125,6 @@ function makeEnv(over: Record<string, unknown> = {}): Record<string, unknown> {
     DIRECTOR_CAMPAIGN_DIR: '/tmp/x',
     DIRECTOR_OPENCLAW_WORKSPACE: '/tmp/oc',
     DIRECTOR_RUNNER: '/tmp/launch',
-    DIRECTOR_PIDFILE: '/tmp/pid',
     DIRECTOR_OVERRIDES: '/tmp/ov.env',
     DIRECTOR_CDP_URL: 'http://127.0.0.1:9222',
     DIRECTOR_RAG_DB: '/tmp/index.db',

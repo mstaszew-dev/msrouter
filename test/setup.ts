@@ -28,7 +28,6 @@ if (process.env['INTEGRATION'] === '1') {
     ZAI_API_KEY: 'sk-zai-test',
     TOKENROUTER_API_KEY: 'sk-tokenrouter-test',
     FORCE_FREE: 'true',
-    SCHEDULE_INTERVAL_MINUTES: '-1',
     UPSTREAM_TIMEOUT_MS: '5000',
     OPENROUTER_MODELS: 'vendor/extra',
   });

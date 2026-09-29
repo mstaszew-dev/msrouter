@@ -59,10 +59,10 @@ describe('loadEnv - OpenCode Go config', () => {
 });
 
 describe('loadEnv - ZAI (GLM) config', () => {
-  it('defaults ZAI_BASE_URL to the intl API endpoint and model to glm-4.6', () => {
+  it('defaults ZAI to the intl endpoint and the coding-plan glm-5.3-flash', () => {
     const cfg = loadEnv({});
     expect(cfg.env.ZAI_BASE_URL).toBe('https://api.z.ai/api/paas/v4');
-    expect(cfg.env.ZAI_MODEL).toBe('glm-4.6');
+    expect(cfg.env.ZAI_MODEL).toBe('glm-5.3-flash');
     expect(cfg.env.ZAI_API_KEY).toBeUndefined();
   });
 
@@ -153,11 +153,11 @@ describe('loadEnv - Director config', () => {
     const cfg = loadEnv({});
     expect(cfg.env.DIRECTOR_INTERVAL_MINUTES).toBe(1);
     expect(cfg.env.DIRECTOR_CAMPAIGN_DIR).toBe('/Users/mst/Downloads/job-search/job-apply');
-    expect(cfg.env.DIRECTOR_PIDFILE).toBe('~/.campaign-agent/job-search-agent.pid');
     expect(cfg.env.DIRECTOR_OVERRIDES).toBe('~/.campaign-agent/director-overrides.env');
     expect(cfg.env.DIRECTOR_CDP_URL).toBe('http://127.0.0.1:9222');
-    // Autostart defaults on: observe-only mode is opt-in via =false.
-    expect(cfg.env.DIRECTOR_AUTOSTART).toBe(true);
+    // Autostart defaults OFF (2026-09-18): the Director is observe-only by
+    // default per the standing campaign policy; spawning is opt-in via =true.
+    expect(cfg.env.DIRECTOR_AUTOSTART).toBe(false);
     // Python runner is the default (2026-09-08): hermes_agent/ was archived
     // out of the tree (archive/hermes-agent-20260907.tar.gz), so the old
     // hermes launcher path no longer exists on disk.
@@ -179,7 +179,6 @@ describe('loadEnv - Director config', () => {
       DIRECTOR_CAMPAIGN_DIR: '/tmp/campaign',
       DIRECTOR_OPENCLAW_WORKSPACE: '/tmp/oc',
       DIRECTOR_RUNNER: '/tmp/launch',
-      DIRECTOR_PIDFILE: '/tmp/pid',
       DIRECTOR_OVERRIDES: '/tmp/overrides.env',
       DIRECTOR_LEDGER: '/tmp/ledger.jsonl',
       DIRECTOR_CDP_URL: 'http://127.0.0.1:9999',
@@ -261,7 +260,7 @@ describe('loadEnv - LM Studio (Bionic) local provider', () => {
   it('defaults LMSTUDIO_ENABLED to false with the default LM Studio endpoint/model', () => {
     const cfg = loadEnv({});
     expect(cfg.env.LMSTUDIO_ENABLED).toBe(false);
-    expect(cfg.env.LMSTUDIO_BASE_URL).toBe('http://127.0.0.1:1234/v1');
+    expect(cfg.env.LMSTUDIO_BASE_URL).toBe('http://127.0.0.1:1235/v1');
     // Alias only: the provider resolves it against discovered loaded models.
     expect(cfg.env.LMSTUDIO_MODEL).toBe('qwen3.5-4b');
   });

@@ -1,23 +1,31 @@
 import 'dotenv/config';
 import { loadEnv } from '../src/config/env.js';
+import { extraRoutingEntries } from '../src/providers/extras.js';
 
 const c = loadEnv();
+const e = c.env;
+// Diagnostic snapshot of the live provider set (what the chain will actually
+// route to), not the raw env surface: extras are listed with their configured
+// models, parked providers with their state.
 // eslint-disable-next-line no-console
 console.log(
   JSON.stringify(
     {
-      port: c.env.PORT,
-      nodeEnv: c.env.NODE_ENV,
+      port: e.PORT,
+      nodeEnv: e.NODE_ENV,
       openrouterKeys: c.openrouterKeys.length,
-      openai: !!c.env.OPENAI_API_KEY,
-      zai: !!c.env.ZAI_API_KEY,
-      tokenrouter: !!c.env.TOKENROUTER_API_KEY,
-      laptop: c.env.LAPTOP_ENABLED,
-      opencode: !!c.env.OPENCODE_API_KEY,
-      opencodego: !!c.env.OPENCODEGO_API_KEY,
-      opencodeModel: c.env.OPENCODE_MODEL,
-      walkAlias: c.env.WALK_ALIAS,
-      forceFree: c.env.FORCE_FREE,
+      openai: !!e.OPENAI_API_KEY,
+      zai: !!e.ZAI_API_KEY,
+      tokenrouter: !!e.TOKENROUTER_API_KEY,
+      opencodego: !!e.OPENCODEGO_API_KEY,
+      extras: extraRoutingEntries().map((x) => `${x.provider}:${x.model}`),
+      local: e.LOCAL_ENABLED,
+      lmstudio: e.LMSTUDIO_ENABLED,
+      laptop: e.LAPTOP_ENABLED,
+      kafkaEnabled: e.KAFKA_ENABLED,
+      directorAutostart: e.DIRECTOR_AUTOSTART,
+      walkAlias: e.WALK_ALIAS,
+      forceFree: e.FORCE_FREE,
     },
     null,
     2,

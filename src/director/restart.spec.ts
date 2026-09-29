@@ -456,7 +456,6 @@ describe('checkInfrastructure', () => {
     expect(status).toEqual({
       cdpAlive: true,
       playwrightMcpAlive: true,
-      openclawGatewayAlive: true,
     });
   });
 
@@ -466,7 +465,6 @@ describe('checkInfrastructure', () => {
     expect(status).toEqual({
       cdpAlive: false,
       playwrightMcpAlive: false,
-      openclawGatewayAlive: false,
     });
   });
 });

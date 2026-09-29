@@ -29,7 +29,8 @@ export const singleKeyEnvFields = {
   OPENAI_MODEL: z.string().default('gpt-4o-mini'),
   ZAI_API_KEY: z.string().optional(),
   ZAI_BASE_URL: z.string().url().default('https://api.z.ai/api/paas/v4'),
-  ZAI_MODEL: z.string().default('glm-4.6'),
+    // Coding-plan default (verified 200 on /api/coding/paas/v4, 2026-09-18).
+  ZAI_MODEL: z.string().default('glm-5.3-flash'),
   // TokenRouter (tokenrouter.com): OpenAI-compatible aggregator. Single key,
   // free GLM tier. Key verified against api.tokenrouter.com 2026-08-30.
   TOKENROUTER_API_KEY: z.string().optional(),
@@ -57,8 +58,8 @@ export const singleKeyEnvFields = {
   SAMBANOVA_API_KEY: z.string().optional(),
   SAMBANOVA_BASE_URL: z.string().url().default('https://api.sambanova.ai/v1'),
   // 2026-09-18 audit: account-wide PAYMENT_METHOD_REQUIRED (balance_units 0)
-  // on every model; retire by emptying SAMBANOVA_MODEL until a card is added.
-  SAMBANOVA_MODEL: z.string().default('DeepSeek-V3.2'),
+  // on every model - the no-card free tier is gone. Default empty (retired).
+  SAMBANOVA_MODEL: z.string().default(''),
   SAMBANOVA_MODELS: csv.default(''),
   MISTRAL_API_KEY: z.string().optional(),
   MISTRAL_BASE_URL: z.string().url().default('https://api.mistral.ai/v1'),

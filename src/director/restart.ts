@@ -109,14 +109,12 @@ export async function ensureCdpRunning(cdpUrl: string): Promise<void> {
 export interface InfraStatus {
   cdpAlive: boolean;
   playwrightMcpAlive: boolean;
-  openclawGatewayAlive: boolean;
 }
 
 export function checkInfrastructure(): InfraStatus {
   return {
     cdpAlive: detectProcess('chrome.*remote-debugging').length > 0,
     playwrightMcpAlive: detectProcess('playwright/mcp').length > 0,
-    openclawGatewayAlive: detectProcess('openclaw.*gateway').length > 0,
   };
 }
 

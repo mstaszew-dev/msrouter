@@ -7,12 +7,21 @@
  * the serializer sorts keys for deterministic diffs in the ledger/git.
  */
 
+import { homedir } from 'node:os';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import type { Patch } from './types.js';
 
-export async function readOverrides(path: string): Promise<Record<string, string>> {
+/** Expand a leading '~' to the real home dir (the zod default is '~/...'). */
+function expandTilde(path: string): string {
+  if (path === '~') return homedir();
+  if (path.startsWith('~/')) return join(homedir(), path.slice(2));
+  return path;
+}
+
+export async function readOverrides(rawPath: string): Promise<Record<string, string>> {
+  const path = expandTilde(rawPath);
   let raw: string;
   try {
     raw = await readFile(path, 'utf8');
@@ -40,7 +49,8 @@ export function serializeOverrides(map: Record<string, string>): string {
     .concat('\n');
 }
 
-export async function applyPatch(patch: Patch, path: string): Promise<void> {
+export async function applyPatch(patch: Patch, rawPath: string): Promise<void> {
+  const path = expandTilde(rawPath);
   const current = await readOverrides(path);
   const merged = { ...current, ...patch.overrides };
   await mkdir(dirname(path), { recursive: true });

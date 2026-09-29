@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 #
-# scripts/run.sh - bring up the msrouter gateway (+ optional worker).
+# scripts/run.sh - bring up the msrouter gateway.
 #
-#   scripts/run.sh            # gateway only, dev mode (tsx watch)
+#   scripts/run.sh            # gateway, dev mode (tsx watch)
 #   scripts/run.sh prod       # build + run gateway (compiled)
-#   scripts/run.sh worker     # start the scheduled agent worker
 #   scripts/run.sh chrome     # launch Chrome with remote debugging for the browser tool
-#   scripts/run.sh down       # stop gateway + worker started by this script
+#   scripts/run.sh down       # stop gateway started by this script
 #
 # See .env.example for configuration. Defaults are dev-only.
 
@@ -66,16 +65,8 @@ start_gateway_prod() {
   ok "gateway pid $(cat .run/gateway.pid)"
 }
 
-start_worker() {
-  [[ -d node_modules ]] || npm install
-  npm run build
-  nohup node dist/worker.js > .run/worker.log 2>&1 &
-  echo $! > .run/worker.pid
-  ok "worker pid $(cat .run/worker.pid)"
-}
-
 down() {
-  for name in gateway worker; do
+  for name in gateway; do
     if [[ -f .run/$name.pid ]] && kill -0 "$(cat .run/$name.pid)" 2>/dev/null; then
       kill "$(cat .run/$name.pid)" && ok "stopped $name"
     fi
@@ -127,8 +118,9 @@ msrouter gateway is up on http://localhost:${port}
 
   Point any OpenAI/OpenRouter SDK at this base URL (no key needed unless
   GATEWAY_TOKEN is set). Send "model": "mst/free" to walk every provider
-  (OpenRouter keys -> OpenAI -> ZAI -> OpenCode/BigPickle) with each provider's
-  own default model.
+  (OpenRouter pool -> ZAI -> TokenRouter -> OpenCodeGo -> extras like
+  UnoRouter/Groq/Mistral/Cloudflare -> local tail) with each provider's own
+  default model.
 
   Example:
     curl -s http://localhost:${port}/api/v1/chat/completions \\
@@ -149,9 +141,8 @@ case "${1:-dev}" in
   prod)    start_gateway_prod; wait_ready; report
            log "tailing gateway logs (Ctrl-C stops the tail; the gateway keeps running)"
            tail -F .run/gateway.log ;;
-  worker)  start_worker; ok "worker started" ;;
   chrome)  start_chrome ;;
   down)    down ;;
   logs)    LOGFILE=".run/${2:-gateway}.log"; [[ -f "$LOGFILE" ]] || die "no log for ${2:-gateway}"; exec tail -F "$LOGFILE" ;;
-  *) die "unknown command: $1 (use: dev | prod | worker | chrome | logs <name> | down)" ;;
+  *) die "unknown command: $1 (use: dev | prod | chrome | logs <name> | down)" ;;
 esac

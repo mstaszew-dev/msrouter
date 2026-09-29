@@ -31,7 +31,6 @@ export default defineConfig({
         '**/*.cjs',
         '**/.venv/**',
         'src/main.ts',
-        'src/worker.ts',
         // Admin console entrypoint (process wiring, exercised by e2e).
         'src/admin/main.ts',
         // One-shot diagnostic script, not app code.
@@ -48,14 +47,11 @@ export default defineConfig({
         'src/providers/openrouter.ts',
         'src/providers/single-key.ts',
         'src/providers/types.ts',
-        // agent loop orchestrates chain+tools; integration territory.
-        'src/agent/loop.ts',
         // Type-only module: zero runtime code to cover.
         'src/director/types.ts',
         // Barrel re-export of sibling modules, which carry their own coverage.
         'src/director/index.ts',
         'src/config/logger.ts',
-        'msrouter.ts',
         'vitest.config.ts',
       ],
       // Honest floor for unit-tested domain logic (chain/retry/env/errors/

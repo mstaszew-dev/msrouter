@@ -87,7 +87,7 @@ describe('thinking is a client decision (gateway stays neutral)', () => {
     // default) unless the CLIENT asks otherwise via the standard body field.
     // WHOLESALE equality: any future injection (telemetry, temperature, a
     // retry hint) must fail here, not just a thinking-field check.
-    loadEnv({ ZAI_API_KEY: 'key-id.secret', SCHEDULE_INTERVAL_MINUTES: '-1' });
+    loadEnv({ ZAI_API_KEY: 'key-id.secret' });
     const providers = buildProviders(silent);
     await providers.zai.attempt(body, new AbortController().signal, { model: 'glm-5.3-flash' });
     const [outbound] = vi.mocked(postChatCompletion).mock.calls[0]!;
@@ -95,7 +95,7 @@ describe('thinking is a client decision (gateway stays neutral)', () => {
   });
 
   it('client-sent thinking is forwarded verbatim to zai', async () => {
-    loadEnv({ ZAI_API_KEY: 'key-id.secret', SCHEDULE_INTERVAL_MINUTES: '-1' });
+    loadEnv({ ZAI_API_KEY: 'key-id.secret' });
     const providers = buildProviders(silent);
     const withThinking = { ...body, thinking: { type: 'enabled' } };
     await providers.zai.attempt(withThinking, new AbortController().signal, { model: 'glm-5.3-flash' });
@@ -104,7 +104,7 @@ describe('thinking is a client decision (gateway stays neutral)', () => {
   });
 
   it('client-sent thinking:disabled is forwarded too (client may opt out)', async () => {
-    loadEnv({ ZAI_API_KEY: 'key-id.secret', SCHEDULE_INTERVAL_MINUTES: '-1' });
+    loadEnv({ ZAI_API_KEY: 'key-id.secret' });
     const providers = buildProviders(silent);
     const withThinking = { ...body, thinking: { type: 'disabled' } };
     await providers.zai.attempt(withThinking, new AbortController().signal, { model: 'glm-5.3-flash' });
@@ -114,7 +114,7 @@ describe('thinking is a client decision (gateway stays neutral)', () => {
 
   it('the chain-resolved model overrides the client-sent model', async () => {
     // NICE-1: opts.model (resolved by the chain) wins over body.model.
-    loadEnv({ ZAI_API_KEY: 'key-id.secret', SCHEDULE_INTERVAL_MINUTES: '-1' });
+    loadEnv({ ZAI_API_KEY: 'key-id.secret' });
     const providers = buildProviders(silent);
     const clientBody = { ...body, model: 'some-other-model' };
     await providers.zai.attempt(clientBody, new AbortController().signal, { model: 'glm-5.3-flash' });

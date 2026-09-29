@@ -43,17 +43,20 @@ const schema = z.object({
   // CLOUDFLARE) live in single-key-env.ts to respect the module budget.
   ...singleKeyEnvFields,
 
-  // Local llama-server: OpenAI /v1/chat/completions on a patched 128K GGUF.
+  // Local llama-server: OpenAI /v1/chat/completions. NOT deployed on this
+  // machine (LOCAL_ENABLED never set; the laptop tailnet Ollama is the
+  // active local tail) - kept as a pluggable slot.
   LOCAL_ENABLED: flag('false'),
   LOCAL_BASE_URL: z.string().url().default('http://127.0.0.1:11434/v1'),
   LOCAL_MODEL: z.string().default('qwen3.5:2b'),
   // Local prefills are slow (~220-370 tok/s), so local gets its own timeout
-  // instead of UPSTREAM_TIMEOUT_MS (matches the agent's 300s cap).
+  // instead of UPSTREAM_TIMEOUT_MS (the agent's ceiling is TIMEOUT_SECONDS=2400).
   LOCAL_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
   // LM Studio (Bionic) local: OpenAI /v1, no key. LMSTUDIO_MODEL is an
   // ALIAS: the provider discovers loaded models (GET {base}/models).
+  // Parked since 2026-09-18 (LMSTUDIO_ENABLED=false in live env).
   LMSTUDIO_ENABLED: flag('false'),
-  LMSTUDIO_BASE_URL: z.string().url().default('http://127.0.0.1:1234/v1'),
+  LMSTUDIO_BASE_URL: z.string().url().default('http://127.0.0.1:1235/v1'),
   LMSTUDIO_MODEL: z.string().default('qwen3.5-4b'),
   // Local prefills are slow (a 20k-token prompt takes minutes on the shared
   // single-slot llama-server), so LM Studio gets its own timeout (cf. LOCAL_TIMEOUT_MS).
@@ -97,14 +100,6 @@ const schema = z.object({
   // Demote after N consecutive successes (local tail must not monopolize).
   SUCCESS_DEMOTE_LIMIT: z.coerce.number().int().positive().default(5),
 
-  // Agent / scheduler
-  SCHEDULE_INTERVAL_MINUTES: z.coerce.number().int().default(-1),
-  AGENT_MODEL: z.string().optional(),
-  AGENT_PROMPT: z.string().default(''),
-  AGENT_GOAL: z.string().default(''),
-  AGENT_MAX_STEPS: z.coerce.number().int().positive().default(20),
-  AGENT_LLM_JUDGE: flag('false'),
-
   // Director agent (separate worker: `npm run director-worker`)
   // Minutes between Director observation cycles. -1 disables.
   DIRECTOR_INTERVAL_MINUTES: z.coerce.number().int().default(1),
@@ -114,21 +109,17 @@ const schema = z.object({
   DIRECTOR_CAMPAIGN_DIR: z.string().default('/Users/mst/Downloads/job-search/job-apply'),
   // Campaign agent workspace (where the launcher + campaign_agent/ live).
   DIRECTOR_OPENCLAW_WORKSPACE: z.string().default('/Users/mst/ZCodeProject/openclaw-job-search'),
-  // Launcher wrapper the Director invokes to restart the worker. Default:
-  // the hermes runner (returned to on 2026-08-31 after the hermes CLI flag
-  // fix landed and both agents began inlining an IDENTITY block; forensics
-  // had cleared hermes of the invented-email incident). The python runner
-  // remains available via DIRECTOR_RUNNER override.
+  // Launcher wrapper the Director invokes to restart the worker: the python
+  // campaign agent (hermes_agent/ was archived 2026-09-08).
   DIRECTOR_RUNNER: z.string().default(PYTHON_RUNNER),
   // stale-campaign fires after this many minutes without new tracker events
   // (raise when providers are slow: legit mid-tick workers must not die).
   STALE_THRESHOLD_MINUTES: z.coerce.number().int().positive().default(60),
   // When false the Director never spawns/kills/restarts the campaign worker
   // (observe-only; user starts the agent manually). Observation, Slack and
-  // VPN rotation stay active.
-  DIRECTOR_AUTOSTART: flag('true'),
-  // Vestigial: pgrep-based detection replaced pidfile tracking (config compat).
-  DIRECTOR_PIDFILE: z.string().default('~/.campaign-agent/job-search-agent.pid'),
+  // VPN rotation stay active. Defaults OFF since 2026-09-18 per the standing
+  // campaign policy; spawning is opt-in.
+  DIRECTOR_AUTOSTART: flag('false'),
   // The single patch target the Director edits on approval.
   DIRECTOR_OVERRIDES: z.string().default('~/.campaign-agent/director-overrides.env'),
   // Append-only ledger of every proposal + decision.
@@ -140,12 +131,12 @@ const schema = z.object({
   // Minutes between Proton VPN IP rotations. 0 or negative disables. Default 30.
   VPN_ROTATION_INTERVAL_MINUTES: z.coerce.number().int().default(30),
 
-  // Kafka (Director event streaming). Disabled by default.
-  KAFKA_ENABLED: flag('true'),
+  // Kafka (Director event streaming). Disabled by default (observation
+  // shows nothing consumes the topic; scripts/kafka.sh is dormant).
+  KAFKA_ENABLED: flag('false'),
   KAFKA_HOME: z.string().default('~/kafka/kafka_2.13-3.7.0'),
   KAFKA_BOOTSTRAP: z.string().default('localhost:19092'),
   KAFKA_POLL_INTERVAL_SECONDS: z.coerce.number().int().positive().default(30),
-  CDP_URL: z.string().url().default('http://127.0.0.1:9222'),
   // Default allowlist EXCLUDES code-execution primitives (node, npm, find,
   // git) which an LLM-driven agent could turn into arbitrary execution
   // (node -e, npm install, find -exec, git clone hooks). Opt in only if you
