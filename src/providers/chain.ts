@@ -154,12 +154,10 @@ export class ProviderChain {
     throw new NoProviderAvailableError(`all routing entries failed: ${failures.join('; ')}`);
   }
 
-  /** Attempt one entry with TRANSIENT retry-in-place. On KEY_FAILURE
-   *  (when demoteOnKeyFailure), demote to the back; 429 parks (cooldown).
-   *  `entry` MUST be the original queue reference for demotion to work.
-   *  walk: when set, the in-place retry loop also stops once the walk
-   *  deadline is exceeded (a single entry's 3 x timeout + backoffs must not
-   *  overshoot WALK_DEADLINE_MS by 400s+). */
+  /** Attempt one entry with TRANSIENT retry-in-place; failure axes are
+   *  applied by applyFailureAxes (failure-axes.ts). `entry` MUST be the
+   *  original queue reference for demotion to work. walk: when set, the
+   *  in-place retries also stop once WALK_DEADLINE_MS is exceeded. */
   private async tryEntry(
     entry: RoutingEntry,
     model: string,
@@ -226,10 +224,13 @@ export class ProviderChain {
         await sleep(backoffMs(attempt, env().TRANSIENT_BACKOFF_MS));
         continue;
       }
-      applyFailureAxes(this.queue, entry, res, behavior.demoteOnKeyFailure, !!behavior.walk);
-      this.log.warn(
-        { provider: entry.label, label: 'chain', kind: res.kind, status: res.status },
-        'chain entry demoted to back of queue',
+      applyFailureAxes(
+        this.queue,
+        entry,
+        res,
+        behavior.demoteOnKeyFailure,
+        !!behavior.walk,
+        this.log,
       );
       break;
     }

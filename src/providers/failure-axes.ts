@@ -16,6 +16,10 @@ import { env } from '../config/env.js';
 import type { RoutingEntry } from './chain-routing.js';
 import { type RotationQueue } from './rotation.js';
 
+/** Providers whose failures are entry-scoped (per-key quotas), not
+ *  account-scoped: propagation and mid-walk skipping stay entry-level. */
+const ENTRY_LEVEL_FAILURE: ReadonlySet<string> = new Set(['openrouter']);
+
 /** Mid-walk skip bookkeeping for provider-axis parking: entries parked
  *  DURING a pass (429 propagation) are skipped for the rest of that pass,
  *  while pre-parked entries (the all-parked fallback / remainder retry)
@@ -42,10 +46,7 @@ export class MidWalkParkSkipper {
    *  mark its axis siblings for skipping. */
   onAttemptFailed(entry: RoutingEntry): void {
     if (this.preParked.has(entry) || !this.queue.isParked(entry)) return;
-    if (entry.provider === 'openrouter') {
-      this.skipped.add(entry);
-      return;
-    }
+    if (ENTRY_LEVEL_FAILURE.has(entry.provider)) return; // per-key: siblings stay
     for (const e of this.queue.snapshot()) {
       if (e.provider === entry.provider && !this.preParked.has(e)) this.skipped.add(e);
     }
@@ -70,7 +71,7 @@ export function propagateProviderAxis(
     queue.demote(e);
     if (action !== 'demote') queue.park(e, action.parkMs, `429 (${e.label})`);
   };
-  if (entry.provider === 'openrouter') {
+  if (ENTRY_LEVEL_FAILURE.has(entry.provider)) {
     act(entry);
     return;
   }
@@ -97,8 +98,11 @@ export function applyFailureAxes(
   res: { kind: string; status: number },
   demoteOnKeyFailure: boolean,
   isWalk: boolean,
-): void {
+  log: { warn: (o: object, msg: string) => void; debug: (o: object, msg: string) => void },
+): number {
+  let demoted = 0;
   if (res.kind === 'KEY_FAILURE' && demoteOnKeyFailure) {
+    demoted += providerAxisSize(queue, entry);
     if (res.status === 429 && env().RATE_LIMIT_COOLDOWN_MS > 0) {
       propagateProviderAxis(queue, entry, { parkMs: env().RATE_LIMIT_COOLDOWN_MS });
     } else {
@@ -107,5 +111,24 @@ export function applyFailureAxes(
   }
   if (res.kind === 'BAD_REQUEST' && isWalk) {
     demoteModelAxis(queue, entry);
+    demoted += 1;
   }
+  if (demoted > 0) {
+    log.warn(
+      { provider: entry.label, label: 'chain', kind: res.kind, status: res.status, demoted },
+      'chain entry demoted to back of queue',
+    );
+  } else if (res.kind !== 'BAD_REQUEST') {
+    log.debug(
+      { provider: entry.label, label: 'chain', kind: res.kind, status: res.status },
+      'chain entry skipped (transient retries exhausted)',
+    );
+  }
+  return demoted;
+}
+
+/** Entries on the indicted provider axis (1 for entry-level providers). */
+function providerAxisSize(queue: RotationQueue<RoutingEntry>, entry: RoutingEntry): number {
+  if (ENTRY_LEVEL_FAILURE.has(entry.provider)) return 1;
+  return queue.snapshot().filter((e) => e.provider === entry.provider).length;
 }

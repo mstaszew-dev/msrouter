@@ -1512,7 +1512,7 @@ describe('ProviderChain - triple-axis failure propagation', () => {
     expect(g.attempt).toHaveBeenCalledTimes(1);
   });
 
-  it('401 on one groq model demotes all groq entries to the back', async () => {
+  it('401 on one groq model demotes all groq entries behind the tail (order guard)', async () => {
     loadEnv({
       ...DEFAULT_ENV,
       GROQ_API_KEY: 'gsk-1',
