@@ -98,6 +98,7 @@ export function applyFailureAxes(
   res: { kind: string; status: number },
   demoteOnKeyFailure: boolean,
   isWalk: boolean,
+  dispatchedModel: string,
   log: { warn: (o: object, msg: string) => void; debug: (o: object, msg: string) => void },
 ): number {
   let demoted = 0;
@@ -109,7 +110,10 @@ export function applyFailureAxes(
       propagateProviderAxis(queue, entry, 'demote');
     }
   }
-  if (res.kind === 'BAD_REQUEST' && isWalk) {
+  // Model axis only when the DISPATCHED model is the entry's declared one:
+  // on explicit-model walks every entry gets the requested model, and a 404
+  // there must not demote healthy providers' declared axes (2026-10-01).
+  if (res.kind === 'BAD_REQUEST' && isWalk && dispatchedModel === entry.model) {
     demoteModelAxis(queue, entry);
     demoted += 1;
   }

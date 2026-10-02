@@ -230,6 +230,7 @@ export class ProviderChain {
         res,
         behavior.demoteOnKeyFailure,
         !!behavior.walk,
+        model,
         this.log,
       );
       break;

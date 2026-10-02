@@ -1584,3 +1584,64 @@ describe('ProviderChain - triple-axis failure propagation', () => {
     ).toBe(before);
   });
 });
+
+describe('ProviderChain - model axis on explicit-model walks', () => {
+  // 2026-10-01 bug hunt: on the explicit path every entry is dispatched with
+  // the SAME requested model, so demoteModelAxis must only fire when the
+  // dispatched model IS the entry's declared model - otherwise one 404
+  // demotes healthy providers' declared axes behind the local tail.
+  it('BAD_REQUEST on an explicit model does not demote other providers by their declared model', async () => {
+    const DEFAULT_ENV = {
+      NODE_ENV: 'test',
+      PORT: '8788',
+      OPENROUTER_KEY1: 'sk-or-test-key-1111',
+      FORCE_FREE: 'true',
+      UPSTREAM_TIMEOUT_MS: '5000',
+      OPENROUTER_MODELS: 'vendor/extra',
+      LAPTOP_ENABLED: 'true',
+    };
+    loadEnv({ ...DEFAULT_ENV, ZAI_MODEL: 'glm-5.3-flash', GROQ_API_KEY: 'gsk-1' });
+    const p = makeProviders({ openrouterKeys: 0 });
+    (p.openai as unknown as { available: boolean }).available = false;
+    (p.tokenrouter as unknown as { available: boolean }).available = false;
+    (p.zai as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(
+      async () =>
+        ({
+          kind: 'BAD_REQUEST',
+          status: 404,
+          message: 'model gone',
+        }) as ProviderCallResult,
+    );
+    const groq = p.extras.groq as unknown as {
+      available: boolean;
+      attempt: ReturnType<typeof vi.fn>;
+    };
+    groq.available = true;
+    groq.attempt = vi.fn(
+      async () =>
+        ({
+          kind: 'BAD_REQUEST',
+          status: 404,
+          message: 'model gone',
+        }) as ProviderCallResult,
+    );
+    (p.laptop as unknown as { available: boolean }).available = true;
+    (p.laptop as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(
+      async () => ({ kind: 'OK', response: okResponse() }) as ProviderCallResult,
+    );
+    const chain = new ProviderChain(p, silentLogger);
+    const res = await chain.handle(
+      { ...baseBody, model: 'glm-5.3-flash' },
+      new AbortController().signal,
+    );
+    expect(res.servedBy.provider).toBe('laptop');
+    // groq was dispatched glm-5.3-flash (not its declared model) - its
+    // declared axis must stay in front of the laptop tail.
+    const labels = chain.queueSnapshot().map((e) => e.label);
+    const groqIdx = labels.findIndex((l) => l.startsWith('groq'));
+    expect(groqIdx).toBeGreaterThan(-1);
+    expect(groqIdx).toBeLessThan(labels.indexOf('laptop'));
+    // zai's OWN model 404ed - its axis demotes behind the tail (correct).
+    expect(labels.indexOf('zai')).toBeGreaterThan(labels.indexOf('laptop'));
+  });
+});
