@@ -6,7 +6,7 @@
  * 2026-09-18 additions (free-tier providers, no payment method on any):
  *   UNOROUTER   - unorouter.com router, free tier 220+ models (rate-limited)
  *   GROQ        - console.groq.com, fast inference free tier
- *   SAMBANOVA   - cloud.sambanova.ai, free tier, no card
+ *   SAMBANOVA   - cloud.sambanova.ai, retired: payment-walled (402)
  *   MISTRAL     - console.mistral.ai, La Plateforme experimental free tier
  *   CLOUDFLARE  - Workers AI: 10k free neurons/day; the OpenAI-compatible
  *                 base URL embeds the account id, hence CLOUDFLARE_ACCOUNT_ID.

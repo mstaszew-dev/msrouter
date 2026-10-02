@@ -28,7 +28,7 @@ function writeGatewayPid(): void {
     const pidPath = join(process.cwd(), '.run', 'gateway.pid');
     mkdirSync(dirname(pidPath), { recursive: true });
     writeFileSync(pidPath, String(process.pid));
-  } catch (err) {
+  } catch {
     // pidfile is best-effort
   }
 }
@@ -36,7 +36,7 @@ function writeGatewayPid(): void {
 function clearGatewayPid(): void {
   try {
     rmSync(join(process.cwd(), '.run', 'gateway.pid'), { force: true });
-  } catch (err) {
+  } catch {
     // pidfile is best-effort
   }
 }

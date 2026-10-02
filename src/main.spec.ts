@@ -82,6 +82,7 @@ describe('main.ts pidfile parity with run.sh', () => {
     vi.resetModules();
     const writes: Array<[string, string]> = [];
     vi.doMock('node:fs', async (importOriginal) => ({
+      // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- importOriginal inline typeof, same pattern as loop.spec
       ...(await importOriginal<typeof import('node:fs')>()),
       writeFileSync: (p: string, data: string) => {
         writes.push([p, String(data)]);
