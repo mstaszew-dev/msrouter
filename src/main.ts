@@ -6,6 +6,9 @@
 // Load .env before any module that reads process.env.
 import 'dotenv/config';
 
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+
 import { config, loadEnv } from './config/env.js';
 import { createLogger } from './config/logger.js';
 import { assertInIterm } from './director/iterm.js';
@@ -13,6 +16,30 @@ import { createGatewayServer } from './gateway/server.js';
 import { startOrchestrator } from './orchestrator.js';
 import { ProviderChain } from './providers/chain.js';
 import { buildProviders } from './providers/instances.js';
+
+/**
+ * Write/clear .run/gateway.pid so `scripts/run.sh down|logs` manage the
+ * gateway identically no matter how it was started (script or bare
+ * `npx tsx src/main.ts`). Failures are non-fatal: the pidfile is a
+ * convenience for the script surface, not a runtime dependency.
+ */
+function writeGatewayPid(): void {
+  try {
+    const pidPath = join(process.cwd(), '.run', 'gateway.pid');
+    mkdirSync(dirname(pidPath), { recursive: true });
+    writeFileSync(pidPath, String(process.pid));
+  } catch (err) {
+    // pidfile is best-effort
+  }
+}
+
+function clearGatewayPid(): void {
+  try {
+    rmSync(join(process.cwd(), '.run', 'gateway.pid'), { force: true });
+  } catch (err) {
+    // pidfile is best-effort
+  }
+}
 
 function main(): void {
   // Guard: msrouter must be launched from iTerm2. Prevents accidental starts
@@ -28,6 +55,9 @@ function main(): void {
   // Start gateway
   const server = createGatewayServer({ chain, log, port: env.PORT });
   server.on('listening', () => {
+    // Parity with scripts/run.sh: record the pid so down/logs work for
+    // bare 'npx tsx src/main.ts' starts too.
+    writeGatewayPid();
     log.info(
       {
         port: env.PORT,
@@ -56,6 +86,7 @@ function main(): void {
   // Unified shutdown
   const shutdown = (signal: NodeJS.Signals) => {
     log.info(`${signal} received, shutting down...`);
+    clearGatewayPid();
     orch.shutdown();
     server.close(() => process.exit(0));
     setTimeout(() => process.exit(0), 10_000).unref();

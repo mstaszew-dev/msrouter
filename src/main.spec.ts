@@ -76,3 +76,37 @@ describe('main.ts startup', () => {
     });
   });
 });
+
+describe('main.ts pidfile parity with run.sh', () => {
+  it('writes .run/gateway.pid with the current pid and removes it on shutdown', async () => {
+    vi.resetModules();
+    const writes: Array<[string, string]> = [];
+    vi.doMock('node:fs', async (importOriginal) => ({
+      ...(await importOriginal<typeof import('node:fs')>()),
+      writeFileSync: (p: string, data: string) => {
+        writes.push([p, String(data)]);
+      },
+      mkdirSync: () => undefined,
+      rmSync: (p: string) => writes.push(['__rm__', p]),
+    }));
+    await import('./main.js');
+    // Fire 'listening' on the server instance main() created.
+    const { createGatewayServer } = await import('./gateway/server.js');
+    const server = vi.mocked(createGatewayServer).mock.results.at(-1)!.value as unknown as {
+      on: (ev: string, cb: () => void) => void;
+    };
+    const handlers: Record<string, () => void> = {};
+    for (const [ev, cb] of vi.mocked(server.on).mock.calls) {
+      handlers[ev] = cb;
+    }
+    handlers['listening']!();
+
+    const pidLine = writes.find(([p]) => p.endsWith('.run/gateway.pid'));
+    expect(pidLine).toBeDefined();
+    expect(pidLine![1]).toBe(String(process.pid));
+
+    // SIGTERM -> pidfile removed
+    process.emit('SIGTERM');
+    expect(writes.some(([p, d]) => p === '__rm__' && d.endsWith('.run/gateway.pid'))).toBe(true);
+  });
+});
