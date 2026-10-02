@@ -135,11 +135,10 @@ export function buildProviders(log: Logger): Providers {
         id: 'laptop',
         baseUrl: env.LAPTOP_BASE_URL,
         defaultModel: env.LAPTOP_MODEL,
-        // 2026-10-02: the travelmate laptop loads qwen35-2b-64k at num_ctx
-        // 8192 (/api/ps), so the guard matches the real window (minus the
-        // generation headroom) instead of 100_000 - oversized prompts were
-        // forwarded and silently left-truncated by ollama.
-        maxPromptTokens: 8_000,
+        // 2026-10-02: the laptop serves qwen35-2b-64k (64K window). Guard =
+        // 64K minus generation headroom, not the old 100_000 (which let
+        // oversized prompts be left-truncated by the runtime).
+        maxPromptTokens: 61_440,
         suppressReasoning: true,
       },
       env.LAPTOP_TIMEOUT_MS,

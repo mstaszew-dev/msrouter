@@ -1,10 +1,9 @@
 /**
  * Factory wiring: the laptop provider's prompt guard must match the model's
- * REAL runtime context. 2026-10-02 audit: the travelmate laptop loads
- * qwen35-2b-64k with num_ctx 8192 (/api/ps context_length), while the guard
- * advertised 100 000 - prompts up to 25x the window were forwarded and
- * silently left-truncated by ollama (the ZCode compacted history sat at the
- * top, exactly where ollama cuts).
+ * REAL context window. 2026-10-02: guard 100_000 was wrong twice - against the
+ * 8192 num_ctx ollama loaded, and against the model's true 64K window
+ * (qwen35-2b-64k). Guard now = 64K minus generation headroom, so the gateway
+ * never claims more context than the laptop can hold.
  */
 import type pino from 'pino';
 import { describe, expect, it, vi } from 'vitest';
@@ -21,11 +20,12 @@ const silent = {
 } as unknown as pino.Logger;
 
 describe('buildProviders laptop guard', () => {
-  it('laptop maxPromptTokens fits the real 8192 runtime context', () => {
+  it('laptop maxPromptTokens fits the real 64K window minus headroom', () => {
     loadEnv({ LAPTOP_ENABLED: 'true' });
     const laptop = buildProviders(silent).laptop as unknown as {
       maxPromptTokens: number;
     };
-    expect(laptop.maxPromptTokens).toBeLessThanOrEqual(8000);
+    expect(laptop.maxPromptTokens).toBeLessThanOrEqual(61_440);
+    expect(laptop.maxPromptTokens).toBeGreaterThan(8_000);
   });
 });
