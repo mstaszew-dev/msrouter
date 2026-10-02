@@ -1493,6 +1493,42 @@ describe('ProviderChain - triple-axis failure propagation', () => {
     return { p, g };
   }
 
+  it('TRANSIENT exhaustion demotes exactly the (key, provider, model) entry', async () => {
+    // 2026-10-02 rule: the queued unit is (key, provider, model); a transient
+    // error (after in-place retries) demotes THAT entry - not the provider
+    // axis, not a skip.
+    loadEnv({ ...DEFAULT_ENV, GROQ_API_KEY: 'gsk-1', TRANSIENT_BACKOFF_MS: '1' });
+    const p = makeProviders({ openrouterKeys: 0 });
+    (p.openai as unknown as { available: boolean }).available = false;
+    (p.zai as unknown as { available: boolean }).available = false;
+    (p.tokenrouter as unknown as { available: boolean }).available = false;
+    const groq = p.extras.groq as unknown as {
+      available: boolean;
+      attempt: ReturnType<typeof vi.fn>;
+    };
+    groq.available = true;
+    groq.attempt = vi.fn(async () => ({
+      kind: 'TRANSIENT',
+      status: 503,
+      message: 'upstream busy',
+    }));
+    (p.laptop as unknown as { available: boolean }).available = true;
+    (p.laptop as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(async () => ({
+      kind: 'OK',
+      response: okResponse(),
+    }));
+    const chain = new ProviderChain(p, silentLogger);
+    const res = await chain.handle(
+      { ...baseBody, model: 'mst/free' },
+      new AbortController().signal,
+    );
+    expect(res.servedBy.provider).toBe('laptop');
+    // The groq entry moved to the back (demoted) - demote, not skip: the
+    // laptop was still reached behind it and order changed.
+    const labels = chain.queueSnapshot().map((e) => e.label);
+    expect(labels[labels.length - 1]).toBe('groq');
+  });
+
   it('429 on one groq model parks every groq entry (account-wide limit)', async () => {
     loadEnv({
       ...DEFAULT_ENV,

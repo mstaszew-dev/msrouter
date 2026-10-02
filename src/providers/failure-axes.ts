@@ -123,6 +123,13 @@ export function applyFailureAxes(
       propagateProviderAxis(queue, entry, 'demote');
     }
   }
+  // TRANSIENT (in-place retries exhausted): demote exactly this (key,
+  // provider, model) entry - the queued unit. Not the provider axis, not a
+  // skip: the next walk retries it later in the order (2026-10-02 rule).
+  if (res.kind === 'TRANSIENT' && isWalk) {
+    queue.demote(entry);
+    demoted += 1;
+  }
   // Model axis only when the DISPATCHED model is the entry's declared one:
   // on explicit-model walks every entry gets the requested model, and a 404
   // there must not demote healthy providers' declared axes (2026-10-01).
