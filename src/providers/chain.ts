@@ -235,6 +235,11 @@ export class ProviderChain {
     return this.queue.snapshot();
   }
 
+  /** White-box: is the entry parked (404-disabled / 429 cooldown)? */
+  isEntryParked(e: RoutingEntry): boolean {
+    return this.queue.isParked(e);
+  }
+
   /** White-box (test-only): demote a specific entry. */
   demoteEntry(e: RoutingEntry): void {
     this.queue.demote(e);

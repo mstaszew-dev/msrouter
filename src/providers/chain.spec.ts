@@ -1554,11 +1554,15 @@ describe('ProviderChain - triple-axis failure propagation', () => {
       new AbortController().signal,
     );
     expect(res.servedBy.provider).toBe('laptop');
-    // All vendor/extra entries (the 404ing model) moved behind the laptop.
-    const labels = chain.queueSnapshot().map((e) => e.label);
-    labels.forEach((l, i) => {
-      if (l.includes('vendor/extra')) expect(i).toBeGreaterThan(labels.indexOf('laptop'));
-    });
+    // 404 DISABLES the model for all keys (stronger than demote): parked for
+    // the process lifetime, so eligible() excludes every vendor/extra entry
+    // while queue order is untouched.
+    const snapshot = chain.queueSnapshot();
+    const vendorEntries = snapshot.filter((e) => e.model.includes('vendor/extra'));
+    expect(vendorEntries.length).toBeGreaterThan(0);
+    for (const e of vendorEntries) expect(chain.isEntryParked(e)).toBe(true);
+    const eligible = snapshot.filter((e) => !chain.isEntryParked(e));
+    expect(eligible.some((e) => e.model.includes('vendor/extra'))).toBe(false);
   });
 
   it('direct: pins do not propagate failures into the walk queue', async () => {
@@ -1604,31 +1608,26 @@ describe('ProviderChain - model axis on explicit-model walks', () => {
     const p = makeProviders({ openrouterKeys: 0 });
     (p.openai as unknown as { available: boolean }).available = false;
     (p.tokenrouter as unknown as { available: boolean }).available = false;
-    (p.zai as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(
-      async () =>
-        ({
-          kind: 'BAD_REQUEST',
-          status: 404,
-          message: 'model gone',
-        }),
-    );
+    (p.zai as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(async () => ({
+      kind: 'BAD_REQUEST',
+      status: 404,
+      message: 'model gone',
+    }));
     const groq = p.extras.groq as unknown as {
       available: boolean;
       attempt: ReturnType<typeof vi.fn>;
     };
     groq.available = true;
-    groq.attempt = vi.fn(
-      async () =>
-        ({
-          kind: 'BAD_REQUEST',
-          status: 404,
-          message: 'model gone',
-        }),
-    );
+    groq.attempt = vi.fn(async () => ({
+      kind: 'BAD_REQUEST',
+      status: 404,
+      message: 'model gone',
+    }));
     (p.laptop as unknown as { available: boolean }).available = true;
-    (p.laptop as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(
-      async () => ({ kind: 'OK', response: okResponse() }),
-    );
+    (p.laptop as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(async () => ({
+      kind: 'OK',
+      response: okResponse(),
+    }));
     const chain = new ProviderChain(p, silentLogger);
     const res = await chain.handle(
       { ...baseBody, model: 'glm-5.3-flash' },
@@ -1641,7 +1640,8 @@ describe('ProviderChain - model axis on explicit-model walks', () => {
     const groqIdx = labels.findIndex((l) => l.startsWith('groq'));
     expect(groqIdx).toBeGreaterThan(-1);
     expect(groqIdx).toBeLessThan(labels.indexOf('laptop'));
-    // zai's OWN model 404ed - its axis demotes behind the tail (correct).
-    expect(labels.indexOf('zai')).toBeGreaterThan(labels.indexOf('laptop'));
+    // zai's OWN model 404ed - its axis is parked (disabled), not reordered.
+    const zaiEntries = chain.queueSnapshot().filter((e) => e.provider === 'zai');
+    for (const e of zaiEntries) expect(chain.isEntryParked(e)).toBe(true);
   });
 });

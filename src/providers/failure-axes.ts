@@ -86,6 +86,18 @@ export function demoteModelAxis(queue: RotationQueue<RoutingEntry>, entry: Routi
   }
 }
 
+/** 404-disable cooldown: the model is gone upstream; park until restart or
+ *  a day, whichever first (restart rebuilds from env). */
+const MODEL_DISABLED_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+export function disableModelAxis(queue: RotationQueue<RoutingEntry>, entry: RoutingEntry): void {
+  for (const e of queue.snapshot()) {
+    if (e.provider === entry.provider && e.model === entry.model) {
+      queue.park(e, MODEL_DISABLED_COOLDOWN_MS, `404 disabled (${e.label})`);
+    }
+  }
+}
+
 /** KEY_FAILURE demotes when configured (walks; direct: pins stay put);
  *  429 additionally parks for RATE_LIMIT_COOLDOWN_MS (a demoted-only entry
  *  is retried on the very next request, which re-hammered the limited pool
@@ -115,7 +127,15 @@ export function applyFailureAxes(
   // on explicit-model walks every entry gets the requested model, and a 404
   // there must not demote healthy providers' declared axes (2026-10-01).
   if (res.kind === 'BAD_REQUEST' && isWalk && dispatchedModel === entry.model) {
-    demoteModelAxis(queue, entry);
+    // 404 = model gone upstream: DISABLE it for all keys of the provider
+    // (parked for the process lifetime, stronger than demote-to-back which
+    // would re-try the dead slug on the next walk). Other 4xx keep the
+    // demote semantics (single malformed slug, provider still serves).
+    if (res.status === 404) {
+      disableModelAxis(queue, entry);
+    } else {
+      demoteModelAxis(queue, entry);
+    }
     demoted += 1;
   }
   if (demoted > 0) {
