@@ -1610,7 +1610,7 @@ describe('ProviderChain - model axis on explicit-model walks', () => {
           kind: 'BAD_REQUEST',
           status: 404,
           message: 'model gone',
-        }) as ProviderCallResult,
+        }),
     );
     const groq = p.extras.groq as unknown as {
       available: boolean;
@@ -1623,11 +1623,11 @@ describe('ProviderChain - model axis on explicit-model walks', () => {
           kind: 'BAD_REQUEST',
           status: 404,
           message: 'model gone',
-        }) as ProviderCallResult,
+        }),
     );
     (p.laptop as unknown as { available: boolean }).available = true;
     (p.laptop as unknown as { attempt: ReturnType<typeof vi.fn> }).attempt = vi.fn(
-      async () => ({ kind: 'OK', response: okResponse() }) as ProviderCallResult,
+      async () => ({ kind: 'OK', response: okResponse() }),
     );
     const chain = new ProviderChain(p, silentLogger);
     const res = await chain.handle(
