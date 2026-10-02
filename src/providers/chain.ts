@@ -224,15 +224,7 @@ export class ProviderChain {
         await sleep(backoffMs(attempt, env().TRANSIENT_BACKOFF_MS));
         continue;
       }
-      applyFailureAxes(
-        this.queue,
-        entry,
-        res,
-        behavior.demoteOnKeyFailure,
-        !!behavior.walk,
-        model,
-        this.log,
-      );
+      applyFailureAxes(this.queue, entry, res, behavior, model, this.log);
       break;
     }
     return undefined;

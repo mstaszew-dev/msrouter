@@ -96,11 +96,12 @@ export function applyFailureAxes(
   queue: RotationQueue<RoutingEntry>,
   entry: RoutingEntry,
   res: { kind: string; status: number },
-  demoteOnKeyFailure: boolean,
-  isWalk: boolean,
+  behavior: { demoteOnKeyFailure: boolean; walk?: { startedAt: number; deadlineMs: number } },
   dispatchedModel: string,
   log: { warn: (o: object, msg: string) => void; debug: (o: object, msg: string) => void },
 ): number {
+  const demoteOnKeyFailure = behavior.demoteOnKeyFailure;
+  const isWalk = !!behavior.walk;
   let demoted = 0;
   if (res.kind === 'KEY_FAILURE' && demoteOnKeyFailure) {
     demoted += providerAxisSize(queue, entry);
