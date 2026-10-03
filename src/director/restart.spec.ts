@@ -405,18 +405,14 @@ describe('assertInIterm', () => {
     process.env['TERM_PROGRAM'] = 'Apple_Terminal';
     assertInIterm(); // real ps walk: vitest's chain has no iTerm2
     expect(exitSpy).toHaveBeenCalledWith(1);
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      expect.stringContaining('no live iTerm2 process'),
-    );
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('no live iTerm2 process'));
   });
 
   it('exits with code 1 when TERM_PROGRAM is unset', () => {
     delete process.env['TERM_PROGRAM'];
     assertInIterm(); // real ps walk: vitest's chain has no iTerm2
     expect(exitSpy).toHaveBeenCalledWith(1);
-    expect(consoleErrorSpy).toHaveBeenCalledWith(
-      expect.stringContaining('TERM_PROGRAM=(unset)'),
-    );
+    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('TERM_PROGRAM=(unset)'));
   });
 });
 
@@ -527,9 +523,7 @@ describe('startWorkerInIterm', () => {
     const osaCalls = calls.filter((c) => c[0] === 'osascript');
     expect(osaCalls.length).toBe(1);
     const workerScript = osaCalls[0]![1]![1]!;
-    expect(workerScript).toContain(
-      '/Users/mst/bin/job-search-agent',
-    );
+    expect(workerScript).toContain('/Users/mst/bin/job-search-agent');
   });
 
   it('skips when the startup lock is held', () => {
@@ -668,10 +662,7 @@ describe('restartWorker', () => {
     expect(out.iterm).toBe(true);
     expect(out.state.running).toBe(false);
     // Previous campaign pids were reported before relaunching.
-    expect(silent.info).toHaveBeenCalledWith(
-      { pids: [4242] },
-      'stopped previous campaign',
-    );
+    expect(silent.info).toHaveBeenCalledWith({ pids: [4242] }, 'stopped previous campaign');
     // The worker never registered via pgrep within the tiny timeout...
     expect(silent.warn).toHaveBeenCalledWith(
       'campaign worker did not register via pgrep within timeout',
@@ -690,11 +681,60 @@ describe('restartWorker', () => {
       if (file === 'osascript') return '';
       throw new Error(`unexpected exec ${file}`);
     });
-    const out = await restartWorker({ ...kafkaOpts, cdpTimeoutMs: 1, cdpUrl: 'http://127.0.0.1:1' });
+    const out = await restartWorker({
+      ...kafkaOpts,
+      cdpTimeoutMs: 1,
+      cdpUrl: 'http://127.0.0.1:1',
+    });
     expect(out.iterm).toBe(true);
     const stopLog = vi
       .mocked(silent.info)
       .mock.calls.find((c) => c[1] === 'stopped previous campaign');
     expect(stopLog).toBeUndefined();
+  });
+});
+
+describe('startChromeCdp binary selection (k3s/Linux override)', () => {
+  beforeEach(() => {
+    vi.mocked(spawn).mockReturnValue({ unref: vi.fn() } as never);
+  });
+
+  afterEach(() => {
+    delete process.env['MSROUTER_CHROME_BIN'];
+    vi.clearAllMocks();
+  });
+
+  it('uses MSROUTER_CHROME_BIN override when set', () => {
+    process.env['MSROUTER_CHROME_BIN'] = '/usr/bin/google-chrome';
+
+    startChromeCdp('http://127.0.0.1:9222');
+
+    expect(vi.mocked(spawn)).toHaveBeenCalledWith(
+      '/usr/bin/google-chrome',
+      expect.arrayContaining(['--remote-debugging-port=9222']),
+      expect.objectContaining({ detached: true }),
+    );
+  });
+
+  it('falls back to the macOS Chrome path when the override is empty (MSROUTER_CHROME_BIN=)', () => {
+    process.env['MSROUTER_CHROME_BIN'] = '';
+
+    startChromeCdp('http://127.0.0.1:9222');
+
+    expect(vi.mocked(spawn)).toHaveBeenCalledWith(
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it('defaults to the macOS Chrome path when no override is set', () => {
+    startChromeCdp('http://127.0.0.1:9222');
+
+    expect(vi.mocked(spawn)).toHaveBeenCalledWith(
+      '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+      expect.anything(),
+      expect.objectContaining({ detached: true }),
+    );
   });
 });

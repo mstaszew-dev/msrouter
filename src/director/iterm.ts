@@ -1,5 +1,5 @@
-import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { execFileSync, spawn, type SpawnOptions } from 'node:child_process';
+import { mkdirSync, writeFileSync, existsSync, openSync, closeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -109,6 +109,10 @@ export function startWorkerInIterm(opts: iTermOpts): void {
   } catch {
     /* best-effort */
   }
+  if (isHeadlessMode()) {
+    startWorkerHeadless(opts);
+    return;
+  }
   const script = itermScript(`cd ${opts.workspace} && ${opts.entryCommand}`);
   try {
     execFileSync('osascript', ['-e', script], { encoding: 'utf8', stdio: 'ignore' });
@@ -127,6 +131,50 @@ export function startWorkerInIterm(opts: iTermOpts): void {
   }
 }
 
+/**
+ * True when MSROUTER_HEADLESS is "1"/"true": run without iTerm2 (k3s/Linux
+ * container deployments where osascript and tab supervision do not exist).
+ * Gates both the startup guard and worker spawning.
+ */
+export function isHeadlessMode(): boolean {
+  const v = process.env['MSROUTER_HEADLESS'];
+  return v === '1' || v?.toLowerCase() === 'true';
+}
+
+/**
+ * Headless spawn of the campaign worker: detached bash instead of an iTerm2
+ * tab. Output goes to <workspace>/worker-headless.log when that file can be
+ * opened, otherwise stdio is dropped - the worker must never crash the
+ * supervisor just because logging failed.
+ */
+function startWorkerHeadless(opts: iTermOpts): void {
+  let stdio: SpawnOptions['stdio'] = 'ignore';
+  let out: number | null = null;
+  try {
+    out = openSync(join(opts.workspace, 'worker-headless.log'), 'a');
+    stdio = ['ignore', out, out];
+  } catch {
+    /* fall back to stdio ignore */
+  }
+  // 'error' must be handled: a spawn failure (missing bash, EACCES, ENOMEM)
+  // emits an unhandled 'error' event that would otherwise kill the process.
+  const child = spawn('/bin/bash', ['-lc', opts.entryCommand], {
+    cwd: opts.workspace,
+    detached: true,
+    stdio,
+  });
+  child.on('error', (err) => {
+    opts.log.error({ err: err.message }, 'headless worker spawn failed');
+  });
+  child.unref();
+  // The child got its dup during spawn(); holding the parent-side fd leaks it.
+  if (out !== null) closeSync(out);
+  opts.log.info(
+    { workspace: opts.workspace, command: opts.entryCommand },
+    'started campaign worker in headless mode',
+  );
+}
+
 export function startKafkaInIterm(opts: iTermOpts): void {
   if (isKafkaRunning()) {
     kafkaConsecutiveFailures = 0;
@@ -141,6 +189,21 @@ export function startKafkaInIterm(opts: iTermOpts): void {
     return;
   }
   lastKafkaSpawnAt = now;
+  if (isHeadlessMode()) {
+    // No osascript in a headless pod: spawn the broker script directly
+    // (mirrors ensureKafkaRunning's non-iTerm branch in loop.ts).
+    const child = spawn('bash', [join(MSROUTER_ROOT, 'scripts', 'kafka.sh'), 'start-or-init'], {
+      cwd: MSROUTER_ROOT,
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.on('error', (err) => {
+      opts.log.error({ err: err.message }, 'headless Kafka spawn failed');
+    });
+    child.unref();
+    opts.log.info('started Kafka in headless mode');
+    return;
+  }
   // Use start-or-init: if the broker can't start (e.g. KRaft storage wiped
   // from /tmp cleanup), reinitialize KRaft and retry once.
   const script = itermScript(
@@ -207,7 +270,10 @@ export function procInfo(pid: number): ProcInfo | null {
       timeout: 3_000,
       stdio: 'pipe',
     });
-    const m = out.trim().split('\n')[0]?.match(/^\s*(\d+)\s+(.+)$/);
+    const m = out
+      .trim()
+      .split('\n')[0]
+      ?.match(/^\s*(\d+)\s+(.+)$/);
     return m ? { ppid: Number(m[1]), comm: m[2]!.trim() } : null;
   } catch {
     return null;
@@ -249,6 +315,15 @@ export function assertInIterm(
   startPid: number = process.pid,
   lookup: (pid: number) => ProcInfo | null = procInfo,
 ): void {
+  // Headless/container deployments (MSROUTER_HEADLESS=1) have no iTerm2 by
+  // design; the guard below is about preventing silent tab-spawn failures on
+  // the macOS desktop and must not block a deliberate headless run.
+  if (isHeadlessMode()) {
+    console.error(
+      '[msrouter] MSROUTER_HEADLESS set: skipping iTerm2 guard (headless/container mode)',
+    );
+    return;
+  }
   if (!isItermInAncestry(startPid, lookup)) {
     const term = process.env['TERM_PROGRAM'] ?? '(unset)';
     console.error(

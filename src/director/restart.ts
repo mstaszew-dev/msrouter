@@ -84,11 +84,18 @@ export async function pollCdp(url: string, timeoutMs = 30_000): Promise<boolean>
   return false;
 }
 
+const MACOS_CHROME_BIN = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+
 export function startChromeCdp(cdpUrl: string, userDataDir?: string): void {
   const port = new URL(cdpUrl).port || '9222';
   const dir = userDataDir ?? join(homedir(), '.playwright-chrome');
+  // MSROUTER_CHROME_BIN: Linux/container deployments ship a different binary
+  // (e.g. /usr/bin/google-chrome); the macOS default stays for desktop runs.
+  // trim()|| (not ??): an empty value from `MSROUTER_CHROME_BIN=` in .env must
+  // not defeat the default and spawn('') throw.
+  const chromeBin = process.env['MSROUTER_CHROME_BIN']?.trim() || MACOS_CHROME_BIN;
   const args = [
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+    chromeBin,
     `--remote-debugging-port=${port}`,
     `--user-data-dir=${dir}`,
     '--no-first-run',

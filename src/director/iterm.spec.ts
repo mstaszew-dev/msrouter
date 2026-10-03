@@ -37,7 +37,11 @@ vi.mock('node:fs', async (importOriginal) => {
 vi.mock('node:child_process', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- see above
   const actual = await importOriginal<typeof import('node:child_process')>();
-  return { ...actual, execFileSync: vi.fn(() => '') };
+  return {
+    ...actual,
+    execFileSync: vi.fn(() => ''),
+    spawn: vi.fn(() => ({ unref: vi.fn() })),
+  };
 });
 
 const silent = {
@@ -177,5 +181,152 @@ describe('iTerm ancestry guard', () => {
 
     expect(() => iterm.assertInIterm(100, lookup)).not.toThrow();
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('headless mode (MSROUTER_HEADLESS, for k3s/Linux containers)', () => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- dynamic-import typing under the fs mock
+  type ItermModule = typeof import('./iterm.js');
+  type Lookup = NonNullable<Parameters<ItermModule['isItermInAncestry']>[1]>;
+  let iterm: ItermModule;
+  let realHome: string;
+
+  beforeAll(async () => {
+    fsState.denyAll = false;
+    vi.resetModules();
+    iterm = await import('./iterm.js');
+  });
+
+  beforeEach(() => {
+    // Isolate the start-lock bookkeeping (~/.campaign-agent/agent-start.lock)
+    // from the developer's real home, like the sibling describes do.
+    realHome = process.env['HOME']!;
+    process.env['HOME'] = mkdtempSync(join(tmpdir(), 'director-iterm-headless-'));
+  });
+
+  afterEach(() => {
+    process.env['HOME'] = realHome;
+    delete process.env['MSROUTER_HEADLESS'];
+    delete process.env['TERM_PROGRAM'];
+    vi.restoreAllMocks();
+  });
+
+  // No iTerm2 anywhere in the chain (the pod/container situation).
+  const noIterm: Lookup = (pid) => (pid === 100 ? { ppid: 1, comm: 'bash' } : null);
+
+  it('assertInIterm passes without iTerm ancestry when MSROUTER_HEADLESS is set', () => {
+    process.env['MSROUTER_HEADLESS'] = '1';
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process exited');
+    });
+
+    expect(() => iterm.assertInIterm(100, noIterm)).not.toThrow();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
+  it('assertInIterm still exits without iTerm ancestry when headless mode is unset', () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process exited');
+    });
+
+    expect(() => iterm.assertInIterm(100, noIterm)).toThrow('process exited');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it('startWorkerInIterm spawns the worker detached via bash (cwd, no osascript) when headless', async () => {
+    process.env['MSROUTER_HEADLESS'] = '1';
+    const { execFileSync, spawn } = await import('node:child_process');
+    const child = { on: vi.fn(), unref: vi.fn() };
+    vi.mocked(spawn).mockReturnValue(child as never);
+
+    iterm.startWorkerInIterm({
+      entryCommand: 'job-search-agent',
+      workspace: '/test/workspace',
+      log: silent,
+    });
+
+    expect(vi.mocked(execFileSync)).not.toHaveBeenCalledWith(
+      'osascript',
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(vi.mocked(spawn)).toHaveBeenCalledWith(
+      '/bin/bash',
+      ['-lc', 'job-search-agent'],
+      expect.objectContaining({ cwd: '/test/workspace', detached: true }),
+    );
+    // B1 regression: the spawn 'error' event must be handled or a spawn
+    // failure (missing bash, EACCES) crashes the whole process.
+    expect(child.on).toHaveBeenCalledWith('error', expect.any(Function));
+    expect(silent.info).toHaveBeenCalledWith(
+      expect.objectContaining({ workspace: '/test/workspace' }),
+      expect.stringContaining('headless'),
+    );
+  });
+
+  it('startWorkerInIterm writes the worker log and closes the parent fd when the workspace is writable', async () => {
+    process.env['MSROUTER_HEADLESS'] = '1';
+    const { spawn } = await import('node:child_process');
+    const child = { on: vi.fn(), unref: vi.fn() };
+    vi.mocked(spawn).mockReturnValue(child as never);
+    const workspace = mkdtempSync(join(tmpdir(), 'director-iterm-workspace-'));
+
+    iterm.startWorkerInIterm({
+      entryCommand: 'job-search-agent',
+      workspace,
+      log: silent,
+    });
+
+    const stdio = vi.mocked(spawn).mock.calls[0]?.[2]?.stdio;
+    expect(Array.isArray(stdio)).toBe(true); // ['ignore', fd, fd]
+    // The spec's top-level existsSync is the mocked fs; use the real one so
+    // the log-file assertion can actually fail.
+    // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- inline typeof import() needed for importActual typing
+    const fsActual = await vi.importActual<typeof import('node:fs')>('node:fs');
+    expect(fsActual.existsSync(join(workspace, 'worker-headless.log'))).toBe(true);
+  });
+
+  it('startWorkerInIterm falls back to stdio ignore when the headless log file cannot be opened', async () => {
+    process.env['MSROUTER_HEADLESS'] = '1';
+    const { spawn } = await import('node:child_process');
+    const child = { on: vi.fn(), unref: vi.fn() };
+    vi.mocked(spawn).mockReturnValue(child as never);
+
+    iterm.startWorkerInIterm({
+      entryCommand: 'job-search-agent',
+      workspace: '/dev/null/not-a-dir',
+      log: silent,
+    });
+
+    expect(vi.mocked(spawn)).toHaveBeenCalledWith(
+      '/bin/bash',
+      expect.anything(),
+      expect.objectContaining({ detached: true, stdio: 'ignore' }),
+    );
+  });
+
+  it('startKafkaInIterm spawns kafka.sh directly instead of osascript when headless', async () => {
+    process.env['MSROUTER_HEADLESS'] = '1';
+    const { execFileSync, spawn } = await import('node:child_process');
+    const child = { on: vi.fn(), unref: vi.fn() };
+    vi.mocked(spawn).mockReturnValue(child as never);
+
+    iterm.startKafkaInIterm({
+      entryCommand: 'job-search-agent',
+      workspace: '/test/workspace',
+      log: silent,
+    });
+
+    expect(vi.mocked(execFileSync)).not.toHaveBeenCalledWith(
+      'osascript',
+      expect.anything(),
+      expect.anything(),
+    );
+    expect(vi.mocked(spawn)).toHaveBeenCalledWith(
+      'bash',
+      expect.arrayContaining([expect.stringContaining('kafka.sh'), 'start-or-init']),
+      expect.objectContaining({ detached: true }),
+    );
+    expect(silent.info).toHaveBeenCalledWith('started Kafka in headless mode');
   });
 });
