@@ -187,10 +187,12 @@ export class DirectorLoop {
       }
     }
     try {
-      startKafkaInIterm({
+      await startKafkaInIterm({
         entryCommand: this.opts.env.DIRECTOR_RUNNER || DEFAULT_RUNNER,
         workspace: this.opts.env.DIRECTOR_OPENCLAW_WORKSPACE,
         log: this.opts.log,
+        kafkaBootstrap: this.opts.env.KAFKA_BOOTSTRAP,
+        kafkaHome: expandTilde(this.opts.env.KAFKA_HOME),
       });
       this.opts.log.info('kafka recovery delegated to iTerm tabs (broker + monitor)');
       return true;
@@ -308,10 +310,15 @@ export class DirectorLoop {
     // was already running on a previous tick.
     if (this.opts.env.KAFKA_ENABLED) {
       try {
-        startKafkaInIterm({
+        await startKafkaInIterm({
           entryCommand: this.opts.env.DIRECTOR_RUNNER || DEFAULT_RUNNER,
           workspace: this.opts.env.DIRECTOR_OPENCLAW_WORKSPACE,
           log: this.opts.log,
+          // Detection must follow the loaded env, not the ambient process env:
+          // on a non-default KAFKA_BOOTSTRAP the old hardcoded 19092 check
+          // watched the wrong port and spawned a duplicate tab every tick.
+          kafkaBootstrap: this.opts.env.KAFKA_BOOTSTRAP,
+          kafkaHome: expandTilde(this.opts.env.KAFKA_HOME),
         });
       } catch {
         // best-effort: Kafka startup failure should not block the director tick

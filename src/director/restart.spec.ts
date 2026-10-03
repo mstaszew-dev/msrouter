@@ -1,7 +1,18 @@
 vi.mock('node:child_process', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- importOriginal needs an inline typeof import(); a type-only namespace breaks the factory's return typing
   const actual = await importOriginal<typeof import('node:child_process')>();
-  return { ...actual, execFileSync: vi.fn(), spawn: vi.fn() };
+  // detection is async: promisify(execFile) appends (options, callback), so the
+  // callback is always the LAST argument.
+  // Detection probes via promisify(execFile). A mocked execFile has no
+  // promisify.custom symbol, so generic promisify resolves the raw 2nd callback
+  // arg; stubKafkaProbe drives that path directly.
+  const execFileMock = vi.fn(
+    (...callArgs: unknown[]) => {
+      const cb = callArgs[callArgs.length - 1] as (e: Error | null, out: string) => void;
+      cb(new Error('execFile not stubbed'), '');
+    },
+  );
+  return { ...actual, execFileSync: vi.fn(), execFile: execFileMock, spawn: vi.fn() };
 });
 vi.mock('node:timers/promises', () => ({
   setTimeout: vi.fn(async () => undefined),
@@ -37,6 +48,26 @@ import {
   waitForStartup,
 } from './restart.js';
 
+
+/**
+ * Stub the async broker probe used by isKafkaRunningWith.
+ * `lsof` reports the listener; `kafka-topics.sh` succeeds only when a real
+ * broker answers.
+ */
+async function stubKafkaProbe(o: { listener: string; brokerUp: boolean }): Promise<void> {
+  const { execFile } = await import('node:child_process');
+  vi.mocked(execFile).mockImplementation(((...callArgs: unknown[]) => {
+    const file = String(callArgs[0]);
+    const cb = callArgs[callArgs.length - 1] as (e: Error | null, out: string) => void;
+    if (file === 'lsof') {
+      cb(null, o.listener);
+      return;
+    }
+    if (o.brokerUp) cb(null, 'director-events\n');
+    else cb(new Error('not a broker'), '');
+  }) as never);
+}
+
 const silent = {
   warn: vi.fn(),
   info: vi.fn(),
@@ -45,6 +76,8 @@ const silent = {
 } as unknown as pino.Logger;
 
 const kafkaOpts = {
+  kafkaBootstrap: 'localhost:19092',
+  kafkaHome: '/fake/kafka',
   entryCommand: '/Users/mst/bin/job-search-agent',
   workspace: '/test/workspace',
   cdpUrl: 'http://127.0.0.1:9222',
@@ -155,12 +188,12 @@ describe('startKafkaInIterm', () => {
     process.env['HOME'] = realHome;
   });
 
-  it('starts Kafka via start-or-init in an iTerm tab when broker is not running', () => {
+  it('starts Kafka via start-or-init in an iTerm tab when broker is not running', async () => {
     vi.mocked(execFileSync).mockImplementation((cmd: string) => {
       if (cmd === 'lsof') throw new Error('not found');
       return '';
     });
-    startKafkaInIterm(kafkaOpts);
+    await startKafkaInIterm(kafkaOpts);
     const calls = vi.mocked(execFileSync).mock.calls;
     const osaCalls = calls.filter((c) => c[0] === 'osascript');
     expect(osaCalls.length).toBe(1);
@@ -175,40 +208,73 @@ describe('startKafkaInIterm', () => {
     expect(script).not.toContain('/test/workspace');
   });
 
-  it('skips spawn when Kafka port 19092 is already listening', () => {
-    vi.mocked(execFileSync).mockImplementation((cmd: string) => {
-      if (cmd === 'lsof') return 'node  12345  mst  5u  IPv4  ...\n';
-      throw new Error('not found');
-    });
-    startKafkaInIterm(kafkaOpts);
+  // 2026-10-03: detection used to treat ANY listener on 19092 as "broker up",
+  // so this stub only had to satisfy lsof. It now also requires a real broker
+  // (kafka-topics.sh answering), which is what makes a hijacked port
+  // distinguishable from a healthy broker.
+  it('skips spawn when a real Kafka broker is already listening', async () => {
+    await stubKafkaProbe({ listener: 'java  12345  mst  5u  IPv4  *:19092 (LISTEN)\n', brokerUp: true });
+    await startKafkaInIterm(kafkaOpts);
     expect(execFileSync).not.toHaveBeenCalledWith('osascript', expect.anything());
   });
 
-  it('does not spam tabs when Kafka repeatedly fails to start (cooldown)', () => {
+  // The bug that produced duplicate broker+monitor tabs: a non-Kafka process
+  // holding the port read as "broker running", so the Director skipped the real
+  // start. It must now start.
+  it('does NOT skip spawn when a non-Kafka process holds the port', async () => {
+    await stubKafkaProbe({ listener: 'nc  999  mst  5u  IPv4  *:19092 (LISTEN)\n', brokerUp: false });
+    await startKafkaInIterm(kafkaOpts);
+    const osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
+    expect(osaCalls.length).toBe(1);
+  });
+
+  it('finds a broker listening on a non-default KAFKA_BOOTSTRAP port', async () => {
+    // The hardcoded-19092 bug: a broker on 29092 was invisible, so every tick
+    // opened another tab.
+    const { execFile } = await import('node:child_process');
+    vi.mocked(execFile).mockImplementation(((...callArgs: unknown[]) => {
+      const file = String(callArgs[0]);
+      const args = (callArgs[1] ?? []) as readonly string[];
+      const cb = callArgs[callArgs.length - 1] as (e: Error | null, out: string) => void;
+      if (file === 'lsof') {
+        if (String(args).includes('19092')) cb(null, ''); // old code probed this
+        else cb(null, 'java  12345  mst  5u  IPv4  *:29092 (LISTEN)\n');
+        return;
+      }
+      cb(null, 'director-events\n');
+    }) as never);
+    await startKafkaInIterm({ ...kafkaOpts, kafkaBootstrap: 'localhost:29092' });
+    const osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
+    expect(osaCalls.length).toBe(0);
+  });
+
+  it('does not spam tabs when Kafka repeatedly fails to start (cooldown)', async () => {
     vi.mocked(execFileSync).mockImplementation((cmd: string) => {
       if (cmd === 'lsof') throw new Error('not found');
       return '';
     });
-    startKafkaInIterm(kafkaOpts);
+    await startKafkaInIterm(kafkaOpts);
     let osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
     expect(osaCalls.length).toBe(1);
     vi.mocked(execFileSync).mockClear();
-    startKafkaInIterm(kafkaOpts);
+    await startKafkaInIterm(kafkaOpts);
     osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
     expect(osaCalls.length).toBe(0);
   });
 
-  it('rethrows when osascript fails in startKafkaInIterm', () => {
+  it('rethrows when osascript fails in startKafkaInIterm', async () => {
     vi.mocked(execFileSync).mockImplementation((cmd: string) => {
       if (cmd === 'lsof') throw new Error('not found');
       throw new Error('osascript failed');
     });
-    expect(() => startKafkaInIterm(kafkaOpts)).toThrow(
+    // startKafkaInIterm is async (the broker probe must not block the gateway
+    // event loop), so the failure surfaces as a rejected promise.
+    await expect(startKafkaInIterm(kafkaOpts)).rejects.toThrow(
       'iTerm2 launch failed (is iTerm2 installed and running?). Start Kafka manually.',
     );
   });
 
-  it('uses exponential backoff after consecutive Kafka start failures', () => {
+  it('uses exponential backoff after consecutive Kafka start failures', async () => {
     vi.mocked(execFileSync).mockImplementation((cmd: string) => {
       if (cmd === 'lsof') throw new Error('not found');
       return '';
@@ -216,63 +282,64 @@ describe('startKafkaInIterm', () => {
     const origNow = Date.now;
 
     // Failure #1 at t=0: backoff becomes 120s
-    startKafkaInIterm(kafkaOpts);
+    await startKafkaInIterm(kafkaOpts);
     let osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
     expect(osaCalls.length).toBe(1);
     vi.mocked(execFileSync).mockClear();
 
     // t=61s: within 120s backoff -> skip
     vi.spyOn(Date, 'now').mockReturnValue(origNow() + 61_000);
-    startKafkaInIterm(kafkaOpts);
+    await startKafkaInIterm(kafkaOpts);
     osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
     expect(osaCalls.length).toBe(0);
 
     // t=121s: past 120s backoff -> failure #2, backoff becomes 240s
     vi.spyOn(Date, 'now').mockReturnValue(origNow() + 121_000);
-    startKafkaInIterm(kafkaOpts);
+    await startKafkaInIterm(kafkaOpts);
     osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
     expect(osaCalls.length).toBe(1);
     vi.mocked(execFileSync).mockClear();
 
     // t=300s: within 240s of second attempt -> skip
     vi.spyOn(Date, 'now').mockReturnValue(origNow() + 300_000);
-    startKafkaInIterm(kafkaOpts);
+    await startKafkaInIterm(kafkaOpts);
     osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
     expect(osaCalls.length).toBe(0);
 
     // t=362s: past 240s of second attempt -> failure #3, backoff becomes 480s
     vi.spyOn(Date, 'now').mockReturnValue(origNow() + 362_000);
-    startKafkaInIterm(kafkaOpts);
+    await startKafkaInIterm(kafkaOpts);
     osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
     expect(osaCalls.length).toBe(1);
     vi.mocked(execFileSync).mockClear();
 
     // t=700s: within 480s of third attempt -> skip
     vi.spyOn(Date, 'now').mockReturnValue(origNow() + 700_000);
-    startKafkaInIterm(kafkaOpts);
+    await startKafkaInIterm(kafkaOpts);
     osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
     expect(osaCalls.length).toBe(0);
 
     Date.now = origNow;
   });
 
-  it('resets backoff when broker is detected running', () => {
+  it('resets backoff when broker is detected running', async () => {
     // First: make a failed attempt to build up failures
     vi.mocked(execFileSync).mockImplementation((cmd: string) => {
       if (cmd === 'lsof') throw new Error('not found');
       return '';
     });
-    startKafkaInIterm(kafkaOpts);
+    await startKafkaInIterm(kafkaOpts);
     let osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
     expect(osaCalls.length).toBe(1);
     vi.mocked(execFileSync).mockClear();
 
-    // Now broker is running: should skip and reset
-    vi.mocked(execFileSync).mockImplementation((cmd: string) => {
-      if (cmd === 'lsof') return 'java  12345  mst  5u  IPv4  ...\n';
-      return '';
+    // Now broker is running: should skip and reset the failure ladder.
+    vi.mocked(execFileSync).mockClear();
+    await stubKafkaProbe({
+      listener: 'java  12345  mst  5u  IPv4  *:19092 (LISTEN)\n',
+      brokerUp: true,
     });
-    startKafkaInIterm(kafkaOpts);
+    await startKafkaInIterm(kafkaOpts);
     osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
     expect(osaCalls.length).toBe(0);
 
@@ -280,18 +347,20 @@ describe('startKafkaInIterm', () => {
     const origNow = Date.now;
     vi.spyOn(Date, 'now').mockReturnValue(origNow() + 65_000);
     vi.mocked(execFileSync).mockClear();
+    // Broker is down again; detection must use the async probe to see that.
+    await stubKafkaProbe({ listener: '', brokerUp: false });
     vi.mocked(execFileSync).mockImplementation((cmd: string) => {
       if (cmd === 'lsof') throw new Error('not found');
       return '';
     });
-    startKafkaInIterm(kafkaOpts);
+    await startKafkaInIterm(kafkaOpts);
     // After reset, cooldown is back to 60s base; 65s > 60s so it should fire
     osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
     expect(osaCalls.length).toBe(1);
     Date.now = origNow;
   });
 
-  it('warns after multiple consecutive Kafka start failures', () => {
+  it('warns after multiple consecutive Kafka start failures', async () => {
     vi.mocked(execFileSync).mockImplementation((cmd: string) => {
       if (cmd === 'lsof') throw new Error('not found');
       return '';
@@ -299,11 +368,11 @@ describe('startKafkaInIterm', () => {
 
     // 3 consecutive failures to trigger warning (backoff: 60->120->240s)
     const origNow = Date.now;
-    startKafkaInIterm(kafkaOpts); // failure #1
+    await startKafkaInIterm(kafkaOpts); // failure #1
     vi.spyOn(Date, 'now').mockReturnValue(origNow() + 121_000);
-    startKafkaInIterm(kafkaOpts); // failure #2
+    await startKafkaInIterm(kafkaOpts); // failure #2
     vi.spyOn(Date, 'now').mockReturnValue(origNow() + 362_000);
-    startKafkaInIterm(kafkaOpts); // failure #3
+    await startKafkaInIterm(kafkaOpts); // failure #3
 
     expect(silent.warn).toHaveBeenCalledWith(
       expect.objectContaining({ failures: 3 }),

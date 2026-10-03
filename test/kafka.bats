@@ -465,3 +465,131 @@ PROPS
   [ "$status" -ne 0 ]
   [[ "$output" == *"did not become ready"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# Duplicate-broker guard (2026-10-03)
+# kafka.sh start only consulted the PIDFILE, so two manual starts in two iTerm
+# tabs both saw "not running" and raced to bind the same port. One tab per start
+# is how the duplicate monitor tabs appeared. start must now also refuse when the
+# port is held, even with no pidfile.
+# ---------------------------------------------------------------------------
+
+@test "start refuses when the port is held but no pidfile exists" {
+  # High, unlikely-to-collide port: binding the real broker port would let the
+  # test pass for the wrong reason (another listener already holding it).
+  export KAFKA_PORT=39192
+  export KAFKA_BOOTSTRAP="localhost:39192"
+  # A stray broker (or any listener) already owns the port; the pidfile is gone.
+  # Mock a live process that will hold a TCP port for the duration of the test.
+  python3 - <<'PY' &
+import socket, time
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("127.0.0.1", 39192)); s.listen(1); time.sleep(30)
+PY
+  local holder=$!
+  sleep 1
+
+  rm -f .run/kafka.pid
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  is_running() { return 1; }            # pidfile says "not running"
+  port_open() { return 0; }              # but the port IS held
+  kafka_responding() { return 1; }      # and it is not our broker
+
+  run start
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"already in use"* || "$output" == *"refus"* ]]
+}
+
+@test "start still proceeds when nothing holds the port" {
+  cat > "${KAFKA_HOME}/bin/kafka-server-start.sh" <<'MOCK'
+#!/bin/bash
+sleep 61 >/dev/null 2>&1 </dev/null &
+echo $! > .run/kafka.pid
+MOCK
+  chmod +x "${KAFKA_HOME}/bin/kafka-server-start.sh"
+  printf '#!/bin/bash\nexit 0\n' > "${KAFKA_HOME}/bin/kafka-topics.sh"
+  chmod +x "${KAFKA_HOME}/bin/kafka-topics.sh"
+
+  rm -f .run/kafka.pid
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  is_running() { return 1; }
+  port_open() { return 0; }
+  kafka_responding() { return 0; }
+
+  run start
+  [ "$status" -eq 0 ]
+}
+
+@test "port_in_use helper detects a held port and ignores a free one" {
+  export KAFKA_PORT=39193
+  python3 - <<'PY' &
+import socket, time
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("127.0.0.1", 39193)); s.listen(1); time.sleep(20)
+PY
+  local holder=$!
+  sleep 1
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+
+  run port_in_use 39193
+  local held=$status
+  run port_in_use 39194
+  local free=$status
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+
+  [ "$held" -eq 0 ]
+  [ "$free" -ne 0 ]
+}
+
+@test "kafka_responding is false when kafka-topics.sh fails" {
+  printf '#!/bin/bash\nexit 1\n' > "${KAFKA_HOME}/bin/kafka-topics.sh"
+  chmod +x "${KAFKA_HOME}/bin/kafka-topics.sh"
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  run kafka_responding
+  [ "$status" -ne 0 ]
+}
+
+@test "kafka_responding is true when kafka-topics.sh lists topics" {
+  printf '#!/bin/bash\necho director-events\nexit 0\n' > "${KAFKA_HOME}/bin/kafka-topics.sh"
+  chmod +x "${KAFKA_HOME}/bin/kafka-topics.sh"
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  run kafka_responding
+  [ "$status" -eq 0 ]
+}
+
+@test "start adopts the running broker's pid so stop/restart keep working" {
+  # Regression (2026-10-03): the reuse branch returned 0 without writing a
+  # pidfile, which made `restart` a silent no-op and left an orphan broker that
+  # no command could stop.
+  export KAFKA_PORT=39195
+  export KAFKA_BOOTSTRAP="localhost:39195"
+  python3 - <<'PY' &
+import socket, time
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("127.0.0.1", 39195)); s.listen(1); time.sleep(30)
+PY
+  local holder=$!
+  sleep 1
+
+  rm -f .run/kafka.pid
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  is_running() { return 1; }
+  port_open() { return 0; }
+  port_in_use() { return 0; }
+  kafka_responding() { return 0; }
+  # Pretend lsof can report the holder as the broker process.
+  lsof() { if [[ "$*" == *"-tiTCP"* ]]; then echo "$holder"; else return 1; fi; }
+  export -f lsof 2>/dev/null || true
+
+  run start
+  kill "$holder" 2>/dev/null || true
+  wait "$holder" 2>/dev/null || true
+
+  [ "$status" -eq 0 ]
+  # The pidfile must now exist and hold a pid.
+  [ -f .run/kafka.pid ]
+}

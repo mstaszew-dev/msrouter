@@ -37,7 +37,23 @@ vi.mock('node:fs', async (importOriginal) => {
 vi.mock('node:child_process', async (importOriginal) => {
   // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- see above
   const actual = await importOriginal<typeof import('node:child_process')>();
-  return { ...actual, execFileSync: vi.fn(() => '') };
+  // execFile is stubbed as an async callback: promisify(execFile) wraps it, and
+  // detection is async precisely so a JVM probe cannot freeze the event loop.
+  // execFile carries util.promisify.custom in real Node; promisify then resolves
+  // to { stdout, stderr }. Attaching the same symbol here keeps the mocked probe
+  // on the REAL promisify path, so tests exercise the production contract
+  // instead of relying on a production fallback for a generic-promisify result.
+  const execFileMock = vi.fn();
+  (execFileMock as unknown as Record<symbol, unknown>)[
+    (await import('node:util')).promisify.custom
+  ] = (file: string, _args: readonly string[], opts: { encoding?: string }) =>
+    new Promise((resolve, reject) => {
+      execFileMock(file, _args, opts, (e: Error | null, stdout: string, stderr: string) => {
+        if (e) reject(e);
+        else resolve({ stdout, stderr });
+      });
+    });
+  return { ...actual, execFileSync: vi.fn(() => ''), execFile: execFileMock };
 });
 
 const silent = {
@@ -177,5 +193,102 @@ describe('iTerm ancestry guard', () => {
 
     expect(() => iterm.assertInIterm(100, lookup)).not.toThrow();
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+});
+
+// 2026-10-03 (review of kafka instance detection): isKafkaRunning hardcoded
+// port 19092 and accepted ANY listener on it, so a non-Kafka process on 19092
+// read as "broker running" and a broker on a KAFKA_PORT-overridden port was
+// invisible (the Director then kept spawning duplicate tabs). These tests pin
+// the fixed contract: derive the port from the bootstrap config, and require a
+// real broker on it, not merely a bound socket.
+describe('isKafkaRunning - port-aware and broker-verified', () => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- dynamic-import typing under the fs mock
+  type ItermModule = typeof import('./iterm.js');
+
+  beforeAll(async () => {
+    fsState.denyAll = false;
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /** Stub the two async probes detection shells out to (lsof, kafka-topics.sh). */
+  async function stubProbes(o: { listener: string; topicsExit: number }) {
+    const { execFile } = await import('node:child_process');
+    vi.mocked(execFile).mockImplementation(((
+      ...callArgs: unknown[]
+    ) => {
+      const file = String(callArgs[0]);
+      const cb = callArgs[callArgs.length - 1] as (
+        e: Error | null,
+        out: string,
+        err: string,
+      ) => void;
+      if (file === 'lsof') {
+        cb(null, o.listener, '');
+        return;
+      }
+      // kafka-topics.sh: a non-zero exit arrives as an error to the callback.
+      if (o.topicsExit !== 0) {
+        cb(new Error('topics failed'), '', '');
+        return;
+      }
+      cb(null, 'director-events\n', '');
+    }) as never);
+  }
+
+  it('derives the port from KAFKA_BOOTSTRAP rather than hardcoding 19092', async () => {
+    const iterm: ItermModule = await import('./iterm.js');
+    await stubProbes({ listener: 'java 123 1 0x0 0 0 TCP *:29092 (LISTEN)', topicsExit: 0 });
+    const running = await iterm.isKafkaRunningWith('broker.example.com:29092', 'kafka-home');
+
+    expect(running).toBe(true);
+    // The lsof call must target 29092, proving the port came from the config.
+    const { execFile } = await import('node:child_process');
+    const lsofArgs = vi
+      .mocked(execFile)
+      .mock.calls.filter((c) => c[0] === 'lsof')
+      .map((c) => (c[1] as readonly string[]).join(' '));
+    expect(lsofArgs.join(' ')).toContain('29092');
+    expect(lsofArgs.join(' ')).not.toContain('19092');
+  });
+
+  it('is FALSE when something that is not Kafka holds the port', async () => {
+    const iterm: ItermModule = await import('./iterm.js');
+    await stubProbes({ listener: 'nc 999 1 0x0 0 0 TCP *:19092 (LISTEN)', topicsExit: 1 });
+
+    expect(await iterm.isKafkaRunningWith('localhost:19092', 'kafka-home')).toBe(false);
+  });
+
+  it('is FALSE when no process holds the port at all', async () => {
+    const iterm: ItermModule = await import('./iterm.js');
+    await stubProbes({ listener: '', topicsExit: 1 });
+
+    expect(await iterm.isKafkaRunningWith('localhost:19092', 'kafka-home')).toBe(false);
+  });
+
+  it('is TRUE only when the port is held AND the topic API answers', async () => {
+    const iterm: ItermModule = await import('./iterm.js');
+    await stubProbes({ listener: 'java 123 1 0x0 0 0 TCP *:19092 (LISTEN)', topicsExit: 0 });
+
+    expect(await iterm.isKafkaRunningWith('localhost:19092', 'kafka-home')).toBe(true);
+  });
+
+  it('does not throw when the lsof probe itself fails', async () => {
+    const iterm: ItermModule = await import('./iterm.js');
+    const { execFile } = await import('node:child_process');
+    vi.mocked(execFile).mockImplementation(((...callArgs: unknown[]) => {
+      const cb = callArgs[callArgs.length - 1] as (
+        e: Error | null,
+        out: string,
+        err: string,
+      ) => void;
+      cb(new Error('lsof not found'), '', '');
+    }) as never);
+
+    expect(await iterm.isKafkaRunningWith('localhost:19092', 'kafka-home')).toBe(false);
   });
 });

@@ -29,6 +29,36 @@ mkdir -p .run
 # "20s" wait into minutes and stalling the Director's recovery tab.
 port_open() { (exec 3<>"/dev/tcp/127.0.0.1/${KAFKA_PORT}") 2>/dev/null; }
 
+# True when SOMETHING already holds the broker port, whether or not it is ours.
+# Distinct from port_open (does the socket accept?) and from is_running (does
+# our pidfile hold a live pid?). Two manual starts used to race past the pidfile
+# check and both bind, which is how duplicate broker+monitor tabs appeared.
+port_in_use() {
+  local port="${1:-$KAFKA_PORT}"
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+    return
+  fi
+  # lsof absent: fall back to the dependency-free /dev/tcp probe so the guard
+  # cannot silently disable itself (exit 127 would read as "port free").
+  (exec 3<>"/dev/tcp/127.0.0.1/${port}") 2>/dev/null
+}
+
+# PID of whatever holds the broker port (empty if unknown). `head -1` adopts a
+# single pid, so if duplicates ever exist, stop() kills only one; the guard in
+# start() is what prevents duplicates in the first place.
+broker_pid() {
+  command -v lsof >/dev/null 2>&1 || return 0
+  lsof -nP -tiTCP:"${1:-$KAFKA_PORT}" -sTCP:LISTEN 2>/dev/null | head -1
+}
+
+# True when a real Kafka broker answers on the bootstrap address. A non-Kafka
+# listener (nc, a stray JVM) holds the port but has no topic API, so "the port
+# is bound" must never be taken as "the broker is up".
+kafka_responding() {
+  "$KAFKA_HOME/bin/kafka-topics.sh" --bootstrap-server "$KAFKA_BOOTSTRAP" --list >/dev/null 2>&1
+}
+
 # Generate the port-overridden broker properties (idempotent).
 generate_props() {
   local props=".run/kafka-server.properties"
@@ -51,12 +81,42 @@ log()  { printf '\033[1;34m[kafka]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m[ok]\033[0m  %s\n' "$*"; }
 die()  { printf '\033[1;31m[err]\033[0m %s\n' "$*" >&2; exit 1; }
 
+# NOTE on the pidfile (2026-10-03): it IS reliable. kafka-server-start.sh ends in
+# `exec ... kafka.Kafka`, so the shell is replaced by the JVM and `$!` in start()
+# is the broker's real pid. An older comment here claimed the pidfile was
+# unreliable because of nohup; that was wrong and it made stop() look suspect.
+# The genuine gap was that is_running() was the ONLY check, which is what
+# allowed duplicate brokers; see port_in_use in start().
 is_running() {
   [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
 }
 
 start() {
   if is_running; then die "Kafka already running (pid $(cat "$PIDFILE"))"; fi
+  # Duplicate-broker guard (2026-10-03): the pidfile alone is not enough. A
+  # broker started from another tab (or one whose pidfile was lost) leaves the
+  # port bound with no pid of ours, so start would race it and both would try to
+  # bind. Refuse when the port is taken; if it is OUR broker responding, treat it
+  # as success rather than an error so idempotent callers do not fail.
+  if port_in_use "$KAFKA_PORT"; then
+    if kafka_responding; then
+      # Adopt the running broker's pid so stop()/monitor/restart keep working.
+      # Without this, returning 0 with no pidfile made `restart` a silent no-op
+      # and left an orphan no command could stop.
+      local adopted
+      adopted="$(broker_pid)"
+      if [[ -n "$adopted" ]]; then
+        printf '%s' "$adopted" > "$PIDFILE"
+        ok "Kafka already running on ${KAFKA_BOOTSTRAP} (adopted pid ${adopted})"
+      else
+        ok "Kafka already running on ${KAFKA_BOOTSTRAP} (pid not recoverable)"
+      fi
+      return 0
+    fi
+    die "port ${KAFKA_PORT} is already in use by another process (not a Kafka broker).
+  Refusing to start a second broker. Free the port, or stop that process first:
+    lsof -nP -iTCP:${KAFKA_PORT} -sTCP:LISTEN"
+  fi
   # Override ports in KRaft config so the broker listens on KAFKA_PORT.
   local props
   props="$(generate_props)"
@@ -74,8 +134,7 @@ start() {
   local sleep_s="${KAFKA_READINESS_SLEEP:-1}"
   local i
   for i in $(seq 1 "$tries"); do
-    if port_open && \
-      "$KAFKA_HOME/bin/kafka-topics.sh" --bootstrap-server "$KAFKA_BOOTSTRAP" --list >/dev/null 2>&1; then
+    if port_open && kafka_responding; then
       ok "broker ready"
       return 0
     fi
@@ -121,6 +180,11 @@ reinit_kraft() {
 
 # Try to start; if broker fails to come up, reinitialize KRaft and retry once.
 start_or_init() {
+  # NOTE: start() calls die() when a foreign process holds the port, and die()
+  # exits the whole script. That is deliberate and must not be "fixed": we must
+  # NOT run reinit_kraft (which can rm -rf the KRaft log dir) just because some
+  # unrelated process owns the port. Free the port, then retry.
+  #
   # Preflight: format the KRaft storage BEFORE starting when metadata is
   # missing/corrupt, so the broker doesn't die instantly on every attempt
   # (and the Director doesn't spawn duplicate recovery tabs).

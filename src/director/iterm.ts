@@ -1,12 +1,22 @@
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 
 import type { Logger } from 'pino';
 
 import { isStartLocked } from './process.js';
+
+const execFileP = promisify(execFile);
+
+/** Expand a leading `~` so KAFKA_HOME can be configured the way .env writes it.
+ *  Without this, join() keeps the literal tilde and execFile fails ENOENT,
+ *  which reads as "Kafka is down" and re-spawns duplicate tabs. */
+function expandHome(p: string): string {
+  return p.startsWith('~/') || p === '~' ? join(homedir(), p.slice(1)) : p;
+}
 
 /** Repo root (scripts/kafka.sh lives here). Walks up from this module until
  *  scripts/kafka.sh is found, so it works from both src/ and dist/. */
@@ -27,10 +37,22 @@ function findRoot(): string {
 }
 export const MSROUTER_ROOT = findRoot();
 
+/** Options shared by every iTerm launcher. */
 export interface iTermOpts {
   entryCommand: string;
   workspace: string;
   log: Logger;
+}
+
+/**
+ * Kafka adds two REQUIRED fields: they are the single source of truth for which
+ * port to probe, and an optional field with a hardcoded default was exactly how
+ * the 19092-vs-KAFKA_PORT divergence shipped. Making them required means the
+ * compiler rejects any future caller that forgets to pass the loaded env.
+ */
+export interface KafkaItermOpts extends iTermOpts {
+  kafkaBootstrap: string;
+  kafkaHome: string;
 }
 
 function startLockPath(): string {
@@ -56,17 +78,62 @@ end tell`;
 }
 
 /**
- * Check if the Kafka broker is already running by testing the fixed port.
- * The pidfile is unreliable (kafka.sh uses nohup, bash exits immediately).
+ * Check if the Kafka broker is already running.
+ *
+ * Two bugs fixed 2026-10-03 (this is what let duplicate broker+monitor tabs pile
+ * up in iTerm):
+ *
+ *  1. The port was HARDCODED to 19092 while kafka.sh honours KAFKA_PORT. On a
+ *     non-default port the Director watched a port nobody listened on, decided
+ *     Kafka was down, and spawned a fresh tab on every tick - while the real
+ *     broker ran happily on its configured port. The port now comes from the
+ *     bootstrap address the rest of the app uses.
+ *  2. A bound socket was taken as "broker running". Any listener (nc, a stray
+ *     JVM, another app) satisfied the old check, so a hijacked port looked
+ *     healthy and the real broker was never started. Detection now requires a
+ *     Kafka topic API to answer, which is the same readiness proof kafka.sh
+ *     itself uses.
+ *
+ * `bootstrap` is host:port as configured (KAFKA_BOOTSTRAP); only the port is
+ * probed locally, which matches kafka.sh binding 0.0.0.0.
+ *
+ * ASYNC ON PURPOSE (2026-10-03): the Director loop runs inside the gateway
+ * process, so a synchronous probe here freezes the Node event loop and stalls
+ * every in-flight SSE streaming response. kafka-topics.sh is a JVM: measured on
+ * this box, an unbounded `--list` against a dead broker takes 61s, and even a
+ * healthy one pays full JVM startup on every tick. The cheap lsof probe
+ * short-circuits first (~65ms) and only a held port pays for the JVM call.
  */
-function isKafkaRunning(): boolean {
+export async function isKafkaRunningWith(bootstrap: string, kafkaHome: string): Promise<boolean> {
+  const addr = bootstrap.trim();
+  const port = addr.slice(addr.lastIndexOf(':') + 1);
+  if (!/^\d+$/.test(port)) {
+    return false; // unparseable bootstrap: never claim Kafka is up
+  }
+  let listener: string;
   try {
-    const out = execFileSync('lsof', ['-i', ':19092', '-sTCP:LISTEN'], {
+    const out = await execFileP('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN'], {
       encoding: 'utf8',
       timeout: 3_000,
-      stdio: 'pipe',
     });
-    return out.trim().length > 0;
+    // promisify(execFile) resolves to { stdout, stderr } when the child_process
+    // promisify.custom symbol is present (real Node), and to the raw callback's
+    // 2nd argument otherwise. Both shapes appear depending on how execFile is
+    // provided, so accept either rather than trusting one.
+    listener = typeof out === 'string' ? out : out.stdout;
+  } catch {
+    return false;
+  }
+  if (!listener || listener.trim().length === 0) return false;
+  // Something holds the port. Only a real broker counts as running.
+  const topics = join(expandHome(kafkaHome), 'bin', 'kafka-topics.sh');
+  try {
+    await execFileP(topics, ['--bootstrap-server', addr, '--list'], {
+      encoding: 'utf8',
+      timeout: 10_000,
+      maxBuffer: 1 << 20,
+    });
+    return true;
   } catch {
     return false;
   }
@@ -127,8 +194,10 @@ export function startWorkerInIterm(opts: iTermOpts): void {
   }
 }
 
-export function startKafkaInIterm(opts: iTermOpts): void {
-  if (isKafkaRunning()) {
+export async function startKafkaInIterm(opts: KafkaItermOpts): Promise<void> {
+  if (
+    await isKafkaRunningWith(opts.kafkaBootstrap, opts.kafkaHome)
+  ) {
     kafkaConsecutiveFailures = 0;
     opts.log.info('Kafka broker already running; skipping spawn');
     return;
