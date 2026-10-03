@@ -209,3 +209,62 @@ describe('model-list - CSV extra models', () => {
     expect(resolveModel('qwen/qwen3.8-27b')).toBe('mst/free');
   });
 });
+
+// 2026-10-03: parseUpstreamJson used to scrub the raw echo before returning it.
+// Scrubbing was removed (it rewrote real client data); this drives the real
+// POST /v1/chat/completions route and pins that a non-JSON upstream body reaches
+// the client verbatim. The branch previously had no coverage at all.
+describe('non-JSON upstream body is returned verbatim', () => {
+  it('echoes an HTML body containing an sk- substring unchanged', async () => {
+    const upstream = '<html>error sk-or-v1-deadbeef disk-boot</html>';
+    const chain = {
+      handle: vi.fn(async () => ({
+        kind: 'OK' as const,
+        response: new Response(upstream, {
+          status: 200,
+          headers: { 'content-type': 'text/html' },
+        }),
+        servedBy: { provider: 'openrouter', model: 'openrouter/free' },
+      })),
+    };
+    const router = new Router();
+    registerHandlers(router, { chain: chain as never, log: silentLogger });
+
+    // Minimal node:http IncomingMessage / ServerResponse doubles: the handler
+    // only reads method/url/headers/body off req and writes via res.
+    const req = {
+      id: 'test-correlation',
+      method: 'POST',
+      url: '/v1/chat/completions',
+      headers: { 'content-type': 'application/json' },
+      params: {},
+      body: { model: 'mst/free', messages: [{ role: 'user', content: 'hi' }] },
+      // handleChat registers a disconnect hook; it must exist on the double.
+      on: vi.fn(),
+    };
+    let payload = '';
+    const res = {
+      setHeader: vi.fn(),
+      getHeader: vi.fn(),
+      writeHead: vi.fn(),
+      write: vi.fn((chunk: string) => {
+        payload += chunk;
+        return true;
+      }),
+      // sendJson writes the whole payload through end(), not write().
+      end: vi.fn((chunk?: string) => {
+        if (typeof chunk === 'string') payload += chunk;
+      }),
+      writableEnded: false,
+      statusCode: 200,
+    };
+
+    const matched = router.resolve('POST', '/v1/chat/completions');
+    expect(matched).not.toBeNull();
+    await matched!.route.handler(req as never, res as never);
+
+    expect(chain.handle).toHaveBeenCalledTimes(1);
+    expect(payload).toContain('sk-or-v1-deadbeef');
+    expect(payload).not.toContain('REDACTED');
+  });
+});

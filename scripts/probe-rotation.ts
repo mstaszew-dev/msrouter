@@ -16,7 +16,6 @@ import 'dotenv/config';
 import pino from 'pino';
 
 import { loadEnv } from '../src/config/env.js';
-import { scrubSecrets } from '../src/providers/fetch.js';
 import { OpenRouterProvider, withFree } from '../src/providers/openrouter.js';
 import type { ChatRequestBody } from '../src/providers/types.js';
 
@@ -48,7 +47,7 @@ for (let i = 0; i < provider.keyCount; i++) {
   });
   const tag = `key${i + 1}`.padEnd(6);
   if (res.kind === 'OK') {
-    const text = scrubSecrets(await res.response.clone().text());
+    const text = await res.response.clone().text();
     const parsed = JSON.parse(text) as { choices?: Array<{ message?: { content?: string } }> };
     const content = parsed.choices?.[0]?.message?.content;
     // eslint-disable-next-line no-console
@@ -58,7 +57,7 @@ for (let i = 0; i < provider.keyCount; i++) {
   }
   // KEY_FAILURE / TRANSIENT / BAD_REQUEST all surface status + message.
   // eslint-disable-next-line no-console
-  console.log(`${tag} ${res.kind.padEnd(12)} (${res.status}) ${scrubSecrets((res.message ?? '').slice(0, 70))}`);
+  console.log(`${tag} ${res.kind.padEnd(12)} (${res.status}) ${(res.message ?? '').slice(0, 70)}`);
 }
 
 // eslint-disable-next-line no-console
