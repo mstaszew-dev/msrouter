@@ -5,7 +5,7 @@ vi.mock('./stream-check.js', () => ({
   isEmptyCompletion: vi.fn(),
 }));
 
-import { postChatCompletion, scrubSecrets, setPostFetchForTests } from './fetch.js';
+import { postChatCompletion, setPostFetchForTests } from './fetch.js';
 import { checkStreamContent, isEmptyCompletion } from './stream-check.js';
 import type { AttemptOutcome, ChatRequestBody, ProviderCallResult } from './types.js';
 
@@ -263,14 +263,13 @@ describe('postChatCompletion', () => {
       expect(outcome.status).toBe(408);
     });
 
-    it('appends scrubbed error body to outcome message', async () => {
+    it('appends the error body to outcome message verbatim', async () => {
       fetchSpy = fakeFetch(401, { error: { message: 'key sk-or-v1-abc123def is invalid' } });
       setPostFetchForTests(fetchSpy as never);
 
       const outcome = assertFailure(await postChatCompletion(body(), opts()));
 
-      expect(outcome.message).toContain('sk-[REDACTED]');
-      expect(outcome.message).not.toContain('sk-or-v1-abc123def');
+      expect(outcome.message).toContain('sk-or-v1-abc123def');
     });
   });
 
@@ -288,14 +287,13 @@ describe('postChatCompletion', () => {
       expect(outcome.message).toContain('connection refused');
     });
 
-    it('scrubs secrets from error messages', async () => {
+    it('does not rewrite thrown error messages', async () => {
       fetchSpy = fakeFetchError(new Error('auth failed with sk-testkey123'));
       setPostFetchForTests(fetchSpy as never);
 
       const outcome = assertFailure(await postChatCompletion(body(), opts()));
 
-      expect(outcome.message).not.toContain('sk-testkey123');
-      expect(outcome.message).toContain('sk-[REDACTED]');
+      expect(outcome.message).toContain('sk-testkey123');
     });
 
     it('handles non-Error thrown values', async () => {
@@ -502,51 +500,61 @@ describe('postChatCompletion', () => {
   });
 });
 
-describe('scrubSecrets', () => {
-  it('scrubs sk- prefixed API keys', () => {
-    expect(scrubSecrets('key is sk-abc123def456')).toBe('key is sk-[REDACTED]');
+// 2026-10-03: the python campaign agent received a JustJoin URL with its slug
+// tail replaced by "sk-[REDACTED]" and tried to open it. scrubSecrets ran on
+// the SUCCESS path, so it rewrote real client data, not just logs. Scrubbing is
+// now the client's responsibility (single-user local gateway; the agent handles
+// no API keys), so these tests pin that nothing upstream is rewritten.
+describe('upstream responses are never rewritten', () => {
+  const URL_WITH_SLUG =
+    'https://justjoin.it/job-offer/wakacje-pl-software-engineer---senior-gdansk-mazowieckie';
+
+  it('leaves a JustJoin URL with an sk- substring byte-for-byte intact', async () => {
+    const payload = {
+      choices: [{ message: { role: 'assistant', content: `open ${URL_WITH_SLUG}` } }],
+    };
+    const fetchSpy = fakeFetch(200, payload);
+    setPostFetchForTests(fetchSpy as never);
+
+    const result = await postChatCompletion(body(), opts());
+    expect(result.kind).toBe('OK');
+
+    const text = await (result as { response: Response }).response.text();
+    expect(text).toBe(JSON.stringify(payload));
+    expect(text).toContain('gdansk-mazowieckie');
+    expect(text).not.toContain('REDACTED');
   });
 
-  it('scrubs sk-or- prefixed OpenRouter keys', () => {
-    expect(scrubSecrets('using sk-or-v1-abc123def456')).toBe('using sk-[REDACTED]');
+  it('leaves a URL containing "sk-" anywhere byte-for-byte intact', async () => {
+    const url = 'https://example.com/task/sk-9f3a2b/disk-linux-boot';
+    const payload = { choices: [{ message: { role: 'assistant', content: url } }] };
+    const fetchSpy = fakeFetch(200, payload);
+    setPostFetchForTests(fetchSpy as never);
+
+    const result = await postChatCompletion(body(), opts());
+    expect(result.kind).toBe('OK');
+
+    const text = await (result as { response: Response }).response.text();
+    expect(text).toBe(JSON.stringify(payload));
   });
 
-  it('scrubs sk-proj- prefixed keys', () => {
-    expect(scrubSecrets('value sk-proj-abc123def456 here')).toBe('value sk-[REDACTED] here');
+  it('does not rewrite an upstream error body that contains a key', async () => {
+    const fetchSpy = fakeFetch(401, { error: { message: 'key sk-or-v1-abc123def is invalid' } });
+    setPostFetchForTests(fetchSpy as never);
+
+    const outcome = assertFailure(await postChatCompletion(body(), opts()));
+
+    expect(outcome.message).toContain('sk-or-v1-abc123def');
+    expect(outcome.message).not.toContain('REDACTED');
   });
 
-  it('scrubs Bearer tokens', () => {
-    expect(scrubSecrets('Authorization: Bearer abc123def456')).toBe(
-      'Authorization: Bearer [REDACTED]',
-    );
-  });
+  it('does not rewrite a thrown error that contains a key', async () => {
+    const fetchSpy = fakeFetchError(new Error('auth failed with sk-testkey123'));
+    setPostFetchForTests(fetchSpy as never);
 
-  it('scrubs Bearer tokens case-insensitively', () => {
-    expect(scrubSecrets('bearer abc123def456')).toBe('Bearer [REDACTED]');
-  });
+    const outcome = assertFailure(await postChatCompletion(body(), opts()));
 
-  it('scrubs JWT tokens (header.payload)', () => {
-    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0';
-    expect(scrubSecrets(`token: ${jwt}`)).toBe('token: [REDACTED-JWT]');
-  });
-
-  it('scrubs multiple secrets in one string', () => {
-    const input = 'key sk-abc123def456 and Bearer xyz123abc456';
-    const result = scrubSecrets(input);
-    expect(result).not.toContain('sk-abc123def456');
-    expect(result).not.toContain('xyz123abc456');
-  });
-
-  it('passes normal text through unchanged', () => {
-    const input = 'Hello, this is a normal message with no secrets.';
-    expect(scrubSecrets(input)).toBe(input);
-  });
-
-  it('passes short sk- strings through (too short to be a key)', () => {
-    expect(scrubSecrets('sk-abc')).toBe('sk-abc');
-  });
-
-  it('scrubs keys with dashes and underscores', () => {
-    expect(scrubSecrets('sk-abc_def-123456')).toBe('sk-[REDACTED]');
+    expect(outcome.message).toContain('sk-testkey123');
+    expect(outcome.message).not.toContain('REDACTED');
   });
 });

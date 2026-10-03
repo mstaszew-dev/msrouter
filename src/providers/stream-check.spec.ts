@@ -253,3 +253,40 @@ describe('checkStreamContent', () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
   });
 });
+
+// 2026-10-03: streaming was never scrubbed, but no test observed the BYTES.
+// checkStreamContent reads the first event to decide ok/fail and then
+// re-emits the stream it consumed; a refactor that drops or reorders those
+// bytes would silently corrupt every streaming client. This pins
+// byte-for-byte reconstruction, including an sk- substring that a
+// substring-scrubber would have mangled.
+describe('checkStreamContent preserves stream bytes', () => {
+  function chunkedSseResponse(chunks: string[]): Response {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        for (const c of chunks) controller.enqueue(encoder.encode(c));
+        controller.close();
+      },
+    });
+    return new Response(stream, { status: 200 });
+  }
+
+  it('re-emits the exact input bytes across many chunks', async () => {
+    const chunks = [
+      'data: {"choices":[{"delta":{"content":"he"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":"llo sk-or-v1-deadbeef"}}]}\n\n',
+      'data: {"choices":[{"delta":{"content":" disk-boot"}}]}\n\n',
+      'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+      'data: [DONE]\n\n',
+    ];
+    const result = await checkStreamContent(chunkedSseResponse(chunks));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected an ok stream result');
+    const text = await result.response.text();
+    expect(text).toBe(chunks.join(''));
+    expect(text).toContain('sk-or-v1-deadbeef');
+    expect(text).not.toContain('REDACTED');
+  });
+});

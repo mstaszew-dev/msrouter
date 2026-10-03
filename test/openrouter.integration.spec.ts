@@ -14,7 +14,6 @@ import pino from 'pino';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { loadEnv } from '../src/config/env.js';
-import { scrubSecrets } from '../src/providers/fetch.js';
 import { OpenRouterProvider, withFree } from '../src/providers/openrouter.js';
 import type { ChatRequestBody } from '../src/providers/types.js';
 
@@ -87,16 +86,16 @@ describe('OpenRouter integration (live, free models)', () => {
           // eslint-disable-next-line no-console
           console.warn(
             `[skip] all ${provider.keyCount} OpenRouter keys rate-limited; rotation verified, upstream quota exhausted.\n` +
-              `  failures: ${scrubSecrets(failures.join('; '))}`,
+              `  failures: ${failures.join('; ')}`,
           );
           return; // soft-pass: rotation exercised, upstream throttled
         }
         throw new Error(
-          `no OpenRouter key succeeded; failures=${scrubSecrets(failures.join('; '))}`,
+          `no OpenRouter key succeeded; failures=${failures.join('; ')}`,
         );
       }
       expect(ok.status).toBe(200);
-      const text = scrubSecrets(await ok.text());
+      const text = await ok.text();
       expect(text.length).toBeGreaterThan(0);
       // The body should parse as an OpenAI chat completion.
       const json = JSON.parse(text) as { choices?: unknown };

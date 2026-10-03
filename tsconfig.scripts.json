@@ -1,0 +1,10 @@
+{
+  "//": "Type-checks scripts/, which the main tsconfig.json excludes. Without this, a broken script import passes typecheck, lint and test (2026-10-03: probe-rotation*.ts imported the deleted scrubSecrets and CI stayed green). Typecheck only: rootDir is widened to the repo root so scripts/ can sit outside src/; noEmit stops anything being written.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true
+  },
+  "include": ["scripts/**/*.ts", "src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "test"]
+}

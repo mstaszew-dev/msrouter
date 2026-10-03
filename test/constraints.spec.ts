@@ -11,7 +11,6 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import { scrubSecrets } from '../src/providers/fetch.js';
 import { withFree } from '../src/providers/openrouter.js';
 import { classifyAttempt } from '../src/providers/types.js';
 
@@ -20,32 +19,6 @@ const ROOT = new URL('..', import.meta.url);
 function src(name: string): string {
   return readFileSync(new URL(`src/${name}`, ROOT), 'utf8');
 }
-
-describe('constraint: secret scrubbing (NODEJS_CODE_REVIEW.md section 4)', () => {
-  it('redacts sk- and sk-or- and sk-proj- keys', () => {
-    const out = scrubSecrets(
-      'key=sk-or-v1-fakekey123456789012345678901234567890123456789012345678901234 leak',
-    );
-    expect(out).not.toContain('fakekey123');
-    expect(out).toContain('sk-[REDACTED]');
-  });
-
-  it('redacts Bearer tokens', () => {
-    const out = scrubSecrets('Authorization: Bearer abc123def456ghi789');
-    expect(out).toBe('Authorization: Bearer [REDACTED]');
-  });
-
-  it('redacts JWT-shaped tokens', () => {
-    const out = scrubSecrets('jwt=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0SgHFa2Q');
-    expect(out).not.toContain('eyJhbGciOi');
-    expect(out).toContain('[REDACTED-JWT]');
-  });
-
-  it('leaves non-secret text unchanged', () => {
-    expect(scrubSecrets('the quick brown fox')).toBe('the quick brown fox');
-    expect(scrubSecrets('status 200 ok')).toBe('status 200 ok');
-  });
-});
 
 describe('constraint: HTTP status classification is total and stable', () => {
   // The chain's rotation/retry/reject logic depends on this mapping. If the

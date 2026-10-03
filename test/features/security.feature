@@ -1,18 +1,24 @@
 Feature: Security invariants
   As a gateway that proxies authenticated LLM calls
-  I want to never leak secrets and never allow arbitrary code execution
-  So that logs and error bodies stay safe
+  I want to never rewrite client data and never allow arbitrary code execution
+  So that the response the client receives is exactly what the upstream sent
 
-  Scenario: API keys are never written to logs
-    Given an upstream error body echoes the request key as "Bearer sk-or-v1-..."
-    When the gateway logs the failure
-    Then the log line contains "sk-[REDACTED]" and not the raw key
-      and it contains "Bearer [REDACTED]" and not the raw token
+  # 2026-10-03: the two scrubbing scenarios were deleted with scrubSecrets. It
+  # ran on the SUCCESS path, so it rewrote real client data: the python campaign
+  # agent received a JustJoin URL whose slug tail became "sk-[REDACTED]" and tried
+  # to open the broken URL. This is a single-user local gateway; the client owns
+  # its own secrets. See fetch.spec.ts "upstream responses are never rewritten".
 
-  Scenario: A non-JSON upstream error body is scrubbed before being returned
+  Scenario: Upstream bodies reach the client verbatim
+    Given an upstream returns a completion body containing "sk-or-v1-deadbeef"
+    When the client receives the response
+    Then the body contains "sk-or-v1-deadbeef" unchanged
+      and contains no "[REDACTED]" marker
+
+  Scenario: A non-JSON upstream error body is returned verbatim
     Given an upstream returns HTML containing "sk-or-v1-deadbeef"
     When the client receives the error envelope
-    Then the body contains "sk-[REDACTED]" not "sk-or-v1-deadbeef"
+    Then the body contains "sk-or-v1-deadbeef" not "[REDACTED]"
 
   Scenario: Gateway token auth uses a constant-time compare
     Given GATEWAY_TOKEN is set

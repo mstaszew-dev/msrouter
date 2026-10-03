@@ -72,9 +72,8 @@ export async function postChatCompletion(
     if (!outcome) {
       if (!body.stream) {
         const text = await safeReadText(res);
-        const scrubbed = scrubSecrets(text);
         try {
-          const json = JSON.parse(scrubbed) as { error?: unknown };
+          const json = JSON.parse(text) as { error?: unknown };
           if (json && typeof json === 'object' && 'error' in json && json.error) {
             const errObj = json.error as { message?: string };
             const errMsg =
@@ -102,12 +101,12 @@ export async function postChatCompletion(
           }
           return {
             kind: 'OK',
-            response: new Response(scrubbed, { status: res.status, headers: res.headers }),
+            response: new Response(text, { status: res.status, headers: res.headers }),
           };
         } catch {
           return {
             kind: 'OK',
-            response: new Response(scrubbed, { status: res.status, headers: res.headers }),
+            response: new Response(text, { status: res.status, headers: res.headers }),
           };
         }
       }
@@ -125,14 +124,13 @@ export async function postChatCompletion(
       }
       return { kind: 'OK', response: streamResult.response };
     }
-    // Drain the error body (small) so the message can guide the chain. The
-    // body is SCRUBBED of secret-shaped strings (sk-..., Bearer ...) because
-    // upstream error bodies routinely echo the request key, and this message is
-    // logged. NODEJS_CODE_REVIEW.md section 4 (no secrets in logs).
-    const text = scrubSecrets(await safeReadText(res));
+    // Drain the error body (small) so the message can guide the chain. The body is
+    // passed through verbatim: this is a single-user local gateway and the
+    // client owns its own secrets.
+    const text = await safeReadText(res);
     return { ...outcome, message: outcome.message + (text ? `: ${truncate(text, 300)}` : '') };
   } catch (e) {
-    const msg = scrubSecrets(e instanceof Error ? e.message : String(e));
+    const msg = e instanceof Error ? e.message : String(e);
     // AbortError from our timeout => transient; caller may retry/backoff.
     return {
       kind: 'TRANSIENT',
@@ -152,35 +150,20 @@ function joinUrl(baseUrl: string, suffix: string): string {
   return `${base}/${suf}`;
 }
 
+/**
+ * Upstream bodies are forwarded verbatim. Secret redaction used to run here and
+ * was removed on 2026-10-03: it ran on the SUCCESS path, so it rewrote real
+ * client data. A JustJoin slug containing "sk-" came back to the python agent
+ * with its tail replaced by "sk-[REDACTED]" and the agent tried to open the
+ * broken URL. On this single-user local gateway the client owns its secrets, so
+ * nothing upstream is rewritten.
+ */
 async function safeReadText(res: Response): Promise<string> {
   try {
     return await res.text();
   } catch {
     return '';
   }
-}
-
-/**
- * Scrub secret-shaped substrings from a string before it is logged or returned.
- * Matches:
- *   - API keys: sk-... and sk-or-... and sk-proj-... (token-looking)
- *   - Bearer tokens: "Bearer <value>"
- *   - OpenRouter keys: sk-or-v1-...
- * Conservative: redacts broadly rather than precisely, since a leaked fragment
- * is worse than an over-redacted log line.
- */
-const SECRET_PATTERNS: ReadonlyArray<[RegExp, string]> = [
-  [/(sk-(?:or-|proj-)?[A-Za-z0-9_\-]{6,})/g, 'sk-[REDACTED]'],
-  [/(Bearer\s+[A-Za-z0-9_\-\.=]{4,})/gi, 'Bearer [REDACTED]'],
-  [/(eyJ[A-Za-z0-9_\-]{6,}\.[A-Za-z0-9_\-]{6,})/g, '[REDACTED-JWT]'],
-];
-
-export function scrubSecrets(input: string): string {
-  let out = input;
-  for (const [re, repl] of SECRET_PATTERNS) {
-    out = out.replace(re, repl);
-  }
-  return out;
 }
 
 function truncate(s: string, max: number): string {

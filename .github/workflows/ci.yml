@@ -21,6 +21,8 @@ jobs:
         run: npx eslint src test
       - name: Typecheck
         run: npm run typecheck
+      - name: Typecheck scripts (excluded from the main tsconfig)
+        run: npm run typecheck:scripts
       - name: Test
         run: npm test
       - name: Shell tests (bats)

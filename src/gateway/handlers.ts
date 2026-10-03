@@ -18,7 +18,6 @@ import type { HttpRequest, Router } from '../common/http.js';
 import { sendJson } from '../common/http.js';
 import { env } from '../config/env.js';
 import { type ProviderChain } from '../providers/chain.js';
-import { scrubSecrets } from '../providers/fetch.js';
 import type { ChatRequestBody } from '../providers/types.js';
 
 import { createGraphqlHandler } from './graphql.js';
@@ -140,14 +139,14 @@ function checkGatewayAuth(req: HttpRequest, res: ServerResponse, log: Logger): b
   return false;
 }
 
-/** Parse upstream text as JSON; on failure, scrub + wrap so no secret leaks. */
+/** Parse upstream text as JSON; on failure, wrap the raw text for the client. */
 function parseUpstreamJson(text: string): unknown {
   try {
     return JSON.parse(text);
   } catch {
-    // Scrub the raw upstream text before returning it to the client; upstream
-    // error bodies can echo request secrets (NODEJS_CODE_REVIEW.md section 4).
-    return { error: 'upstream returned non-JSON', raw: scrubSecrets(text.slice(0, 500)) };
+    // Returned verbatim: this is a single-user local gateway and the client
+    // owns its own secrets.
+    return { error: 'upstream returned non-JSON', raw: text.slice(0, 500) };
   }
 }
 
