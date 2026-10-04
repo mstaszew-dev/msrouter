@@ -8,7 +8,7 @@ import type { CampaignEvent, CampaignSnapshot } from './types.js';
 function snap(events: CampaignEvent[]): CampaignSnapshot {
   return {
     fetchedAt: '2026-07-27T12:00:00Z',
-    tracker: { submitted: 0, target: 1200, updatedAt: '2026-07-27T12:00:00Z' },
+    tracker: { submitted: 0, statsSubmitted: 0, drift: 0, attempted: 0, complete: false, target: 1200, updatedAt: '2026-07-27T12:00:00Z' },
     recentEvents: events,
     tickStatus: '',
   };
@@ -115,7 +115,15 @@ describe('classify', () => {
     // (2026-09-01: the tracker.updatedAt fallback made completed campaigns
     // look permanently idle).
     const done = snap([]);
-    done.tracker = { submitted: 1215, target: 1200, updatedAt: '2026-07-27T12:00:00Z' };
+    done.tracker = {
+      submitted: 1215,
+      statsSubmitted: 1215,
+      drift: 0,
+      attempted: 0,
+      complete: true,
+      target: 1200,
+      updatedAt: '2026-07-27T12:00:00Z',
+    };
     const out = classify(done, now, '2026-07-27T10:00:00Z'); // 2h idle
     expect(out.find((c) => c.kind === 'stale-campaign')).toBeUndefined();
   });

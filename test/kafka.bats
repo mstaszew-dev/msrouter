@@ -273,6 +273,9 @@ MOCK
 
   source scripts/kafka.sh </dev/null 2>/dev/null || true
   port_open() { return 0; }
+  # start() also refuses when the port is ALREADY held; these tests are about the
+  # readiness loop, so report the port as free (same as their port_open mock).
+  port_in_use() { return 1; }
   run start_or_init
 
   [ "$status" -eq 0 ]
@@ -317,6 +320,9 @@ MOCK
 
   source scripts/kafka.sh </dev/null 2>/dev/null || true
   port_open() { return 0; }
+  # port_in_use mocked to false: this test drives the readiness-failure path, so
+  # the start() duplicate-broker guard must not short-circuit it.
+  port_in_use() { return 1; }
   run start_or_init
 
   [ "$status" -eq 0 ]
@@ -423,6 +429,8 @@ PROPS
   setup_robust
   source scripts/kafka.sh </dev/null 2>/dev/null || true
   port_open() { return 0; }
+  # Storage-preflight ordering, not the port guard: report the port free.
+  port_in_use() { return 1; }
   run start_or_init
   [ "$status" -eq 0 ]
 
@@ -440,6 +448,8 @@ PROPS
   touch "${TEST_TMPDIR}/kraft-logs/meta.properties"   # healthy storage
   source scripts/kafka.sh </dev/null 2>/dev/null || true
   port_open() { return 0; }
+  # Storage-preflight ordering, not the port guard: report the port free.
+  port_in_use() { return 1; }
   run start_or_init
   [ "$status" -eq 0 ]
   ! grep -q '^storage:' "${TEST_TMPDIR}/call-order"
@@ -461,6 +471,9 @@ PROPS
   export KAFKA_READINESS_TRIES=2
   export KAFKA_READINESS_SLEEP=0
   source scripts/kafka.sh </dev/null 2>/dev/null || true
+  # Broker dies instantly, so the port is never actually held and never opens.
+  port_in_use() { return 1; }   # duplicate-broker guard: port looks free
+  port_open() { return 1; }     # readiness probe: nothing ever accepted
   run start
   [ "$status" -ne 0 ]
   [[ "$output" == *"did not become ready"* ]]
@@ -518,9 +531,14 @@ MOCK
   is_running() { return 1; }
   port_open() { return 0; }
   kafka_responding() { return 0; }
+  # The whole point of this test is that NOTHING holds the port. Without this
+  # mock a real broker on 19092 would take the adopt branch and pass for the
+  # wrong reason.
+  port_in_use() { return 1; }
 
   run start
   [ "$status" -eq 0 ]
+  [[ "$output" == *"starting Kafka broker"* ]]
 }
 
 @test "port_in_use helper detects a held port and ignores a free one" {

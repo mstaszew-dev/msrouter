@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { observe, parseEventsLine, isCampaignComplete } from './observe.js';
+import { observe, parseEventsLine, isCampaignComplete, countConfirmedSubmissions } from './observe.js';
 
 function makeCampaignDir(): string {
   const dir = mkdtempSync(join(tmpdir(), 'director-obs-'));
@@ -254,5 +254,273 @@ describe('observe', () => {
       roleTitle: '',
       at: '2026-08-01T00:00:00Z',
     });
+  });
+});
+
+// 2026-10-04: the kafka observation reported stats.submitted, which
+// update_tracker.py only ever INCREMENTS and never recomputes. Any write that
+// rewrote or de-duplicated the applications list left the counter stranded, so
+// the observed count drifted ~70 above reality and then jumped in one step when
+// something finally recomputed it (observed 1655 -> 1725). The observation must
+// count the way the python agent decides a submission counts: unique ids whose
+// status is "submitted".
+describe('tracker summary is consistent with the python agent', () => {
+  /** Build a tracker.json shaped exactly like the campaign's real file. */
+  function writeTracker(dir: string, t: Record<string, unknown>): void {
+    writeFileSync(join(dir, 'tracker.json'), JSON.stringify(t));
+  }
+
+  it('counts unique submitted applications, not the stale stats counter', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'observe-drift-'));
+    writeTracker(dir, {
+      target: 2000,
+      updatedAt: '2026-10-04T12:00:00Z',
+      // stats is stranded 70 high, exactly like the live file.
+      stats: { submitted: 1748, attempted_no_confirmation: 4 },
+      applications: [
+        { id: 'a', status: 'submitted' },
+        { id: 'b', status: 'submitted' },
+        { id: 'c', status: 'attempted' },
+      ],
+    });
+
+    const { snapshot } = await observe(
+      { eventsReadOffset: 0, lastTickAt: '' },
+      { campaignDir: dir, maxEvents: 10 },
+    );
+    expect(snapshot.tracker.submitted).toBe(2);
+  });
+
+  it('counts a duplicated application id once, matching update_tracker dedupe', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'observe-dup-'));
+    writeTracker(dir, {
+      target: 2000,
+      stats: { submitted: 2 },
+      applications: [
+        { id: 'nofluffjobs:java-software-engineer-aws-hl-tech-remote', status: 'submitted' },
+        { id: 'nofluffjobs:java-software-engineer-aws-hl-tech-remote', status: 'submitted' },
+      ],
+    });
+
+    const { snapshot } = await observe(
+      { eventsReadOffset: 0, lastTickAt: '' },
+      { campaignDir: dir, maxEvents: 10 },
+    );
+    expect(snapshot.tracker.submitted).toBe(1);
+  });
+
+  it('reports the legacy stats counter alongside the derived count so drift is visible', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'observe-both-'));
+    writeTracker(dir, {
+      target: 2000,
+      stats: { submitted: 1748 },
+      applications: [
+        { id: 'a', status: 'submitted' },
+        { id: 'b', status: 'attempted' },
+      ],
+    });
+
+    const { snapshot } = await observe(
+      { eventsReadOffset: 0, lastTickAt: '' },
+      { campaignDir: dir, maxEvents: 10 },
+    );
+    expect(snapshot.tracker.submitted).toBe(1);
+    expect(snapshot.tracker.statsSubmitted).toBe(1748);
+    expect(snapshot.tracker.drift).toBe(1747);
+  });
+
+  it('falls back to the legacy counter when applications is absent', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'observe-legacy-'));
+    writeTracker(dir, { target: 2000, submittedCount: 100, stats: { submitted: 100 } });
+
+    const { snapshot } = await observe(
+      { eventsReadOffset: 0, lastTickAt: '' },
+      { campaignDir: dir, maxEvents: 10 },
+    );
+    expect(snapshot.tracker.submitted).toBe(100);
+    expect(snapshot.tracker.statsSubmitted).toBe(100);
+    expect(snapshot.tracker.drift).toBe(0);
+  });
+});
+
+// The live tracker has a submitted record with no `id` (a 1dea NoFluffJobs
+// entry). update_tracker.py's derive_id falls back to `source:sourceJobId`, so
+// the observation must use the same key or it counts differently from the agent.
+describe('applicationKey mirrors update_tracker.derive_id', () => {
+  it('uses id when present', () => {
+    expect(countConfirmedSubmissions({ applications: [{ id: 'x', status: 'submitted' }] })).toBe(1);
+  });
+
+  it('falls back to source:sourceJobId when id is missing', () => {
+    expect(
+      countConfirmedSubmissions({
+        applications: [
+          { source: 'nofluffjobs', sourceJobId: '1dea-remote', status: 'submitted' },
+        ],
+      }),
+    ).toBe(1);
+  });
+
+  it('dedupes an id-less record against one carrying the derived key', () => {
+    // Same application recorded once with id and once without: python's
+    // derive_id makes both `nofluffjobs:1dea-remote`, so they are one entry.
+    expect(
+      countConfirmedSubmissions({
+        applications: [
+          { id: 'nofluffjobs:1dea-remote', status: 'submitted' },
+          { source: 'nofluffjobs', sourceJobId: '1dea-remote', status: 'submitted' },
+        ],
+      }),
+    ).toBe(1);
+  });
+
+  it('still counts two different id-less records separately', () => {
+    expect(
+      countConfirmedSubmissions({
+        applications: [
+          { source: 'a', sourceJobId: 'one', status: 'submitted' },
+          { source: 'a', sourceJobId: 'two', status: 'submitted' },
+        ],
+      }),
+    ).toBe(2);
+  });
+});
+
+// 2026-10-04 review BLOCKER: deriving `submitted` from the applications list made
+// it ~74 LOWER than the python agent's own stats["submitted"]. Completion and
+// staleness predicates that switched to the derived number alone entered a band
+// where the agent has printed "CAMPAIGN COMPLETE" but the Director still thinks
+// the campaign is running - respawning the worker each tick, rotating the VPN and
+// flagging it stale forever. These pin the fix: EITHER count reaching target
+// means complete, exactly as the agent decides.
+describe('completion follows the agent, not just the derived count', () => {
+  function dirWith(t: Record<string, unknown>): string {
+    const dir = mkdtempSync(join(tmpdir(), 'observe-complete-'));
+    writeFileSync(join(dir, 'tracker.json'), JSON.stringify(t));
+    return dir;
+  }
+
+  function manySubmitted(n: number): unknown[] {
+    return Array.from({ length: n }, (_, i) => ({ id: `x${i}`, status: 'submitted' }));
+  }
+
+  it('is complete when the AGENT counter hit target even though derived has not', async () => {
+    // The exact band: stats says done (update_tracker.py printed CAMPAIGN
+    // COMPLETE), the applications list is still short of target.
+    const dir = dirWith({
+      target: 2000,
+      stats: { submitted: 2000 },
+      applications: manySubmitted(1926),
+    });
+    expect(await isCampaignComplete(dir)).toBe(true);
+  });
+
+  it('is complete when the DERIVED count hits target but the legacy counter lags', async () => {
+    const dir = dirWith({
+      target: 3,
+      stats: { submitted: 1 },
+      applications: manySubmitted(3),
+    });
+    expect(await isCampaignComplete(dir)).toBe(true);
+  });
+
+  it('is NOT complete when neither count reaches target', async () => {
+    const dir = dirWith({ target: 2000, stats: { submitted: 1748 }, applications: manySubmitted(1674) });
+    expect(await isCampaignComplete(dir)).toBe(false);
+  });
+
+  it('exposes complete on the snapshot so classify cannot re-derive it', async () => {
+    const dir = dirWith({ target: 2000, stats: { submitted: 2000 }, applications: manySubmitted(1926) });
+    const { snapshot } = await observe({ eventsReadOffset: 0, lastTickAt: '' }, { campaignDir: dir });
+    expect(snapshot.tracker.complete).toBe(true);
+    expect(snapshot.tracker.submitted).toBe(1926);
+    expect(snapshot.tracker.drift).toBe(74);
+  });
+
+  it('counts attempted applications so unconfirmed submissions stay visible', async () => {
+    const dir = dirWith({
+      target: 2000,
+      stats: { submitted: 5, attempted_no_confirmation: 4 },
+      applications: [
+        ...manySubmitted(5),
+        { id: 'a1', status: 'attempted' },
+        { id: 'a2', status: 'attempted' },
+        { id: 'a3', status: 'attempted' },
+      ],
+    });
+    const { snapshot } = await observe({ eventsReadOffset: 0, lastTickAt: '' }, { campaignDir: dir });
+    expect(snapshot.tracker.attempted).toBe(3);
+    expect(snapshot.tracker.submitted).toBe(5);
+  });
+
+  it('treats a target of 0 as not complete (fresh tracker is not a finished campaign)', async () => {
+    const dir = dirWith({ target: 0, stats: { submitted: 0 }, applications: [] });
+    expect(await isCampaignComplete(dir)).toBe(false);
+  });
+});
+
+// update_tracker.derive_id does `if rec.get("id"): return str(rec["id"])` - any
+// truthy non-object id is stringified. A numeric id must key the same way here,
+// or the observation counts differently from the agent.
+describe('applicationKey matches derive_id for non-string ids', () => {
+  it('stringifies a numeric id instead of falling through', () => {
+    expect(
+      countConfirmedSubmissions({
+        applications: [{ id: 12345, source: 'a', sourceJobId: 'x', status: 'submitted' }],
+      }),
+    ).toBe(1);
+    // It must also dedupe against the string form of the same id.
+    expect(
+      countConfirmedSubmissions({
+        applications: [
+          { id: 12345, source: 'a', sourceJobId: 'x', status: 'submitted' },
+          { id: '12345', source: 'b', sourceJobId: 'y', status: 'submitted' },
+        ],
+      }),
+    ).toBe(1);
+  });
+
+  it('ignores an object id (python would stringify it; we cannot match that safely)', () => {
+    // Falling through to source/sourceJobId is the safe choice: an object id has
+    // no stable string form to compare against the agent's.
+    expect(
+      countConfirmedSubmissions({
+        applications: [
+          { id: { $oid: 1 }, source: 'a', sourceJobId: 'x', status: 'submitted' },
+        ],
+      }),
+    ).toBe(1);
+  });
+});
+
+// N4: the `submittedCount` fallback (trackers predating stats) was unreachable
+// because the existing fixture also set stats.submitted, which wins.
+describe('legacy tracker shapes', () => {
+  it('falls back to submittedCount when stats is absent entirely', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'observe-nostats-'));
+    writeFileSync(join(dir, 'tracker.json'), JSON.stringify({ targetApplications: 1200, submittedCount: 100 }));
+
+    const { snapshot } = await observe({ eventsReadOffset: 0, lastTickAt: '' }, { campaignDir: dir });
+    expect(snapshot.tracker.submitted).toBe(100);
+    expect(snapshot.tracker.target).toBe(1200);
+    expect(snapshot.tracker.statsSubmitted).toBe(100);
+  });
+
+  it('treats a falsy id as absent, matching derive_id truthiness', async () => {
+    // python: `if rec.get("id")` - 0 / '' / false are falsy, so they fall through
+    // to source:sourceJobId instead of keying as "0" / "" / "false".
+    expect(
+      countConfirmedSubmissions({
+        applications: [{ id: 0, source: 'a', sourceJobId: 'x', status: 'submitted' }],
+      }),
+    ).toBe(1);
+    expect(
+      countConfirmedSubmissions({
+        applications: [
+          { id: 0, source: 'a', sourceJobId: 'x', status: 'submitted' },
+          { source: 'a', sourceJobId: 'x', status: 'submitted' },
+        ],
+      }),
+    ).toBe(1);
   });
 });

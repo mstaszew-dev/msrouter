@@ -17,7 +17,10 @@ import { open, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
+import { countConfirmedSubmissions } from './submitted-count.js';
 import type { CampaignEvent, CampaignSnapshot, Checkpoint, TrackerSummary } from './types.js';
+
+export { countConfirmedSubmissions } from './submitted-count.js';
 
 const execFileP = promisify(execFile);
 
@@ -66,11 +69,21 @@ export async function observe(
 }
 
 /**
- * Has the campaign reached its target? Returns true when a positive target is
- * set and submitted >= target. Returns false when target is 0/missing (so a
- * fresh tracker is never mistaken for a finished campaign), when the tracker
- * is missing, or when it is unparseable. Never throws - callers (the Director
- * spawn guard) need a safe default that keeps the campaign running.
+ * Has the campaign reached its target? Delegates to TrackerSummary.complete,
+ * which is true when EITHER the agent's own stats counter or the derived count
+ * reaches a positive target - deliberately not `submitted >= target` alone.
+ *
+ * That OR is load-bearing. The derived count is lower than stats["submitted"]
+ * whenever the legacy counter has drifted (observed ~74), so a derived-only
+ * check would place a finished campaign in a band where the agent has printed
+ * "CAMPAIGN COMPLETE" and exited but the Director believes it is still running,
+ * respawning the worker every tick, rotating the VPN and flagging it stale
+ * forever (the 2026-09-01 / 2026-09-09 incidents).
+ *
+ * Returns false when target is 0/missing (so a fresh tracker is never mistaken
+ * for a finished campaign), when the tracker is missing, or when it is
+ * unparseable. Never throws - callers (the Director spawn guard) need a safe
+ * default that keeps the campaign running.
  */
 export async function isCampaignComplete(campaignDir: string): Promise<boolean> {
   let tracker: TrackerSummary;
@@ -79,7 +92,7 @@ export async function isCampaignComplete(campaignDir: string): Promise<boolean> 
   } catch {
     return false;
   }
-  return tracker.target > 0 && tracker.submitted >= tracker.target;
+  return tracker.complete;
 }
 
 async function readTrackerSummary(campaignDir: string): Promise<TrackerSummary> {
@@ -88,10 +101,33 @@ async function readTrackerSummary(campaignDir: string): Promise<TrackerSummary> 
   const stats = (t['stats'] as Record<string, number> | undefined) ?? {};
   const lastApplied = t['lastApplied'] as
     { source?: string; company?: string; roleTitle?: string; status?: string } | undefined;
+  // Legacy counter, kept for visibility: it is what the campaign's own
+  // tick_status.sh prints, so the gap between the two is worth surfacing rather
+  // than hiding behind whichever one happens to be right today.
+  const statsSubmitted = stats['submitted'] ?? (t['submittedCount'] as number | undefined) ?? 0;
+  const derived = countConfirmedSubmissions(t);
+  const submitted = derived ?? statsSubmitted;
+  const target =
+    (t['targetApplications'] as number | undefined) ?? (t['target'] as number | undefined) ?? 0;
+  // Completion follows the AGENT's declaration (stats["submitted"] >= target, as
+  // update_tracker.py prints CAMPAIGN COMPLETE) OR the derived count reaching it.
+  // Using only the derived count would strand a finished campaign in a band of
+  // `statsSubmitted >= target > submitted`, respawning the worker every tick.
+  const complete = target > 0 && (statsSubmitted >= target || submitted >= target);
   return {
-    submitted: stats['submitted'] ?? (t['submittedCount'] as number | undefined) ?? 0,
-    target:
-      (t['targetApplications'] as number | undefined) ?? (t['target'] as number | undefined) ?? 0,
+    submitted,
+    statsSubmitted,
+    drift: statsSubmitted - submitted,
+    complete,
+    attempted: Array.isArray(t['applications'])
+      ? (t['applications'] as unknown[]).filter(
+          (raw) =>
+            raw !== null &&
+            typeof raw === 'object' &&
+            (raw as Record<string, unknown>)['status'] === 'attempted',
+        ).length
+      : 0,
+    target,
     lastApplied: lastApplied?.company
       ? {
           source: lastApplied.source ?? '',

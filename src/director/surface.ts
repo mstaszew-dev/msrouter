@@ -29,6 +29,24 @@ import type { DirectorSurface, Patch, PatchDecision, SlackOutboxEntry } from './
 export const MAX_OUTBOX_ATTEMPTS = 10;
 
 /**
+ * What the Director reports about the campaign to Slack and the ledger. The
+ * extra fields are optional so a caller that only knows the two counts (tests,
+ * older checkpoints) still type-checks; the drift note is simply omitted.
+ */
+export interface ObservationSummary {
+  submitted: number;
+  target: number;
+  statsSubmitted?: number;
+  drift?: number;
+  attempted?: number;
+}
+
+function observationDetail(s: ObservationSummary): string {
+  const base = `submitted=${s.submitted} target=${s.target}`;
+  return s.drift ? `${base} statsSubmitted=${s.statsSubmitted} drift=${s.drift} attempted=${s.attempted ?? 0}` : base;
+}
+
+/**
  * Read the Slack outbox. Missing/corrupt file -> empty array (self-healing).
  * Shape: { entries: SlackOutboxEntry[] }. Kept under one key so a partial write
  * cannot leave a truncated JSON array.
@@ -119,11 +137,11 @@ export class NullSurface implements DirectorSurface {
     this.opts.log.info({ pid: detail.pid }, 'worker restart recorded');
   }
 
-  async postObservation(snapshot: { submitted: number; target: number }): Promise<void> {
+  async postObservation(snapshot: ObservationSummary): Promise<void> {
     await appendLedger(this.opts.ledgerPath, {
       at: new Date().toISOString(),
       kind: 'observation',
-      detail: `submitted=${snapshot.submitted} target=${snapshot.target}`,
+      detail: observationDetail(snapshot),
     });
     this.opts.log.debug({ submitted: snapshot.submitted }, 'observation recorded');
   }
@@ -185,7 +203,7 @@ export class SlackSurface extends NullSurface {
     await this.sendToSlack(message);
   }
 
-  override async postObservation(snapshot: { submitted: number; target: number }): Promise<void> {
+  override async postObservation(snapshot: ObservationSummary): Promise<void> {
     await super.postObservation(snapshot);
     const message = this.buildObservationMessage(snapshot);
     await this.sendToSlack(message);
@@ -418,7 +436,13 @@ export class SlackSurface extends NullSurface {
     return `*Director Restart*: Campaign restarted (PID: ${detail.pid}). Log: ${detail.logPath}`;
   }
 
-  private buildObservationMessage(snapshot: { submitted: number; target: number }): string {
-    return `*Campaign Status*: ${snapshot.submitted}/${snapshot.target} submitted (${snapshot.target - snapshot.submitted} to go)`;
+  private buildObservationMessage(snapshot: ObservationSummary): string {
+    // The count is derived from the applications list, so when the python
+    // agent's legacy stats counter disagrees, say so here rather than letting
+    // the number silently drop with no explanation.
+    const base = `*Campaign Status*: ${snapshot.submitted}/${snapshot.target} submitted (${snapshot.target - snapshot.submitted} to go)`;
+    if (!snapshot.drift) return base;
+    const attempted = snapshot.attempted ? `, ${snapshot.attempted} attempted` : '';
+    return `${base}\n_Counter drift: agent's stats says ${snapshot.statsSubmitted} (${snapshot.drift > 0 ? '+' : ''}${snapshot.drift})${attempted}. Confirmed submissions are counted from the applications list._`;
   }
 }

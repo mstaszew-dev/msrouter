@@ -100,7 +100,7 @@ export function classify(
   // (2026-09-09 incident). A completed campaign is never stale: the agent
   // exits on purpose, and flagging it would rotate VPN / restart the worker
   // forever.
-  const complete = snapshot.tracker.submitted >= snapshot.tracker.target;
+  const complete = snapshot.tracker.complete;
   if (!complete && snapshot.recentEvents.length === 0 && lastEventAt) {
     const lastMs = new Date(lastEventAt).getTime();
     const nowMs = new Date(now).getTime();

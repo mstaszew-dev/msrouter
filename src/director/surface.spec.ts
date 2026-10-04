@@ -18,6 +18,7 @@ import {
   MAX_OUTBOX_ATTEMPTS,
   readOutbox,
   writeOutbox,
+  type ObservationSummary,
 } from './surface.js';
 import type { SurfaceOpts } from './surface.js';
 import type { Patch, PatchDecision, SlackOutboxEntry } from './types.js';
@@ -156,10 +157,7 @@ describe('SlackSurface message builders (pure functions)', () => {
     buildDecisionMessage(decision: PatchDecision): string;
     buildAppliedMessage(patch: Patch): string;
     buildRestartMessage(detail: { pid: number; logPath: string }): string;
-    buildObservationMessage(snapshot: {
-      submitted: number;
-      target: number;
-    }): string;
+    buildObservationMessage(snapshot: ObservationSummary): string;
   };
   const patch: Patch = {
     id: 'patch-456',
@@ -221,6 +219,35 @@ describe('SlackSurface message builders (pure functions)', () => {
     expect(msg).toContain('99/1200');
     expect(msg).toContain('1101 to go');
     expect(msg).not.toContain('Queue');
+  });
+
+  // 2026-10-04: the reported count is derived from the applications list and is
+  // LOWER than the agent's legacy stats counter. Slack must explain that, or the
+  // number just appears to drop after deploy.
+  it('buildObservationMessage explains a non-zero counter drift', () => {
+    const msg = builders.buildObservationMessage({
+      submitted: 1674,
+      target: 2000,
+      statsSubmitted: 1748,
+      drift: 74,
+      attempted: 77,
+    });
+    expect(msg).toContain('1674/2000');
+    expect(msg).toContain('1748');
+    expect(msg).toContain('+74');
+    expect(msg).toContain('77 attempted');
+  });
+
+  it('buildObservationMessage omits the drift note when there is no drift', () => {
+    const msg = builders.buildObservationMessage({
+      submitted: 99,
+      target: 1200,
+      statsSubmitted: 99,
+      drift: 0,
+      attempted: 4,
+    });
+    expect(msg).toContain('99/1200');
+    expect(msg).not.toContain('drift');
   });
 });
 

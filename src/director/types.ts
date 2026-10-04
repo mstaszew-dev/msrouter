@@ -12,7 +12,35 @@ export interface CampaignSnapshot {
 }
 
 export interface TrackerSummary {
+  /**
+   * Confirmed submissions, derived from `applications` (unique ids whose status
+   * is "submitted") so this number cannot drift away from what the python agent
+   * actually recorded. Falls back to the legacy counter on trackers that carry
+   * no applications list.
+   */
   submitted: number;
+  /**
+   * The legacy stats["submitted"] counter as written by update_tracker.py, which
+   * only ever increments and never recomputes. Reported alongside so the gap is
+   * visible rather than silently resolving to whichever number looks nicer.
+   */
+  statsSubmitted: number;
+  /** statsSubmitted - submitted. Non-zero means the legacy counter is stranded. */
+  drift: number;
+  /**
+   * Has the campaign declared itself finished? Decided the way the python agent
+   * decides: EITHER count reaching target.
+   *
+   * This must NOT be derived from `submitted` alone. update_tracker.py prints
+   * "CAMPAIGN COMPLETE" off stats["submitted"] (update_tracker.py ~line 284), so
+   * with a non-zero drift there is a band where the agent has stopped but a
+   * derived-only check would say the campaign is still running - which respawns
+   * the worker every tick, rotates the VPN and flags the campaign stale forever
+   * (the 2026-09-01 / 2026-09-09 incidents). Either signal counts as complete.
+   */
+  complete: boolean;
+  /** Applications recorded as attempted (a submission with no portal confirmation). */
+  attempted: number;
   target: number;
   lastApplied?: { source: string; company: string; roleTitle: string; at: string };
   updatedAt: string;
@@ -80,7 +108,13 @@ export interface DirectorSurface {
   postProposal(patch: Patch): Promise<void>;
   postDecision(decision: PatchDecision): Promise<void>;
   postApplied(patch: Patch): Promise<void>;
-  postObservation(snapshot: { submitted: number; target: number }): Promise<void>;
+  postObservation(snapshot: {
+    submitted: number;
+    target: number;
+    statsSubmitted?: number;
+    drift?: number;
+    attempted?: number;
+  }): Promise<void>;
   postRestart(detail: { pid: number; logPath: string }): Promise<void>;
   pollSlackMessages(lastTs?: string): Promise<{ decisions: PatchDecision[]; latestTs?: string }>;
   /** Re-attempt all pending outbox messages. Called once at the top of each

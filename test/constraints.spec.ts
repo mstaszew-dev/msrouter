@@ -109,6 +109,7 @@ describe('constraint: source files stay under 250 lines (module size budget)', (
     'orchestrator.ts',
     'director/types.ts',
     'director/observe.ts',
+    'director/submitted-count.ts',
     'director/classify.ts',
     'director/propose.ts',
     'director/apply.ts',

@@ -549,16 +549,30 @@ export class DirectorLoop {
       const observationPayload = JSON.stringify({
         kind: 'observation',
         snapshot: {
+          // Confirmed count, derived from the applications list with the same
+          // rule update_tracker.py uses. This is the number the python agent's
+          // own tick_status would report if its counter were not stranded.
           submitted: snapshot.tracker.submitted,
           target: snapshot.tracker.target,
+          // Surfaced so a drifting legacy counter is visible on the wire instead
+          // of showing up later as an unexplained jump (observed 1655 -> 1725).
+          statsSubmitted: snapshot.tracker.statsSubmitted,
+          drift: snapshot.tracker.drift,
+          attempted: snapshot.tracker.attempted,
         },
         classifications: classificationsCount,
       });
+      // Hash every published field: if stats["submitted"] is recomputed (e.g. by
+      // cleanup_fake_records.py) while the derived count holds, drift changes and
+      // MUST reach the wire, not sit in the payload unpublished.
       const observationHash = createHash('md5')
         .update(
           JSON.stringify({
             submitted: snapshot.tracker.submitted,
             target: snapshot.tracker.target,
+            statsSubmitted: snapshot.tracker.statsSubmitted,
+            drift: snapshot.tracker.drift,
+            attempted: snapshot.tracker.attempted,
           }),
         )
         .digest('hex');
@@ -571,6 +585,9 @@ export class DirectorLoop {
         await this.opts.surface.postObservation({
           submitted: snapshot.tracker.submitted,
           target: snapshot.tracker.target,
+          statsSubmitted: snapshot.tracker.statsSubmitted,
+          drift: snapshot.tracker.drift,
+          attempted: snapshot.tracker.attempted,
         });
         this.opts.log.debug({ subChanged, observationChanged }, 'Observation event published');
       }
