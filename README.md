@@ -5,14 +5,19 @@ free-tier providers, plus an observe-only Director that watches the job-search
 campaign agent, surfaces it to Slack, and rotates the VPN IP. Everything runs on
 this machine; nothing leaves it except upstream LLM calls.
 
-## The chain (2026-09-18)
+## The chain (2026-10-05)
 
 Requests with `model: "mst/free"` (or `free`) walk every provider with its own
 default model, in this order, demoting failures to the back and parking
 rate-limited entries for a cooldown:
 
-1. **OpenRouter pool** - 15 keys x `openrouter/free` (the free auto-router)
-   - explicit stealth previews (`stealth/union-alpha`, `stealth/space-bunny-alpha`)
+1. **OpenRouter pool** - 15 keys x `openrouter/free` (the free auto-router,
+   0-cost, 50 req/day per key, 1000 once the account holds $10 of credits)
+   - no extra models (`OPENROUTER_MODELS` is empty): the `stealth/` namespace
+     is no longer listed upstream. `stealth/space-bunny-alpha` 404s "No
+     endpoints found"; `stealth/union-alpha` had already graduated to
+     `unbiased/pareto`, which is **paid** (~$2.50 / $7.50 per M tokens), so it
+     is deliberately not a chain entry.
 2. **ZAI** - GLM coding plan, `glm-5.3-flash` on `api.z.ai/api/coding/paas/v4`
 3. **TokenRouter** - `z-ai/glm-5.3-free`
 4. **OpenCodeGo** - `glm-5.3-flash` on `/zen/go/v1` (monthly-capped)
@@ -20,8 +25,8 @@ rate-limited entries for a cooldown:
    (`openai/gpt-oss-120b` + CSV), Mistral (`mistral-small-latest` + CSV),
    Cloudflare Workers AI (4 models). SambaNova is retired: every model 402s
    without a payment method.
-6. **Local tail** - laptop tailnet Ollama `qwen3.5:2b` (32K ctx, 30-min
-   timeout; ABSOLUTE LAST). LM Studio and the llama-server local slot are
+6. **Local tail** - laptop tailnet Ollama `qwen35-2b-64k` (context guard 100K,
+   30-min timeout; ABSOLUTE LAST). LM Studio and the llama-server local slot are
    parked (disabled flags); the tail is always reachable.
 
 The OpenCode `/zen/v1` free pool was removed: every model 403s
@@ -41,7 +46,8 @@ direct:local/<model>          direct:lmstudio/<model>     direct:laptop/<model>
 
 `direct:zai/glm-...` and `direct:glm-...` strip/alias the ZAI prefix;
 `direct:openrouter/<model>` applies the FORCE_FREE `:free` rewrite except for
-the `stealth/` namespace (natively free, no `:free` variant exists upstream).
+the `stealth/` namespace, which is passed through unsuffixed. That namespace is
+no longer listed upstream, so the rule is defensive only.
 
 ## Run
 
@@ -127,5 +133,8 @@ docs/adr/        architecture decision records
 - Byzantine provider selection: env-declared order + failure demotion, nothing
   model-aware beyond `openrouter/free` upstream.
 
-`LOG_REDACT` (CSV of secret fragments) scrubs upstream error bodies before
-they reach logs or clients; `.env.example` ships a sensible list.
+`LOG_REDACT` (CSV of secret field names) redacts those keys in log objects. It
+does **not** scrub substrings out of upstream bodies: that was removed on
+2026-10-03 because it ran on the success path and rewrote real client data (a
+JustJoin slug containing "sk-" came back to the agent as "sk-[REDACTED]"). On
+this single-user local gateway the client owns its secrets.
