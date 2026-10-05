@@ -20,9 +20,16 @@ setup() {
   chmod +x "${WORKDIR}/scripts/run.sh"
   cd "${WORKDIR}"
   export RUN="${WORKDIR}/scripts/run.sh"
+  # `down` inspects $PORT for a listener it does not own, so pin it to a free
+  # ephemeral port. Without this a real gateway on :8787 would make every
+  # `down` test in this file fail.
+  export PORT="$(node -e 'const s=require("net").createServer();s.listen(0,()=>{console.log(s.address().port);s.close()})')"
 }
 
 teardown() {
+  if [[ -f "${WORKDIR}/.test-pids" ]]; then
+    while read -r p; do [[ -n "$p" ]] && kill "$p" 2>/dev/null || true; done < "${WORKDIR}/.test-pids"
+  fi
   for name in gateway worker; do
     if [[ -f "${WORKDIR}/.run/${name}.pid" ]]; then
       kill "$(cat "${WORKDIR}/.run/${name}.pid")" 2>/dev/null || true
@@ -40,6 +47,34 @@ spawn_sleeper() {
   SPAWNED_PID=$!
 }
 
+# Record a pid for teardown reaping.
+track_pid() { echo "$1" >> "${WORKDIR}/.test-pids"; }
+
+# A node process whose argv looks like a PROD gateway of THIS workspace:
+# `node <WORKDIR>/dist/main.js`. The cmdline carries both ROOT and the
+# entrypoint, which is what `down` matches on to adopt an orphaned gateway.
+spawn_fake_gateway() {
+  mkdir -p "${WORKDIR}/dist"
+  printf 'setInterval(() => {}, 1000);\n' > "${WORKDIR}/dist/main.js"
+  node "${WORKDIR}/dist/main.js" &
+  FAKE_GATEWAY_PID=$!
+  track_pid "$FAKE_GATEWAY_PID"
+}
+
+# A listener on $PORT that is NOT ours (no ROOT in its cmdline).
+spawn_foreign_listener() {
+  PORT="${PORT}" node -e 'require("http").createServer((q,s)=>s.end("x")).listen(process.env.PORT,"127.0.0.1")' &
+  FOREIGN_PID=$!
+  track_pid "$FOREIGN_PID"
+  for _ in $(seq 1 40); do
+    if lsof -nP -iTCP:"${PORT}" -sTCP:LISTEN >/dev/null 2>&1; then return 0; fi
+    sleep 0.1
+  done
+  return 1
+}
+
+alive() { kill -0 "$1" 2>/dev/null; }
+
 @test "unknown command fails with usage hint" {
   run bash "${RUN}" frobnicate
   [ "$status" -ne 0 ]
@@ -51,6 +86,67 @@ spawn_sleeper() {
   run bash "${RUN}" down
   [ "$status" -eq 0 ]
   [ ! -f .run/gateway.pid ]
+}
+
+# --- 2026-10-06: down() killed only the pid in .run/gateway.pid ------------
+# `start_gateway_dev` records the pid of `npx`, but the process that actually
+# holds :8787 is a GRANDchild (npx -> tsx -> node). Killing the recorded pid
+# orphaned the listener, and the following `rm -f .run/gateway.pid` destroyed
+# the only record of it, so every later `down` was a silent no-op that still
+# exited 0. These pin the tree teardown and the loud failure.
+
+@test "down kills the whole gateway process tree, not just the recorded pid" {
+  # A parent with a child: killing the parent alone leaves the child orphaned.
+  bash -c 'sleep 60 & echo $! > '"${WORKDIR}"'/.child.pid; wait' &
+  local parent=$!
+  track_pid "$parent"
+  sleep 0.5
+  local child
+  child="$(cat "${WORKDIR}/.child.pid")"
+  track_pid "$child"
+  alive "$child"
+  echo "$parent" > .run/gateway.pid
+
+  run bash "${RUN}" down
+  [ "$status" -eq 0 ]
+
+  sleep 0.5
+  if alive "$child"; then
+    echo "gateway CHILD (pid $child) survived run.sh down; tree not reaped" >&3
+    false
+  fi
+}
+
+@test "down adopts an orphaned gateway when the pidfile is gone" {
+  spawn_fake_gateway
+  alive "$FAKE_GATEWAY_PID"
+  [ ! -f .run/gateway.pid ]
+
+  run bash "${RUN}" down
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"orphan"* ]]
+
+  sleep 0.5
+  if alive "$FAKE_GATEWAY_PID"; then
+    echo "orphaned gateway (pid $FAKE_GATEWAY_PID) survived run.sh down" >&3
+    false
+  fi
+}
+
+@test "down fails loudly when a foreign process still holds the port" {
+  spawn_foreign_listener
+  alive "$FOREIGN_PID"
+
+  run bash "${RUN}" down
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"$PORT"* ]]
+
+  # It must NOT have killed a process it does not own.
+  sleep 0.3
+  if ! alive "$FOREIGN_PID"; then
+    echo "down killed a FOREIGN listener on $PORT" >&3
+    false
+  fi
 }
 
 @test "down reaps a stale (dead) pidfile without killing anything" {

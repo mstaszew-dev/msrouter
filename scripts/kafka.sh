@@ -200,12 +200,28 @@ start_or_init() {
   start
 }
 
+# Stop the monitor started by `monitor()`. It `exec`s ConsoleConsumer, so it
+# owns no pidfile and stopping only the broker left it consuming against a dead
+# one (observed 2026-10-06: pid 99503 survived `kafka.sh stop`). Matched by
+# $KAFKA_HOME + topic so another checkout's monitor is never touched.
+stop_monitor() {
+  local pid cmd stopped=0
+  for pid in $(pgrep -f 'director-events' 2>/dev/null || true); do
+    [[ "$pid" == "$$" ]] && continue
+    cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    [[ "$cmd" == *"$KAFKA_HOME"* ]] || continue
+    kill "$pid" 2>/dev/null && { ok "stopped kafka monitor (pid $pid)"; stopped=$((stopped+1)); }
+  done
+  [[ "$stopped" -gt 0 ]]
+}
+
 stop() {
   if is_running; then
     kill "$(cat "$PIDFILE")" && ok "stopped kafka (pid $(cat "$PIDFILE"))"
   else
     log "kafka not running"
   fi
+  stop_monitor || true
   rm -f "$PIDFILE" .run/kafka-server.properties
 }
 

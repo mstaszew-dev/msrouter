@@ -133,6 +133,43 @@ MOCK
   [ ! -f .run/kafka.pid ]
 }
 
+@test "stop also stops the kafka monitor, not just the broker" {
+  # The monitor is `exec kafka.tools.ConsoleConsumer --topic director-events`,
+  # which owns NO pidfile. Stopping only $PIDFILE left it running against a
+  # dead broker (observed 2026-10-06: pid 99503 survived `kafka.sh stop`).
+  # Stand in for it with a sleeper whose argv carries $KAFKA_HOME and the
+  # topic, which is how the real monitor identifies itself.
+  sleep 61 >/dev/null 2>&1 </dev/null &
+  local broker_pid=$!
+  echo "$broker_pid" > .run/kafka.pid
+  # A real long-lived stand-in: `sleep` rejects extra args and exits, which
+  # made an earlier version of this test pass vacuously. This script's argv
+  # mirrors the real monitor (ConsoleConsumer --topic director-events under
+  # $KAFKA_HOME), which is how stop() will identify it.
+  cat > "${KAFKA_HOME}/bin/kafka-console-consumer.sh" <<'MOCK'
+#!/bin/bash
+while :; do sleep 1; done
+MOCK
+  chmod +x "${KAFKA_HOME}/bin/kafka-console-consumer.sh"
+  "${KAFKA_HOME}/bin/kafka-console-consumer.sh" --topic director-events \
+    --bootstrap-server "${KAFKA_BOOTSTRAP:-localhost:19092}" \
+    >/dev/null 2>&1 </dev/null &
+  local monitor_pid=$!
+  # Guard: if the stand-in is not actually alive, this test proves nothing.
+  kill -0 "$monitor_pid" 2>/dev/null || {
+    echo "monitor stand-in failed to start" >&3; false; }
+
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  stop
+
+  ! kill -0 "$broker_pid" 2>/dev/null
+  if kill -0 "$monitor_pid" 2>/dev/null; then
+    kill "$monitor_pid" 2>/dev/null || true
+    echo "kafka monitor (pid $monitor_pid) survived kafka.sh stop" >&3
+    false
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # Monitor behavior tests
 # ---------------------------------------------------------------------------
@@ -436,6 +473,15 @@ PROPS
 
   local order="${TEST_TMPDIR}/call-order"
   local first_start first_format
+  # `start` launches the broker as `nohup ... &`, so the mock appends
+  # asynchronously. With the readiness probe stubbed true, start() returns
+  # before the child has written its line, so grepping immediately races and
+  # fails on a loaded machine. Wait for the line, then read the order.
+  local i
+  for i in $(seq 1 50); do
+    grep -q '^server-start$' "$order" && break
+    sleep 0.1
+  done
   first_start=$(grep -n '^server-start$' "$order" | head -1 | cut -d: -f1)
   first_format=$(grep -n '^storage:' "$order" | head -1 | cut -d: -f1)
   [ -n "$first_start" ]

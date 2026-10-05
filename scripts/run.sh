@@ -65,13 +65,107 @@ start_gateway_prod() {
   ok "gateway pid $(cat .run/gateway.pid)"
 }
 
-down() {
-  for name in gateway; do
-    if [[ -f .run/$name.pid ]] && kill -0 "$(cat .run/$name.pid)" 2>/dev/null; then
-      kill "$(cat .run/$name.pid)" && ok "stopped $name"
-    fi
-    rm -f .run/$name.pid
+# Collect the descendants of $1 (deepest first) so a tree can be torn down
+# leaves-first. pgrep is the portable choice here: `ps -o ppid` parsing breaks
+# on macOS vs Linux column widths, and pgrep -P is available on both.
+descendants() {
+  local parent="$1" child
+  for child in $(pgrep -P "$parent" 2>/dev/null || true); do
+    descendants "$child"
+    echo "$child"
   done
+}
+
+# True when $1 is one of OUR gateway processes. The pidfile alone is not
+# trustworthy: `down` removes it even when the kill missed, so an orphaned
+# listener becomes unfindable. Matching the cmdline against THIS workspace's
+# ROOT adopts that orphan while staying safe against other checkouts (and
+# against this script itself, whose own path contains ROOT).
+is_our_gateway() {
+  local cmd
+  cmd="$(ps -p "$1" -o command= 2>/dev/null || true)"
+  [[ "$cmd" == *"$ROOT"* ]] || return 1
+  [[ "$cmd" == *"src/main.ts"* || "$cmd" == *"dist/main.js"* ]]
+}
+
+# SIGTERM $1 and everything below it, leaves first, then confirm. Returns 1 if
+# anything survived, so `down` can fail loudly instead of reporting a stop it
+# did not perform.
+stop_tree() {
+  local root="$1" pid rc=0
+  for pid in $(descendants "$root") "$root"; do
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+  for _ in $(seq 1 20); do
+    local still=0
+    for pid in $(descendants "$root") "$root"; do
+      if kill -0 "$pid" 2>/dev/null; then still=1; fi
+    done
+    [[ "$still" -eq 0 ]] && break
+    sleep 0.1
+  done
+  for pid in $(descendants "$root") "$root"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      rc=1
+      echo "  pid $pid ignored SIGTERM" >&2
+    fi
+  done
+  return "$rc"
+}
+
+# Live gateway pids of ours, whether or not a pidfile survives.
+our_gateway_pids() {
+  local pid
+  for pid in $(pgrep -f 'main\.(ts|js)' 2>/dev/null || true); do
+    [[ "$pid" == "$$" ]] && continue
+    if is_our_gateway "$pid"; then echo "$pid"; fi
+  done
+}
+
+down() {
+  local rc=0 stopped=0 pid
+  # 1. The pidfile is the fast path, but tear down the TREE: `dev` records the
+  #    `npx` pid while the process holding :8787 is a grandchild
+  #    (npx -> tsx -> node). Killing only the recorded pid orphaned the
+  #    listener and the `rm -f` below then destroyed the only record of it
+  #    (2026-10-06).
+  if [[ -f .run/gateway.pid ]]; then
+    pid="$(cat .run/gateway.pid)"
+    if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+      if stop_tree "$pid"; then
+        ok "stopped gateway (pid $pid)"
+        stopped=1
+      else
+        echo "[err] could not stop gateway tree rooted at pid $pid" >&2
+        rc=1
+      fi
+    fi
+    rm -f .run/gateway.pid
+  fi
+
+  # 2. Adopt orphans: a previous down may have removed the pidfile while a
+  #    listener survived. Reap anything of ours still running.
+  for pid in $(our_gateway_pids); do
+    if stop_tree "$pid"; then
+      ok "stopped orphaned gateway (pid $pid)"
+      stopped=1
+    else
+      echo "[err] could not stop orphaned gateway (pid $pid)" >&2
+      rc=1
+    fi
+  done
+
+  # 3. Never exit 0 while something still holds the port. If it is ours we
+  #    failed above; if it is not ours, say so instead of implying success.
+  local holder
+  holder="$(lsof -nP -iTCP:"${PORT:-8787}" -sTCP:LISTEN -t 2>/dev/null | head -1 || true)"
+  if [[ -n "$holder" ]]; then
+    echo "[err] port ${PORT:-8787} still held by pid $holder (not stopped by this script)" >&2
+    rc=1
+  fi
+
+  [[ "$stopped" -eq 0 && "$rc" -eq 0 ]] && log "gateway not running"
+  return "$rc"
   # Reap the dev/prod log watcher (the shell whose foreground is `tail -F`).
   # Guard rails: never kill our own shell, and only kill a process whose
   # command is THIS project's run.sh (PID-reuse safety - a bare "run.sh"
