@@ -589,7 +589,17 @@ export class DirectorLoop {
           drift: snapshot.tracker.drift,
           attempted: snapshot.tracker.attempted,
         });
-        this.opts.log.debug({ subChanged, observationChanged }, 'Observation event published');
+        this.opts.log.info(
+          {
+            subChanged,
+            observationChanged,
+            submitted: snapshot.tracker.submitted,
+            statsSubmitted: snapshot.tracker.statsSubmitted,
+            drift: snapshot.tracker.drift,
+            attempted: snapshot.tracker.attempted,
+          },
+          'Observation event published',
+        );
       }
 
       // Auto-rebuild RAG when new submissions are detected

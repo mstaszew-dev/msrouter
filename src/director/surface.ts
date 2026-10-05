@@ -42,8 +42,16 @@ export interface ObservationSummary {
 }
 
 function observationDetail(s: ObservationSummary): string {
-  const base = `submitted=${s.submitted} target=${s.target}`;
-  return s.drift ? `${base} statsSubmitted=${s.statsSubmitted} drift=${s.drift} attempted=${s.attempted ?? 0}` : base;
+  // Hidden numbers are ALWAYS in the ledger detail, not only when drift is
+  // non-zero: the ledger is the audit record, and a gap in the drift history
+  // would hide exactly the re-logs this change exists to explain.
+  return [
+    `submitted=${s.submitted}`,
+    `target=${s.target}`,
+    `statsSubmitted=${s.statsSubmitted ?? s.submitted}`,
+    `drift=${s.drift ?? 0}`,
+    `attempted=${s.attempted ?? 0}`,
+  ].join(' ');
 }
 
 /**
@@ -437,12 +445,20 @@ export class SlackSurface extends NullSurface {
   }
 
   private buildObservationMessage(snapshot: ObservationSummary): string {
-    // The count is derived from the applications list, so when the python
-    // agent's legacy stats counter disagrees, say so here rather than letting
-    // the number silently drop with no explanation.
+    // The count is derived from the applications list. The hidden numbers
+    // (agent counter, drift, attempted) are shown on EVERY observation, not
+    // only when drift is non-zero: the owner received "1673 twice" because a
+    // demotion changed `attempted`, which re-posted an identical-looking
+    // message that did not explain itself. Always showing them makes every
+    // re-post self-explanatory. 2026-10-05.
     const base = `*Campaign Status*: ${snapshot.submitted}/${snapshot.target} submitted (${snapshot.target - snapshot.submitted} to go)`;
-    if (!snapshot.drift) return base;
-    const attempted = snapshot.attempted ? `, ${snapshot.attempted} attempted` : '';
-    return `${base}\n_Counter drift: agent's stats says ${snapshot.statsSubmitted} (${snapshot.drift > 0 ? '+' : ''}${snapshot.drift})${attempted}. Confirmed submissions are counted from the applications list._`;
+    const drift = snapshot.drift ?? 0;
+    const statsSubmitted = snapshot.statsSubmitted ?? snapshot.submitted;
+    const attempted = snapshot.attempted ?? 0;
+    return (
+      `${base}\n` +
+      `_Counters: agent stats ${statsSubmitted} (drift ${drift > 0 ? '+' : ''}${drift}) | ` +
+      `attempted: ${attempted} | confirmed submissions are counted from the applications list_`
+    );
   }
 }

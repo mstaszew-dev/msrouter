@@ -134,7 +134,7 @@ describe('NullSurface', () => {
       '/tmp/ledger.jsonl',
       expect.objectContaining({
         kind: 'observation',
-        detail: 'submitted=5 target=10',
+        detail: 'submitted=5 target=10 statsSubmitted=5 drift=0 attempted=0',
       }),
     );
   });
@@ -235,10 +235,14 @@ describe('SlackSurface message builders (pure functions)', () => {
     expect(msg).toContain('1674/2000');
     expect(msg).toContain('1748');
     expect(msg).toContain('+74');
-    expect(msg).toContain('77 attempted');
+    expect(msg).toContain('attempted: 77');
   });
 
-  it('buildObservationMessage omits the drift note when there is no drift', () => {
+  // 2026-10-05: the hidden numbers (agent counter, drift, attempted) must be
+  // visible on EVERY observation. The owner received "1673 twice" because a
+  // demotion changed `attempted`, which re-posted an identical-looking message
+  // that did not explain itself.
+  it('buildObservationMessage always shows the hidden numbers', () => {
     const msg = builders.buildObservationMessage({
       submitted: 99,
       target: 1200,
@@ -247,7 +251,22 @@ describe('SlackSurface message builders (pure functions)', () => {
       attempted: 4,
     });
     expect(msg).toContain('99/1200');
-    expect(msg).not.toContain('drift');
+    expect(msg).toContain('attempted: 4');
+    expect(msg).toContain('drift 0');
+  });
+
+  it('buildObservationMessage explains a non-zero drift with the same fields', () => {
+    const msg = builders.buildObservationMessage({
+      submitted: 1673,
+      target: 2000,
+      statsSubmitted: 1750,
+      drift: 74,
+      attempted: 91,
+    });
+    expect(msg).toContain('1673/2000');
+    expect(msg).toContain('1750');
+    expect(msg).toContain('+74');
+    expect(msg).toContain('attempted: 91');
   });
 });
 
