@@ -178,8 +178,8 @@ describe('ProviderChain - stealth/ models in OPENROUTER_MODELS (natively free)',
   afterEach(() => loadEnv(DEFAULT_ENV));
 
   it('routes stealth/union-alpha entries without the :free suffix', () => {
-    // Union Alpha is 0/0-priced at its base id; ':free' does not exist
-    // upstream, so the routing entry must carry the bare id.
+    // Namespace prefix match. The namespace is empty upstream (2026-10-05);
+    // the rule stays because it is a prefix test, not an allowlist.
     loadEnv({ ...DEFAULT_ENV, OPENROUTER_MODELS: 'stealth/union-alpha' });
     const p = makeProviders({ openrouterKeys: 1 });
     const labels = new ProviderChain(p, silentLogger).queueSnapshot().map((c) => c.label);

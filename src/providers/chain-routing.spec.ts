@@ -42,8 +42,8 @@ describe('shortCircuit', () => {
   });
 
   it('parses direct:openrouter/stealth/<model> and keeps the bare id', () => {
-    // Natively free stealth previews must not gain a :free suffix (no such
-    // variant exists upstream).
+    // Namespace prefix match: a stealth/ id is never suffixed. Kept even
+    // though the namespace is empty upstream (README "The chain").
     expect(shortCircuit('direct:openrouter/stealth/union-alpha')).toEqual({
       provider: 'openrouter',
       model: 'stealth/union-alpha',
@@ -125,10 +125,10 @@ describe('withFree', () => {
     expect(result).toBe('openai/gpt-4o:2024-08-06');
   });
 
-  it('does not append :free to stealth/ models (natively free, no :free variant)', () => {
-    // stealth/union-alpha is 0/0-priced at its base id on OpenRouter and no
-    // 'stealth/union-alpha:free' id exists, so rewriting it would 404 every
-    // request instead of using the already-free model.
+  it('does not append :free to stealth/ models', () => {
+    // Namespace prefix match, not an allowlist: reaching the branch requires a
+    // stealth/ string. Rewriting it would corrupt the id if OpenRouter ever
+    // reintroduces the namespace.
     expect(withFree('stealth/union-alpha', true)).toBe('stealth/union-alpha');
   });
 });
