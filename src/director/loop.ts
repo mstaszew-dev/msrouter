@@ -205,6 +205,30 @@ export class DirectorLoop {
     }
   }
 
+  /**
+   * Record a worker restart (ledger + Slack). Best-effort: an fs error here
+   * must never break the tick or skip the checkpoint save - the 2026-09-14
+   * double-kill and 2026-09-01 checkpoint-loss incident classes both live in
+   * this file.
+   */
+  private async recordRestart(
+    e: Env,
+    state: { pids: number[] },
+    reason: string,
+  ): Promise<void> {
+    try {
+      await this.opts.surface.postRestart({
+        pid: state.pids[0] ?? 0,
+        logPath: join(e.DIRECTOR_CAMPAIGN_DIR, 'agent.log'),
+      });
+    } catch (err) {
+      this.opts.log.warn(
+        { err: err instanceof Error ? err.message : String(err), reason },
+        'could not record the worker restart',
+      );
+    }
+  }
+
   /** Run the read-only agent loop and post proposals to Slack. Returns count proposed. */ private async proposePatches(
     actionable: DecisionClassification[],
     snapshot: { tracker: { submitted: number; target: number } },
@@ -359,6 +383,9 @@ export class DirectorLoop {
     // 0b or stall 3a): the other path must not double-rotate/double-restart
     // the minutes-old worker within the same tick (review 2026-09-15).
     let staleHandledThisTick = false;
+    // Deferred restart record: the stall path records AFTER saveCheckpoint so
+    // an fs error in the record cannot lose the stale bookkeeping.
+    let recordAfterSave: { pids: number[] } | undefined;
 
     // Supervise the observability broker before doing any work: a dead Kafka
     // must never block the tick, but it should also not stay dead silently.
@@ -390,6 +417,18 @@ export class DirectorLoop {
         if (restarted) {
           this.opts.log.info(
             'Campaign was restarted due to infrastructure issues; waiting for next tick',
+          );
+          // Record this restart too: ensureInfrastructureHealthy kills and
+          // respawns the worker, and that was invisible in the ledger/Slack.
+          await this.recordRestart(
+            e,
+            snapshotWorker({
+              entryCommand: e.DIRECTOR_RUNNER || DEFAULT_RUNNER,
+              workspace: e.DIRECTOR_OPENCLAW_WORKSPACE,
+              cdpUrl: e.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
+              log: this.opts.log,
+            }),
+            'infra-restart (Playwright MCP or worker unhealthy)',
           );
           return {
             observed: 0,
@@ -427,12 +466,22 @@ export class DirectorLoop {
               // (3a) must not fire again this tick and double-kill the fresh
               // worker (review 2026-09-15).
               staleHandledThisTick = true;
-              await restartWorker({
+              const restarted = await restartWorker({
                 entryCommand: e.DIRECTOR_RUNNER || DEFAULT_RUNNER,
                 workspace: e.DIRECTOR_OPENCLAW_WORKSPACE,
                 cdpUrl: e.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
                 log: this.opts.log,
               });
+              // Record the restart (ledger + Slack). postRestart existed on the
+              // Surface but had no callers, so every Director-driven restart
+              // was invisible - the owner could not tell why the agent kept
+              // "terminating". Points at the agent's own log file, which now
+              // survives the tab (2026-10-05).
+              await this.recordRestart(
+                e,
+                restarted.state,
+                'vpn-rotation restart (stuck agent moved to a fresh IP)',
+              );
             } else {
               this.opts.log.info(
                 `Proton VPN IP rotated; campaign active (last event ${Math.round(idleMin)}m ago); worker not restarted`,
@@ -524,12 +573,15 @@ export class DirectorLoop {
         }
         // Restart the agent so it picks up the new IP on fresh connections
         if (autostartEnabled(e)) {
-          await restartWorker({
+          const restarted = await restartWorker({
             entryCommand: e.DIRECTOR_RUNNER || DEFAULT_RUNNER,
             workspace: e.DIRECTOR_OPENCLAW_WORKSPACE,
             cdpUrl: e.DIRECTOR_CDP_URL || 'http://127.0.0.1:9222',
             log: this.opts.log,
           });
+          // Recorded AFTER saveCheckpoint below: the checkpoint carries the
+          // stale flags whose loss re-fires rotation + restart next tick.
+          recordAfterSave = restarted.state;
         } else {
           this.opts.log.info('DIRECTOR_AUTOSTART=false; skipping stale-campaign worker restart');
         }
@@ -537,6 +589,15 @@ export class DirectorLoop {
         // flag/rotation bookkeeping, or the next tick re-fires the restart
         // (the 2026-09-01 checkpoint-loss class, loop.ts comment at ~line 137).
         await this.saveCheckpoint(checkpoint);
+        // Now that the stale bookkeeping is durable, record the restart.
+        if (recordAfterSave) {
+          await this.recordRestart(
+            e,
+            recordAfterSave,
+            'stall restart (campaign idle past the stale threshold)',
+          );
+          recordAfterSave = undefined;
+        }
       }
 
       // Publish observation event to Kafka only when the OBSERVABLE STATE

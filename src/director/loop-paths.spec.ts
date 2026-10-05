@@ -321,6 +321,70 @@ describe('DirectorLoop.runOnce - remaining paths', () => {
     expect(vi.mocked(observe)).not.toHaveBeenCalled();
   });
 
+  // 2026-10-05: restartWorker never recorded the restart anywhere - the
+  // Surface interface has postRestart but nothing called it, so every
+  // Director-driven restart was invisible in the ledger and Slack. The stale
+  // path must record it, pointing at the agent's own log file.
+  // A postRestart throw (ledger/outbox fs error) must never skip the
+  // checkpoint save: losing staleWarningActive/lastVpnRotation re-fires
+  // rotation + restart next tick (the 2026-09-14 double-kill class).
+  it('does not lose the checkpoint when the restart record fails', async () => {
+    const { loop, surface, cpPath } = buildLoop();
+    vi.mocked(classify).mockReturnValue(staleCritical);
+    vi.mocked(surface.postRestart).mockRejectedValueOnce(new Error('ledger fs error'));
+
+    const result = await loop.runOnce(freshSignal());
+
+    expect(result.reason).toBe('ok');
+    // The checkpoint must still carry the stale bookkeeping.
+    const cp = JSON.parse(readFileSync(cpPath, 'utf8')) as { staleWarningActive?: boolean };
+    expect(cp.staleWarningActive).toBe(true);
+  });
+
+  // Third restart path: ensureInfrastructureHealthy kills + respawns the
+  // worker ('infra-restart'). That restart was invisible too.
+  it('records an infra-restart via the surface as well', async () => {
+    const { loop, surface } = buildLoop();
+    vi.mocked(ensureInfrastructureHealthy).mockResolvedValueOnce(true);
+
+    const result = await loop.runOnce(freshSignal());
+
+    expect(result.reason).toBe('infra-restart');
+    expect(surface.postRestart).toHaveBeenCalledWith(
+      expect.objectContaining({ pid: 1 }),
+    );
+  });
+
+  // The most important restart to record: the old worker was killed and no
+  // new one registered within the timeout.
+  it('records a restart that produced no worker (pid 0)', async () => {
+    const { loop, surface } = buildLoop();
+    vi.mocked(classify).mockReturnValue(staleCritical);
+    vi.mocked(restartWorker).mockResolvedValueOnce({
+      iterm: true,
+      state: { pids: [], running: false, orphaned: false },
+    } as never);
+
+    await loop.runOnce(freshSignal());
+
+    expect(surface.postRestart).toHaveBeenCalledWith(
+      expect.objectContaining({ pid: 0 }),
+    );
+  });
+
+  it('records the restart via the surface with the agent log path', async () => {
+    const { loop, surface, cpPath } = buildLoop();
+    vi.mocked(classify).mockReturnValue(staleCritical);
+
+    await loop.runOnce(freshSignal());
+
+    expect(vi.mocked(restartWorker)).toHaveBeenCalledTimes(1);
+    expect(surface.postRestart).toHaveBeenCalledWith({
+      pid: 1,
+      logPath: join(dirname(cpPath), 'agent.log'),
+    });
+  });
+
   it('rotates VPN on a stale campaign and suppresses the duplicate proposal on the next tick', async () => {
     const { loop, cpPath } = buildLoop();
     vi.mocked(classify).mockReturnValue(staleCritical);
