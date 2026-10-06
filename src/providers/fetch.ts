@@ -36,6 +36,14 @@ export interface UpstreamOptions {
   /** Caller-supplied signal; the helper will ALSO arm a timeout on top of it. */
   signal: AbortSignal;
   timeoutMs: number;
+  /**
+   * Deadline for the RESPONSE HEADERS, independent of timeoutMs (which covers
+   * the whole call). Bounds an upstream that accepts the connection and then
+   * sends nothing at all: the laptop tail gave ttfb=0.000s and no response for
+   * 300s on a 162KB agent payload, so with only timeoutMs one hung entry held
+   * the entire walk (2026-10-06). Omit where headers arrive immediately.
+   */
+  firstByteTimeoutMs?: number;
   /** Redacted key tag for logging, e.g. "key3:...a1b2" (never the full key). */
   keyTag: string;
 }
@@ -52,6 +60,17 @@ export async function postChatCompletion(
   const url = joinUrl(opts.baseUrl, 'chat/completions');
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), opts.timeoutMs);
+  // First-byte deadline: see UpstreamOptions.firstByteTimeoutMs. Distinguishes
+  // "upstream never sent headers" from a mid-stream failure, which the generic
+  // fetch-error catch below cannot tell apart.
+  let firstByteFired = false;
+  const firstByteTimer =
+    opts.firstByteTimeoutMs && opts.firstByteTimeoutMs > 0
+      ? setTimeout(() => {
+          firstByteFired = true;
+          ac.abort();
+        }, opts.firstByteTimeoutMs)
+      : undefined;
   // If the caller's signal aborts, propagate.
   opts.signal.addEventListener('abort', () => ac.abort(), { once: true });
 
@@ -68,6 +87,7 @@ export async function postChatCompletion(
       signal: ac.signal,
     });
 
+    if (firstByteTimer) clearTimeout(firstByteTimer);
     const outcome = classifyAttempt(res.status, `upstream ${res.status}`);
     if (!outcome) {
       if (!body.stream) {
@@ -130,6 +150,13 @@ export async function postChatCompletion(
     const text = await safeReadText(res);
     return { ...outcome, message: outcome.message + (text ? `: ${truncate(text, 300)}` : '') };
   } catch (e) {
+    if (firstByteFired) {
+      return {
+        kind: 'TRANSIENT',
+        status: 0,
+        message: `fetch error: no response headers within ${opts.firstByteTimeoutMs}ms`,
+      };
+    }
     const msg = e instanceof Error ? e.message : String(e);
     // AbortError from our timeout => transient; caller may retry/backoff.
     return {
@@ -139,6 +166,7 @@ export async function postChatCompletion(
     };
   } finally {
     clearTimeout(timer);
+    if (firstByteTimer) clearTimeout(firstByteTimer);
   }
 }
 

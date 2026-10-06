@@ -97,6 +97,10 @@ const schema = z.object({
   // over to the local tail (slow-hanging remotes, 2026-09-13). 0 disables.
   // Client ceiling: 300 + 300 + laptop 1800 = 2400s (agent TIMEOUT_SECONDS).
   WALK_DEADLINE_MS: z.coerce.number().int().min(0).default(300_000),
+  // Deadline for response HEADERS on the local tail (laptop/local/lmstudio),
+  // independent of their long whole-request timeouts. A tail that accepts the
+  // connection and then goes silent must not hold the walk (2026-10-06).
+  FIRST_BYTE_TIMEOUT_MS: z.coerce.number().int().positive().default(45_000),
   // Demote after N consecutive successes (local tail must not monopolize).
   SUCCESS_DEMOTE_LIMIT: z.coerce.number().int().positive().default(5),
 

@@ -107,6 +107,7 @@ export function buildProviders(log: Logger): Providers {
       },
       env.LOCAL_TIMEOUT_MS,
       log,
+      env.FIRST_BYTE_TIMEOUT_MS,
     ),
     // LM Studio (Bionic): OpenAI-compatible local server, no API key needed.
     // Routed when LMSTUDIO_ENABLED=true (see chain-routing.ts). Uses its own
@@ -143,6 +144,7 @@ export function buildProviders(log: Logger): Providers {
       },
       env.LAPTOP_TIMEOUT_MS,
       log,
+      env.FIRST_BYTE_TIMEOUT_MS,
     ),
   };
 }

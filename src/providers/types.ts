@@ -65,6 +65,14 @@ export interface AttemptOptions {
   model: string;
   /** OpenRouter: which key index in the pool to use (0-based). */
   keyIndex?: number;
+  /**
+   * Deadline for the RESPONSE HEADERS, independent of timeoutMs (which covers
+   * the whole call). Bounds an upstream that accepts the connection and then
+   * sends nothing: the laptop tail gave ttfb=0.000s for 300s on a 162KB agent
+   * payload (2026-10-06), so with only timeoutMs one hung entry held the whole
+   * walk. Omit for providers that answer fast or stream headers immediately.
+   */
+  firstByteTimeoutMs?: number;
 }
 
 /**

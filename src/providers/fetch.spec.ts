@@ -326,6 +326,61 @@ describe('postChatCompletion', () => {
       expect(outcome.message).toContain('fetch error');
     });
 
+    it('aborts on the first-byte deadline when upstream never sends headers', async () => {
+      // The laptop tail accepts the TCP connection and then sends nothing: a
+      // 162KB agent payload produced ttfb=0.000s and no response at all for
+      // 300s (2026-10-06). With only a whole-request timeout it held the slot
+      // for LAPTOP_TIMEOUT_MS (30 min), eating the whole walk and nearly the
+      // campaign agent's own 2400s deadline, then surfacing as the useless
+      // `laptop:TRANSIENT(0)`.
+      const ac = new AbortController();
+      // A fetch that never settles: upstream accepted but sent no headers.
+      // Must honour the abort signal the way real fetch does, otherwise the
+      // mock hangs forever and the deadline cannot be observed.
+      fetchSpy = vi.fn(
+        (_url: string, init?: { signal?: AbortSignal }) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              reject(new DOMException('The operation was aborted.', 'AbortError'));
+            });
+          }),
+      );
+      setPostFetchForTests(fetchSpy as never);
+
+      const fetchPromise = postChatCompletion(
+        body(),
+        opts({ signal: ac.signal, timeoutMs: 60_000, firstByteTimeoutMs: 500 }),
+      );
+      vi.advanceTimersByTime(600);
+
+      const result = await fetchPromise;
+      const outcome = assertFailure(result);
+      expect(outcome.kind).toBe('TRANSIENT');
+      expect(outcome.status).toBe(0);
+      expect(outcome.message).toContain('no response headers');
+    });
+
+    it('clears the first-byte deadline once headers arrive', async () => {
+      // A slow-but-alive upstream must NOT be cut off: the deadline guards the
+      // first byte only, not the whole response.
+      const ac = new AbortController();
+      fetchSpy = vi.fn().mockResolvedValue(
+        jsonResponse(200, { choices: [{ message: { content: 'hi' } }] }),
+      );
+      setPostFetchForTests(fetchSpy as never);
+
+      const fetchPromise = postChatCompletion(
+        body(),
+        opts({ signal: ac.signal, timeoutMs: 60_000, firstByteTimeoutMs: 500 }),
+      );
+      // Headers landed well inside the deadline; the body then takes longer
+      // than the deadline would have allowed if it were still armed.
+      vi.advanceTimersByTime(600);
+
+      const result = await fetchPromise;
+      expect(result.kind).toBe('OK');
+    });
+
     it('returns TRANSIENT when caller signal aborts', async () => {
       const ac = new AbortController();
       const fetchPromise = postChatCompletion(body(), opts({ signal: ac.signal, timeoutMs: 60_000 }));

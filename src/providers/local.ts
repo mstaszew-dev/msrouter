@@ -95,6 +95,7 @@ export class LocalProvider implements Provider {
     cfg: LocalConfig,
     private readonly timeoutMs: number,
     private readonly log: Logger,
+    private readonly firstByteTimeoutMs?: number,
   ) {
     this.id = cfg.id ?? 'local';
     this.baseUrl = cfg.baseUrl;
@@ -146,6 +147,7 @@ export class LocalProvider implements Provider {
       authorization: `Bearer ${this.id}`,
       signal,
       timeoutMs: this.timeoutMs,
+      firstByteTimeoutMs: this.firstByteTimeoutMs,
       keyTag: this.id,
     });
   }
