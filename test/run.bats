@@ -230,3 +230,51 @@ alive() { kill -0 "$1" 2>/dev/null; }
   [ "$status" -ne 0 ]
   [[ "$output" == *"no log for worker"* ]]
 }
+
+# --- dev log watcher reaping -------------------------------------------
+# `scripts/run.sh dev` leaves its own shell in the foreground running `tail -F`
+# (the log view in the iTerm tab). down() must reap that watcher, otherwise
+# every restart leaves a tab tailing a dead gateway (2026-09-14: two orphan
+# tail tabs in iTerm after a restart). The reap block sat AFTER `return "$rc"`,
+# so it was dead code and never ran.
+
+# A watcher with the argv a real `dev` session has (`bash ./scripts/run.sh dev`)
+# plus a live `tail -F` child. `exec -a` sets argv[0] so the reap guard's
+# `ps -p ... -o command= | grep scripts/run.sh` matches, exactly as in prod.
+spawn_dev_watcher() {
+  touch "${WORKDIR}/.run/gateway.log"
+  # shellcheck disable=SC2016
+  exec -a "bash ./scripts/run.sh dev" bash -c "tail -F '${WORKDIR}/.run/gateway.log' & wait" &
+  WATCHER_PID=$!
+  track_pid "$WATCHER_PID"
+  for _ in $(seq 1 40); do
+    pgrep -P "$WATCHER_PID" tail >/dev/null 2>&1 && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+@test "down reaps the dev log watcher and its tail child" {
+  spawn_dev_watcher
+  echo "$WATCHER_PID" > .run/dev-session.pid
+  run bash "${RUN}" down
+  [ "$status" -eq 0 ]
+  # The watcher shell is gone ...
+  ! alive "$WATCHER_PID"
+  # ... its tail child with it, so no iTerm tab is left tailing a dead gateway ...
+  run pgrep -f "tail -F ${WORKDIR}/.run/gateway.log"
+  [ "$status" -ne 0 ]
+  # ... and the pidfile is cleared, so a later start cannot inherit it.
+  [ ! -f .run/dev-session.pid ]
+}
+
+@test "down leaves an unrelated shell alone (pid-reuse guard)" {
+  # dev-session.pid pointing at a process that is NOT this project's run.sh
+  # must not be killed: a bare pid match would reap a random user shell.
+  spawn_sleeper
+  echo "$SPAWNED_PID" > .run/dev-session.pid
+  run bash "${RUN}" down
+  [ "$status" -eq 0 ]
+  alive "$SPAWNED_PID"
+  kill "$SPAWNED_PID" 2>/dev/null || true
+}

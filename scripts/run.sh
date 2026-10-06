@@ -165,13 +165,18 @@ down() {
   fi
 
   [[ "$stopped" -eq 0 && "$rc" -eq 0 ]] && log "gateway not running"
-  return "$rc"
-  # Reap the dev/prod log watcher (the shell whose foreground is `tail -F`).
+
+  # 4. Reap the dev/prod log watcher (the shell whose foreground is `tail -F`).
   # Guard rails: never kill our own shell, and only kill a process whose
   # command is THIS project's run.sh (PID-reuse safety - a bare "run.sh"
   # grep would match other projects). Known residual: a watcher orphaned by
   # a gateway CRASH (not down) whose pid was overwritten by a later start
   # is not reaped here; close that tab manually (2026-09-14 residual).
+  #
+  # This block used to sit AFTER `return "$rc"`, which made it dead code: no
+  # `down` ever reaped the watcher, so every restart left an iTerm tab tailing
+  # a dead gateway - which is why `logs` kept showing the OLD gateway's tail
+  # after the gateway itself was already stopped (2026-10-07).
   if [[ -f .run/dev-session.pid ]]; then
     local sid
     sid="$(cat .run/dev-session.pid)"
@@ -182,6 +187,8 @@ down() {
     fi
     rm -f .run/dev-session.pid
   fi
+
+  return "$rc"
 }
 
 wait_ready() {
