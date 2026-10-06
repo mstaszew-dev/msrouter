@@ -466,13 +466,16 @@ describe('assertInIterm', () => {
     const lookup = (pid: number) =>
       pid === 1 ? { ppid: 0, comm: 'launchd' } : { ppid: 1, comm: 'iTerm2' };
     process.env['TERM_PROGRAM'] = 'iTerm.app';
-    assertInIterm(process.pid, lookup);
+    // 'darwin' is pinned: assertInIterm also hard-refuses non-macOS, and this
+    // case is about the ancestry guard, not the platform gate.
+    assertInIterm(process.pid, lookup, 'darwin');
     expect(exitSpy).not.toHaveBeenCalled();
   });
 
   it('exits with code 1 when the parent chain has no iTerm2 (Apple_Terminal env included)', () => {
     process.env['TERM_PROGRAM'] = 'Apple_Terminal';
-    assertInIterm(); // real ps walk: vitest's chain has no iTerm2
+    // real ps walk (lookup defaults when undefined): vitest's chain has no iTerm2
+    assertInIterm(process.pid, undefined, 'darwin');
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       expect.stringContaining('no live iTerm2 process'),
@@ -481,7 +484,8 @@ describe('assertInIterm', () => {
 
   it('exits with code 1 when TERM_PROGRAM is unset', () => {
     delete process.env['TERM_PROGRAM'];
-    assertInIterm(); // real ps walk: vitest's chain has no iTerm2
+    // real ps walk (lookup defaults when undefined): vitest's chain has no iTerm2
+    assertInIterm(process.pid, undefined, 'darwin');
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       expect.stringContaining('TERM_PROGRAM=(unset)'),
