@@ -162,6 +162,12 @@ const schema = z.object({
   // trust the agent.
   TERMINAL_ALLOWLIST: csv.default('ls,cat,echo,pwd,head,tail,grep'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
+  // Durable log file (the gateway otherwise logs to stdout only, which left
+  // .run/gateway.log stale and the chain's per-entry failure detail
+  // unrecoverable - 2026-10-06). Empty = stdout only, the previous behavior.
+  LOG_FILE: z.string().default(''),
+  LOG_FILE_MAX_BYTES: z.coerce.number().int().positive().default(5_000_000),
+  LOG_FILE_MAX_FILES: z.coerce.number().int().positive().default(3),
   LOG_REDACT: csv.default(''),
 });
 

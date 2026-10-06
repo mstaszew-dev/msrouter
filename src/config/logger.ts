@@ -8,6 +8,7 @@
 import { pino } from 'pino';
 
 import type { Env } from './env.js';
+import { createLogFileStream } from './file-log.js';
 
 /**
  * Build pino redact paths from the CSV of secret substrings. pino redact uses
@@ -40,8 +41,26 @@ export function createLogger(env: Env, component = 'msrouter') {
     level: env.LOG_LEVEL,
     redact: { paths: redactPaths, censor: '[REDACTED]', remove: false },
     base: { service: 'msrouter', env: env.NODE_ENV },
-    transport: isDev
-      ? { target: 'pino-pretty', options: { colorize: true, translateTime: 'SYS:HH:MM:ss.l' } }
-      : undefined,
+    ...(isDev
+      ? { transport: { target: 'pino-pretty', options: { colorize: true, translateTime: 'SYS:HH:MM:ss.l' } } }
+      : {}),
+    // When LOG_FILE is set, mirror everything into a rotated file as well as
+    // stdout. pino-pretty (dev transport) cannot be combined with a custom
+    // stream, so the file mirror is plain JSON lines - greppable, and it is
+    // the reason a chain failure is diagnosable after the tab is closed.
+    ...(env.LOG_FILE
+      ? {
+          streams: [
+            ...(isDev ? [] : [{ level: env.LOG_LEVEL, stream: process.stdout }]),
+            createFileStream(env),
+          ],
+        }
+      : {}),
   });
+}
+
+/** Rotated file destination shaped like a pino stream (write/end). */
+function createFileStream(env: Env) {
+  const rotating = createLogFileStream(env.LOG_FILE, env.LOG_FILE_MAX_BYTES, env.LOG_FILE_MAX_FILES);
+  return { level: env.LOG_LEVEL, stream: rotating };
 }
