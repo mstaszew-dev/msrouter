@@ -177,7 +177,7 @@ describe('iTerm ancestry guard', () => {
     });
     const lookup = chain({ 100: { ppid: 1, comm: 'bash' } });
 
-    expect(() => iterm.assertInIterm(100, lookup)).toThrow('process exited');
+    expect(() => iterm.assertInIterm(100, lookup, 'darwin')).toThrow('process exited');
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
@@ -213,7 +213,7 @@ describe('iTerm ancestry guard', () => {
       300: { ppid: 1, comm: 'iTerm2' },
     });
 
-    expect(() => iterm.assertInIterm(100, lookup)).not.toThrow();
+    expect(() => iterm.assertInIterm(100, lookup, 'darwin')).not.toThrow();
     expect(exitSpy).not.toHaveBeenCalled();
   });
 });
