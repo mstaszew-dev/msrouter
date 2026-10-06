@@ -90,8 +90,39 @@ describe('resolveModel - unknown model defaults to the alias walk', () => {
   });
 
   it('still rewrites an emptied (retired) opencode slot to the alias walk', () => {
-    loadEnv({ OPENCODE_NEMOTRON_MODEL: '' });
-    expect(resolveModel('nemotron-3-ultra-free')).toBe('mst/free');
+    // OPENCODE_MODEL is the real var name. The old OPENCODE_NEMOTRON_MODEL here
+    // was stripped by zod as unknown, so the test passed because the id was
+    // unrecognised, not because the slot was retired (2026-10-06 review).
+    loadEnv({ OPENCODE_API_KEY: 'sk-opencode-test', OPENCODE_MODEL: '' });
+    expect(resolveModel('space-bunny-free')).toBe('mst/free');
+    expect(buildModelList().map((m) => m.id)).not.toContain('');
+  });
+});
+
+describe('OpenCode Zen slot (space-bunny-free) - advertisement + resolution', () => {
+  // Re-audited 2026-10-06: of the 11 `-free` zen models only space-bunny-free
+  // answers a plain external API call; the other ten 403 with FreeTierError.
+  // The slot is therefore exactly one model, and it has to be BOTH advertised
+  // and resolvable by bare id - otherwise /v1/models hides it while the chain
+  // serves it, and resolveModel silently rewrites a bare request for it into
+  // the alias walk (a client asking for space-bunny-free gets a different model).
+  it('advertises space-bunny-free with owned_by=opencode when OPENCODE_API_KEY is set', () => {
+    loadEnv({ OPENCODE_API_KEY: 'sk-opencode-test', OPENCODE_MODEL: 'space-bunny-free' });
+    const zen = buildModelList().find((m) => m.id === 'space-bunny-free');
+    expect(zen).toBeDefined();
+    expect(zen?.owned_by).toBe('opencode');
+  });
+
+  it('omits space-bunny-free when OPENCODE_API_KEY is unset (empty-slot convention)', () => {
+    loadEnv({ OPENCODE_API_KEY: undefined, OPENCODE_MODEL: 'space-bunny-free' });
+    const ids = buildModelList().map((m) => m.id);
+    expect(ids).not.toContain('space-bunny-free');
+  });
+
+  it('resolveModel passes space-bunny-free through unchanged (config-declared default)', () => {
+    // Key-independent, matching the opencodego rule above.
+    loadEnv({ OPENCODE_MODEL: 'space-bunny-free' });
+    expect(resolveModel('space-bunny-free')).toBe('space-bunny-free');
   });
 });
 

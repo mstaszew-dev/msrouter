@@ -152,7 +152,10 @@ export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
   // OpenCode Zen (/zen/v1): single key, one model (space-bunny-free). Separate
   // from opencodego's /zen/go/v1 pool. Only this one model answers an external
   // API client; the rest of the `-free` catalogue is FreeTierError-locked.
-  if (providers.opencode.available) {
+  // Key AND non-empty model, matching extraRoutingEntries' empty-slot
+  // convention: an emptied (retired) zen model drops the walk entry even when
+  // the key is configured, instead of advertising a model the chain cannot send.
+  if (providers.opencode.available && e.OPENCODE_MODEL.trim() !== '') {
     list.push({
       provider: 'opencode',
       label: 'opencode',
@@ -196,6 +199,9 @@ export function isProviderDefaultModel(model: string): boolean {
     model === e.ZAI_MODEL ||
     model === e.TOKENROUTER_MODEL ||
     model === e.OPENCODEGO_MODEL ||
+    // OpenCode Zen. Guarded on non-empty so a retired (emptied) slot never
+    // exempts the empty id; the chain's zen entry is key-gated, not model-gated.
+    (!!e.OPENCODE_MODEL && model === e.OPENCODE_MODEL) ||
     model === e.LOCAL_MODEL ||
     model === e.LMSTUDIO_MODEL ||
     model === e.LAPTOP_MODEL ||

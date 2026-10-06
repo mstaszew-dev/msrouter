@@ -31,6 +31,9 @@ export function resolveModel(requested: string): string {
     // Configured extra free-tier defaults (groq/..., sambanova Meta/...).
     ...extraDefaultModels().map((x) => x.model),
   ]);
+  // OpenCode Zen single-model slot (space-bunny-free). Guarded on non-empty so
+  // an emptied (retired) slot still falls through to the alias walk.
+  if (cfg.OPENCODE_MODEL) known.add(cfg.OPENCODE_MODEL);
   if (known.has(requested)) return requested;
   // Unknown: default to the alias walk.
   return cfg.WALK_ALIAS[0] ?? 'mst/free';
@@ -52,6 +55,11 @@ export function buildModelList(): Array<{ id: string; object: string; owned_by: 
   }
   if (cfg.OPENCODEGO_API_KEY) {
     data.push({ id: cfg.OPENCODEGO_MODEL, object: 'model', owned_by: 'opencodego' });
+  }
+  // OpenCode Zen (/zen/v1): one model only, and only when the key is present,
+  // matching the empty-slot convention used by the extra free-tier providers.
+  if (cfg.OPENCODE_API_KEY && cfg.OPENCODE_MODEL) {
+    data.push({ id: cfg.OPENCODE_MODEL, object: 'model', owned_by: 'opencode' });
   }
   for (const x of extraDefaultModels()) {
     data.push({ id: x.model, object: 'model', owned_by: x.provider });

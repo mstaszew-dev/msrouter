@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { loadEnv } from '../config/env.js';
 
-import { buildRoutingEntries } from './chain-routing.js';
+import { buildRoutingEntries, isProviderDefaultModel } from './chain-routing.js';
 import type { Providers } from './instances.js';
 import { shortCircuit } from './shortcircuit.js';
 import type { Provider, ProviderCallResult } from './types.js';
@@ -97,6 +97,24 @@ describe('shortCircuit - OpenCode Zen pinning', () => {
     loadEnv(ZEN_ENV);
     expect(shortCircuit('direct:opencodego/glm-5.3-flash')?.provider).toBe('opencodego');
     expect(shortCircuit('direct:opencode/space-bunny-free')?.provider).toBe('opencode');
+  });
+});
+
+describe('isProviderDefaultModel - OpenCode Zen id is exempt from the :free rewrite', () => {
+  // ProviderChain.handle FORCE_FREE-rewrites any model that is not a configured
+  // per-provider default. space-bunny-free was missing from that list, so a bare
+  // request for it (which resolveModel now passes through instead of rewriting
+  // into the alias walk) was sent upstream as "space-bunny-free:free" and 502'd
+  // the whole walk: observed 2026-10-06.
+  it('keeps the bare zen id verbatim (no :free rewrite)', () => {
+    loadEnv(ZEN_ENV);
+    expect(isProviderDefaultModel('space-bunny-free')).toBe(true);
+  });
+
+  it('does not exempt an emptied zen slot', () => {
+    // Empty model var = retired slot. An empty id must never be exempt.
+    loadEnv({ ...ZEN_ENV, OPENCODE_MODEL: '' });
+    expect(isProviderDefaultModel('')).toBe(false);
   });
 });
 
