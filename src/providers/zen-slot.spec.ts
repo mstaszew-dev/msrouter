@@ -4,6 +4,7 @@ import { loadEnv } from '../config/env.js';
 
 import { buildRoutingEntries } from './chain-routing.js';
 import type { Providers } from './instances.js';
+import { shortCircuit } from './shortcircuit.js';
 import type { Provider, ProviderCallResult } from './types.js';
 
 /**
@@ -73,6 +74,31 @@ const ZEN_ENV = {
   LOCAL_ENABLED: 'false',
   LMSTUDIO_ENABLED: 'false',
 };
+
+describe('shortCircuit - OpenCode Zen pinning', () => {
+  it('pins direct:opencode/<model> to the zen slot', () => {
+    // Without this branch the pin is not recognised, so the request falls
+    // through to the full walk with a mangled explicit model and every entry
+    // 400s: observed live as "opencode:BAD_REQUEST(400); unorouter:...(404)"
+    // on a request that should have been served by one provider.
+    loadEnv(ZEN_ENV);
+    expect(shortCircuit('direct:opencode/space-bunny-free')).toEqual({
+      provider: 'opencode',
+      model: 'space-bunny-free',
+    });
+  });
+
+  it('keeps the model id verbatim (no :free rewrite on a pin)', () => {
+    loadEnv(ZEN_ENV);
+    expect(shortCircuit('direct:opencode/space-bunny-free')?.model).toBe('space-bunny-free');
+  });
+
+  it('does not confuse opencode with opencodego', () => {
+    loadEnv(ZEN_ENV);
+    expect(shortCircuit('direct:opencodego/glm-5.3-flash')?.provider).toBe('opencodego');
+    expect(shortCircuit('direct:opencode/space-bunny-free')?.provider).toBe('opencode');
+  });
+});
 
 describe('ProviderChain - OpenCode Zen slot', () => {
   it('omits the zen entry when no key is configured (empty by default)', () => {
