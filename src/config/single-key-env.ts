@@ -43,6 +43,13 @@ export const singleKeyEnvFields = {
   OPENCODEGO_BASE_URL: z.string().url().default('https://opencode.ai/zen/go/v1'),
   OPENCODEGO_MODEL: z.string().default('glm-5.3-flash'),
   OPENCODEGO_SESSION_ID: z.string().optional(),
+  // OpenCode Zen (/zen/v1). Re-admitted 2026-10-06 for space-bunny-free ONLY:
+  // the other 10 `-free` models still answer FreeTierError for non-OpenCode
+  // clients (re-audited; the 2026-09-18 removal reason otherwise stands).
+  OPENCODE_API_KEY: z.string().optional(),
+  OPENCODE_BASE_URL: z.string().url().default('https://opencode.ai/zen/v1'),
+  OPENCODE_MODEL: z.string().default('space-bunny-free'),
+  OPENCODE_SESSION_ID: z.string().optional(),
 
   // --- Extra free-tier providers (2026-09-18). Model vars follow the
   // empty-slot convention: an EMPTY model var drops the provider's walk

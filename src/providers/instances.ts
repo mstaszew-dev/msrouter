@@ -24,6 +24,9 @@ export interface Providers {
   /** OpenCode Go ("go" endpoint): single-key provider for glm-5.3-flash.
    *  /zen/go/v1 works from any client, unlike the removed /zen/v1 pool. */
   opencodego: SingleKeyProvider;
+  /** OpenCode Zen ("/zen/v1" free pool): single-key, space-bunny-free only -
+   *  every other `-free` model is FreeTierError-locked to OpenCode clients. */
+  opencode: SingleKeyProvider;
   /** Extra free-tier single-key providers (2026-09-18): unorouter, groq,
    *  sambanova, mistral, cloudflare. Entries gated on key+model. */
   extras: Extras;
@@ -88,6 +91,21 @@ export function buildProviders(log: Logger): Providers {
         defaultModel: env.OPENCODEGO_MODEL,
         extraHeaders: env.OPENCODEGO_API_KEY
           ? { 'x-opencode-session': env.OPENCODEGO_SESSION_ID || randomUUID() }
+          : undefined,
+      },
+      timeoutMs,
+      log,
+    ),
+    // OpenCode Zen (/zen/v1): same vendor as opencodego but the FREE pool, and
+    // it needs the session header for the one model that answers externally.
+    opencode: new SingleKeyProvider(
+      {
+        id: 'opencode',
+        baseUrl: env.OPENCODE_BASE_URL,
+        apiKey: env.OPENCODE_API_KEY,
+        defaultModel: env.OPENCODE_MODEL,
+        extraHeaders: env.OPENCODE_API_KEY
+          ? { 'x-opencode-session': env.OPENCODE_SESSION_ID || randomUUID() }
           : undefined,
       },
       timeoutMs,

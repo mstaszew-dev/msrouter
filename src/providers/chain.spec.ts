@@ -135,6 +135,9 @@ function makeProviders(
     } as never,
     local: { id: 'local', available: true, attempt: localAttempt } as never,
     lmstudio: { id: 'lmstudio', available: true, attempt: lmstudioAttempt } as never,
+    // Zen (/zen/v1) stays unavailable unless a test opts in, so the 40+
+    // existing queue-shape assertions keep their exact expected order.
+    opencode: { id: 'opencode', available: false, attempt: vi.fn() } as never,
     laptop: { id: 'laptop', available: true, attempt: laptopAttempt } as never,
   };
 }

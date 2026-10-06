@@ -99,8 +99,16 @@ const schema = z.object({
   WALK_DEADLINE_MS: z.coerce.number().int().min(0).default(300_000),
   // Deadline for response HEADERS on the local tail (laptop/local/lmstudio),
   // independent of their long whole-request timeouts. A tail that accepts the
-  // connection and then goes silent must not hold the walk (2026-10-06).
-  FIRST_BYTE_TIMEOUT_MS: z.coerce.number().int().positive().default(45_000),
+  // connection and then goes silent must not hold the walk forever (2026-10-06).
+  //
+  // Must stay ABOVE the laptop's real large-request latency: it routinely needs
+  // ~10 min to emit the first byte on an agent-sized (162KB) payload and then
+  // answers correctly. A 45s default measured every such request as hung and
+  // would have broken the tail it was meant to protect, so this is 15 min -
+  // long enough for a slow real answer, short enough to catch a dead one.
+  // Note WALK_DEADLINE_MS (300s) is checked BETWEEN attempts, not during one,
+  // so a slow-but-alive tail can still use its full budget on the last entry.
+  FIRST_BYTE_TIMEOUT_MS: z.coerce.number().int().positive().default(900_000),
   // Demote after N consecutive successes (local tail must not monopolize).
   SUCCESS_DEMOTE_LIMIT: z.coerce.number().int().positive().default(5),
 
@@ -184,6 +192,7 @@ export function loadEnv(raw: NodeJS.ProcessEnv = process.env): ResolvedConfig {
   // gateway has nothing to route to.
   const hasOpenRouter = openrouterKeys.length > 0;
   const hasOpenCodeGo = !!parsed.data.OPENCODEGO_API_KEY;
+  const hasOpenCode = !!parsed.data.OPENCODE_API_KEY;
   // Extra free-tier providers count when key AND model are set (mirrors
   // extraRoutingEntries gating; unorouter ships an empty default model).
   const d = parsed.data;
@@ -198,10 +207,11 @@ export function loadEnv(raw: NodeJS.ProcessEnv = process.env): ResolvedConfig {
     !!parsed.data.ZAI_API_KEY ||
     !!parsed.data.TOKENROUTER_API_KEY ||
     hasOpenCodeGo ||
+    hasOpenCode ||
     hasExtra;
   if (parsed.data.NODE_ENV === 'production' && !hasOpenRouter && !hasAnyFallback) {
     throw new Error(
-      'No provider configured: set at least one OPENROUTER_KEY* or OPENAI/ZAI/TOKENROUTER/OPENCODEGO key, or an extra provider key+model (UNOROUTER/GROQ/SAMBANOVA/MISTRAL/CLOUDFLARE)',
+      'No provider configured: set at least one OPENROUTER_KEY* or OPENAI/ZAI/TOKENROUTER/OPENCODEGO/OPENCODE key, or an extra provider key+model (UNOROUTER/GROQ/SAMBANOVA/MISTRAL/CLOUDFLARE)',
     );
   }
   cached = { env: parsed.data, openrouterKeys };

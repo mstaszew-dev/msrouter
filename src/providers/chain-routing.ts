@@ -26,6 +26,7 @@ export interface RoutingEntry {
     | 'zai'
     | 'tokenrouter'
     | 'opencodego'
+    | 'opencode'
     | 'local'
     | 'lmstudio'
     | 'laptop'
@@ -145,6 +146,17 @@ export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
       provider: 'opencodego',
       label: 'opencodego',
       model: e.OPENCODEGO_MODEL,
+      attemptIndex: 0,
+    });
+  }
+  // OpenCode Zen (/zen/v1): single key, one model (space-bunny-free). Separate
+  // from opencodego's /zen/go/v1 pool. Only this one model answers an external
+  // API client; the rest of the `-free` catalogue is FreeTierError-locked.
+  if (providers.opencode.available) {
+    list.push({
+      provider: 'opencode',
+      label: 'opencode',
+      model: e.OPENCODE_MODEL,
       attemptIndex: 0,
     });
   }
