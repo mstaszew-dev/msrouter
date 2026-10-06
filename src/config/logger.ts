@@ -5,10 +5,10 @@
  * (secrets).
  */
 
-import { pino } from 'pino';
+import { multistream, pino } from 'pino';
 
 import type { Env } from './env.js';
-import { createLogFileStream } from './file-log.js';
+import { createLogFileWritable } from './file-log.js';
 
 /**
  * Build pino redact paths from the CSV of secret substrings. pino redact uses
@@ -35,32 +35,33 @@ export function buildRedactPaths(keys: readonly string[]): string[] {
 
 export function createLogger(env: Env, component = 'msrouter') {
   const isDev = env.NODE_ENV === 'development';
+  // pino-pretty is a `transport`, and a transport OWNS stdout: setting both
+  // transport and streams made pino-pretty win and the file stream was
+  // silently dropped (no log file was ever written). They are mutually
+  // exclusive, so enabling the file mirror turns pretty off and both stdout
+  // and the file get plain JSON.
+  const useFile = !!env.LOG_FILE;
   const redactPaths = buildRedactPaths(env.LOG_REDACT);
   return pino({
     name: component,
     level: env.LOG_LEVEL,
     redact: { paths: redactPaths, censor: '[REDACTED]', remove: false },
     base: { service: 'msrouter', env: env.NODE_ENV },
-    ...(isDev
+    ...(isDev && !useFile
       ? { transport: { target: 'pino-pretty', options: { colorize: true, translateTime: 'SYS:HH:MM:ss.l' } } }
       : {}),
     // When LOG_FILE is set, mirror everything into a rotated file as well as
     // stdout. pino-pretty (dev transport) cannot be combined with a custom
     // stream, so the file mirror is plain JSON lines - greppable, and it is
     // the reason a chain failure is diagnosable after the tab is closed.
-    ...(env.LOG_FILE
-      ? {
-          streams: [
-            ...(isDev ? [] : [{ level: env.LOG_LEVEL, stream: process.stdout }]),
-            createFileStream(env),
-          ],
-        }
-      : {}),
-  });
+  }, useFile ? multistream([{ stream: process.stdout }, { stream: createFileStream(env) }]) : undefined);
 }
 
 /** Rotated file destination shaped like a pino stream (write/end). */
 function createFileStream(env: Env) {
-  const rotating = createLogFileStream(env.LOG_FILE, env.LOG_FILE_MAX_BYTES, env.LOG_FILE_MAX_FILES);
-  return { level: env.LOG_LEVEL, stream: rotating };
+  return createLogFileWritable(
+    env.LOG_FILE,
+    env.LOG_FILE_MAX_BYTES,
+    env.LOG_FILE_MAX_FILES,
+  );
 }

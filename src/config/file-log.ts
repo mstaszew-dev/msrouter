@@ -12,6 +12,7 @@
  */
 
 import { closeSync, openSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { Writable } from 'node:stream';
 
 export interface RotatingFileOptions {
   /** Rotate once the live file exceeds this many bytes. */
@@ -91,4 +92,30 @@ function currentSize(path: string, fd: number): number {
     void fd;
     return 0;
   }
+}
+/**
+ * The rotating file as a real Writable, which is what pino's `streams` option
+ * requires. Passing the duck-typed RotatingFile directly created the file but
+ * wrote nothing: pino checks for a stream and skips anything else silently.
+ */
+export function createLogFileWritable(
+  path: string,
+  maxBytes: number,
+  maxFiles: number,
+  opts: Partial<RotatingFileOptions> = {},
+): Writable {
+  const rotating = createLogFileStream(path, maxBytes, maxFiles, opts);
+  return new Writable({
+    write(chunk: Buffer | string, _enc, cb) {
+      try {
+        rotating.write(typeof chunk === 'string' ? chunk : chunk.toString('utf8'));
+        cb();
+      } catch (e) {
+        cb(e instanceof Error ? e : new Error(String(e)));
+      }
+    },
+    final(cb) {
+      rotating.end().then(() => cb(), cb);
+    },
+  });
 }
