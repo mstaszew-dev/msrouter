@@ -181,6 +181,28 @@ describe('iTerm ancestry guard', () => {
     expect(exitSpy).toHaveBeenCalledWith(1);
   });
 
+  it('assertInIterm exits on a non-macOS platform even with iTerm in ancestry', () => {
+    // The ancestry check implies macOS (iTerm2 is macOS-only) but the refusal
+    // should name the real problem on Linux/CI, not blame a missing iTerm.
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process exited');
+    });
+    const lookup = chain({ 100: { ppid: 200, comm: 'iTerm2' }, 200: { ppid: 1, comm: 'launchd' } });
+
+    expect(() => iterm.assertInIterm(100, lookup, 'linux')).toThrow('process exited');
+    expect(exitSpy).toHaveBeenCalledWith(1);
+  });
+
+  it('assertInIterm passes on darwin when iTerm2 is an ancestor', () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
+      throw new Error('process exited');
+    });
+    const lookup = chain({ 100: { ppid: 200, comm: 'iTerm2' }, 200: { ppid: 1, comm: 'launchd' } });
+
+    expect(() => iterm.assertInIterm(100, lookup, 'darwin')).not.toThrow();
+    expect(exitSpy).not.toHaveBeenCalled();
+  });
+
   it('assertInIterm passes when iTerm2 is an ancestor (no exit)', () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
       throw new Error('process exited');

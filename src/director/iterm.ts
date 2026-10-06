@@ -317,7 +317,19 @@ export function isItermInAncestry(
 export function assertInIterm(
   startPid: number = process.pid,
   lookup: (pid: number) => ProcInfo | null = procInfo,
+  platform: string = process.platform,
 ): void {
+  // Hard platform gate first. iTerm2 only ships on macOS, so the ancestry
+  // check below implies it, but stating it explicitly means the refusal is
+  // unambiguous on Linux/CI instead of a confusing "no iTerm in parent chain"
+  // on a machine that could never have one.
+  if (platform !== 'darwin') {
+    console.error(
+      `[msrouter] FATAL: unsupported platform "${platform}". ` +
+        `msrouter is macOS-only (it supervises iTerm2 tabs and a local Ollama tail).`,
+    );
+    process.exit(1);
+  }
   if (!isItermInAncestry(startPid, lookup)) {
     const term = process.env['TERM_PROGRAM'] ?? '(unset)';
     console.error(
