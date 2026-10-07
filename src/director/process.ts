@@ -17,14 +17,29 @@ import type { SuperviseOpts, SuperviseState } from './restart.js';
  */
 export function detectWorker(entryCommand: string): number[] {
   const base = entryCommand.split('/').pop() ?? 'job-search-agent';
-  const pids = detectProcess(base);
-  for (const p of detectProcess('campaign_agent.main')) {
+  // Anchored patterns (2026-10-07): the unanchored 'job-search-agent' substring
+  // matched any process whose ARGV merely mentioned the name - a monitoring
+  // shell running `pgrep -f campaign_agent.main` in a loop made the Director
+  // believe a worker was alive, so it skipped a needed respawn for two
+  // consecutive ticks. Anchors accepted:
+  //   runner  `/bin/zsh /Users/mst/bin/job-search-agent` (name at end,
+  //           preceded by start-of-line or a slash)
+  //   python  `<python> -m campaign_agent.main` (a real -m invocation)
+  // and rejected: `zsh -c 'sleep 5 # job-search-agent mentioned'`,
+  // `pgrep -f campaign_agent.main` (no '-m ' module invocation before the end).
+  const pids = detectProcess(`(^|/)${escapeRegExp(base)}$`);
+  for (const p of detectProcess(`python[^ ]* -m campaign_agent[.]main$`)) {
     if (!pids.includes(p)) pids.push(p);
   }
-  for (const p of detectProcess(' -m jobhermes')) {
+  for (const p of detectProcess(`python[^ ]* -m jobhermes$`)) {
     if (!pids.includes(p)) pids.push(p);
   }
   return pids;
+}
+
+/** Escape a literal for embedding in an ERE (pgrep -f) pattern. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 

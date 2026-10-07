@@ -718,8 +718,9 @@ describe('restartWorker', () => {
       if (file === 'pgrep') {
         // First detectWorker call sees pid 4242; every later poll sees none
         // (the tree was just killed), so stopTree/waitForStartup resolve fast.
-        // detectWorker greps for the runner basename (python launcher now).
-        if (cmdArgs[1] === 'job-search-agent' || cmdArgs[1] === 'job-search-agent-hermes') {
+        // detectWorker greps for the ANCHORED runner pattern (name at end,
+        // preceded by start or a slash) since 2026-10-07.
+        if (cmdArgs[1] === '(^|/)job-search-agent$' || cmdArgs[1] === '(^|/)job-search-agent-hermes$') {
           if (!workerArmed) {
             workerArmed = true;
             return '4242\n';

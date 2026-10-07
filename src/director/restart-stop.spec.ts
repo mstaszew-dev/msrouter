@@ -118,9 +118,12 @@ describe('detectWorker', () => {
     mockedExec.mockImplementation(((file: string, args: string[]) => {
       if (file !== 'pgrep') throw new Error('no');
       const pattern = args[1] ?? '';
-      if (pattern.includes('job-search-agent')) return '100\n';
-      if (pattern.includes('jobhermes')) return '200\n';
-      if (pattern.includes('campaign_agent.main')) return '300\n';
+      // Anchored shapes since 2026-10-07: the name must END the command line
+      // (preceded by start or a slash), and module children must be real
+      // `python -m <module>` invocations.
+      if (pattern.includes('job-search-agent') && pattern.endsWith('$')) return '100\n';
+      if (pattern.includes('-m jobhermes')) return '200\n';
+      if (pattern.includes('-m campaign_agent[.]main')) return '300\n';
       throw new Error('pgrep: no match');
     }) as never);
     // Union order: launcher basename, python child, hermes child.
