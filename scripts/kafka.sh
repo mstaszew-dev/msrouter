@@ -9,7 +9,8 @@
 #   scripts/kafka.sh topics   # create/verify the director topics
 #   scripts/kafka.sh tail <topic>  # stream a topic to stdout (real-time)
 #   scripts/kafka.sh produce <topic> <key> <value>  # one-shot produce
-#   scripts/kafka.sh monitor  # show the first 5 messages of every topic
+#   scripts/kafka.sh monitor  # tail director-events; no-op if one is already running
+#                              # (`monitor_pids <topic>` lists the monitors found)
 #
 set -euo pipefail
 
@@ -200,16 +201,45 @@ start_or_init() {
   start
 }
 
-# Stop the monitor started by `monitor()`. It `exec`s ConsoleConsumer, so it
-# owns no pidfile and stopping only the broker left it consuming against a dead
-# one (observed 2026-10-06: pid 99503 survived `kafka.sh stop`). Matched by
-# $KAFKA_HOME + topic so another checkout's monitor is never touched.
-stop_monitor() {
-  local pid cmd stopped=0
-  for pid in $(pgrep -f 'director-events' 2>/dev/null || true); do
+# PIDs of running monitors for THIS checkout, one pid per line. A monitor
+# `exec`s ConsoleConsumer, so it owns no pidfile: the topic is found with pgrep
+# and then narrowed to processes whose command line carries our $KAFKA_HOME and
+# the consumer class. All three halves matter:
+#   - topic alone would suppress our monitor because another checkout consumes
+#     the same topic;
+#   - $KAFKA_HOME alone would match the broker (same install, no topic in argv);
+#   - topic + $KAFKA_HOME alone would match any bystander process (a `rg` over
+#     the repo, an editor).
+#
+# The consumer-class check is STRICT by default because monitor()'s guard is
+# fail-closed on a false positive: a bystander that matched would silently
+# disable monitoring for as long as it lived. Pass "loose" to drop that check -
+# stop_monitor does, because there a miss leaves an orphan consumer alive (the
+# 2026-10-06 bug) while a hit only ever kills a process that mentions this
+# checkout's install and the topic. The two callers want opposite failure modes.
+monitor_pids() {
+  local topic="${1:-director-events}" mode="${2:-strict}" pid cmd
+  for pid in $(pgrep -f -- "$topic" 2>/dev/null || true); do
+    # Defensive: kafka.sh's own argv never carries the topic today, but a future
+    # subcommand might, and stop_monitor would otherwise kill its own shell.
     [[ "$pid" == "$$" ]] && continue
     cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
     [[ "$cmd" == *"$KAFKA_HOME"* ]] || continue
+    if [[ "$mode" != "loose" ]]; then
+      [[ "$cmd" == *kafka.tools.ConsoleConsumer* ]] || continue
+    fi
+    printf '%s\n' "$pid"
+  done
+}
+
+# Stop the monitor started by `monitor()`. It `exec`s ConsoleConsumer, so it
+# owns no pidfile and stopping only the broker left it consuming against a dead
+# one (observed 2026-10-06: pid 99503 survived `kafka.sh stop`). Loose match on
+# purpose (see monitor_pids); the $KAFKA_HOME filter is what keeps another
+# checkout's monitor alive here.
+stop_monitor() {
+  local pid stopped=0
+  for pid in $(monitor_pids director-events loose); do
     kill "$pid" 2>/dev/null && { ok "stopped kafka monitor (pid $pid)"; stopped=$((stopped+1)); }
   done
   [[ "$stopped" -gt 0 ]]
@@ -293,6 +323,17 @@ EOF
 monitor() {
   if ! is_running; then
     log "kafka not running; skipping monitor"
+    return 0
+  fi
+  # A live broker does NOT mean the broker's monitor is missing. The Director's
+  # recovery path types start-or-init and monitor into one new tab on every tick
+  # where its Kafka probe flakes, and start-or-init adopts the running broker -
+  # so without this guard every flake left another consumer on director-events
+  # and another tab on screen (observed 2026-10-08, pid 73082).
+  local existing
+  existing="$(monitor_pids director-events | tr '\n' ' ')" || true
+  if [[ -n "${existing// /}" ]]; then
+    ok "kafka monitor already running (pids ${existing% }); not starting another"
     return 0
   fi
   log "tailing director-events (Ctrl-C to stop)"

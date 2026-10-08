@@ -37,7 +37,51 @@ PROPS
 }
 
 teardown() {
+  # Safety net: a test that fails mid-way must not leave a 30s stand-in behind.
+  stop_monitor_standin
   rm -rf "${TEST_TMPDIR}"
+}
+
+# ---------------------------------------------------------------------------
+# Monitor stand-ins
+#
+# monitor_pids identifies a monitor the only way a real one can be identified:
+# by its command line. `exec -a` sets argv[0] to a command line shaped like the
+# real java process (`kafka.tools.ConsoleConsumer`, the topic, and $KAFKA_HOME),
+# which is why these stand-ins are argv fakes rather than a real consumer.
+# ---------------------------------------------------------------------------
+
+# Spawn a monitor stand-in for $2's KAFKA_HOME (default: this test's) watching
+# $1 (default: director-events). Sets MONITOR_STANDIN_PID.
+spawn_monitor_standin() {
+  local topic="${1:-director-events}" home="${2:-$KAFKA_HOME}" argv0
+  argv0="kafka.tools.ConsoleConsumer --topic ${topic} --from-beginning"
+  argv0="${argv0} --bootstrap-server localhost:19092 ${home}/bin/kafka-console-consumer.sh"
+  KAFKA_HOME="$home" bash -c "exec -a '${argv0}' sleep 30" &
+  MONITOR_STANDIN_PID=$!
+  # Wait for the exec: before it, argv[0] is still `bash -c ...` and would not
+  # match, so an assertion could pass for the wrong reason.
+  sleep 0.5
+  kill -0 "$MONITOR_STANDIN_PID" 2>/dev/null
+}
+
+# Spawn a stand-in shaped like the BROKER: same $KAFKA_HOME, no topic. The
+# broker must never be mistaken for a monitor.
+spawn_broker_standin() {
+  local argv0
+  argv0="kafka.Kafka ${KAFKA_HOME}/libs/kafka-server-3.7.0.jar .run/kafka-server.properties"
+  argv0="${KAFKA_HOME}/bin/kafka-server-start.sh -Xmx1G ${argv0}"
+  KAFKA_HOME="$KAFKA_HOME" bash -c "exec -a '${argv0}' sleep 30" &
+  MONITOR_STANDIN_PID=$!
+  sleep 0.5
+  kill -0 "$MONITOR_STANDIN_PID" 2>/dev/null
+}
+
+stop_monitor_standin() {
+  [ -n "${MONITOR_STANDIN_PID:-}" ] || return 0
+  kill "$MONITOR_STANDIN_PID" 2>/dev/null || true
+  wait "$MONITOR_STANDIN_PID" 2>/dev/null || true
+  MONITOR_STANDIN_PID=""
 }
 
 # ---------------------------------------------------------------------------
@@ -139,6 +183,11 @@ MOCK
   # dead broker (observed 2026-10-06: pid 99503 survived `kafka.sh stop`).
   # Stand in for it with a sleeper whose argv carries $KAFKA_HOME and the
   # topic, which is how the real monitor identifies itself.
+  #
+  # This stand-in deliberately has NO `kafka.tools.ConsoleConsumer` marker: it
+  # pins stop_monitor's loose match. stop_monitor must keep reaping a monitor
+  # whose class name a Kafka upgrade may have changed (an orphan consumer is
+  # worse than an over-broad reap), whereas monitor()'s guard must not.
   sleep 61 >/dev/null 2>&1 </dev/null &
   local broker_pid=$!
   echo "$broker_pid" > .run/kafka.pid
@@ -203,6 +252,148 @@ MOCK
 @test "monitor targets director-events topic" {
   source scripts/kafka.sh </dev/null 2>/dev/null || true
   declare -f monitor | grep -q "director-events"
+}
+
+@test "monitor starts a consumer when none is running" {
+  # Positive control for the guard below: with no live monitor, monitor() must
+  # still exec the consumer. A guard that always returned early would pass the
+  # duplicate test while silently killing monitoring entirely.
+  cat > "${KAFKA_HOME}/bin/kafka-console-consumer.sh" <<'MOCK'
+#!/bin/bash
+echo "started" >> "${KAFKA_HOME}/.consumer_starts"
+MOCK
+  chmod +x "${KAFKA_HOME}/bin/kafka-console-consumer.sh"
+
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  is_running() { return 0; }   # broker up, and no monitor running
+  run monitor
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"tailing director-events"* ]]
+  [ -f "${KAFKA_HOME}/.consumer_starts" ]
+}
+
+@test "monitor skips when a monitor consumer is already running" {
+  # Regression (2026-10-08): the Director's recovery path types
+  # `kafka.sh start-or-init` AND `kafka.sh monitor` into one new tab.
+  # start-or_init correctly adopted the already-live broker, but monitor() only
+  # checked the broker pidfile - so every recovery spawn added another
+  # ConsoleConsumer process and another "java" tab watching the same topic.
+  cat > "${KAFKA_HOME}/bin/kafka-console-consumer.sh" <<'MOCK'
+#!/bin/bash
+echo "started" >> "${KAFKA_HOME}/.consumer_starts"
+MOCK
+  chmod +x "${KAFKA_HOME}/bin/kafka-console-consumer.sh"
+
+  spawn_monitor_standin
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  is_running() { return 0; }   # broker up: the pidfile check is not the guard
+  run monitor
+  stop_monitor_standin
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"already running"* ]]
+  # The real proof: no second consumer was launched.
+  [ ! -f "${KAFKA_HOME}/.consumer_starts" ]
+}
+
+@test "monitor_pids reports this checkout's running monitor" {
+  spawn_monitor_standin
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  run monitor_pids director-events
+  local found="$output"
+  stop_monitor_standin
+
+  [ "$status" -eq 0 ]
+  [[ "$found" == *"$MONITOR_STANDIN_PID"* ]]
+}
+
+@test "monitor_pids ignores a monitor belonging to another checkout" {
+  # Topic-only matching would suppress OUR monitor because another checkout's
+  # consumer is watching the same topic, so the $KAFKA_HOME filter is load-
+  # bearing on both sides of the guard (skip and reap).
+  spawn_monitor_standin director-events "${TEST_TMPDIR}/other-kafka"
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  run monitor_pids director-events
+  stop_monitor_standin
+
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "monitor_pids ignores this checkout's broker" {
+  # $KAFKA_HOME-only matching would match the broker: it runs from the same
+  # install, so its argv carries $KAFKA_HOME, but it never names the topic.
+  # A guard that treated the broker as "a monitor" would suppress monitoring
+  # for as long as the broker lives - the worst failure mode here.
+  spawn_broker_standin
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  run monitor_pids director-events
+  stop_monitor_standin
+
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "monitor_pids ignores a bystander process that merely mentions the topic" {
+  # Topic + $KAFKA_HOME alone still matches a bystander (a `rg` over the repo,
+  # an editor). monitor_pids is a guard that SILENTLY DISABLES monitoring on a
+  # false positive, so the consumer class is the third load-bearing half.
+  KAFKA_HOME="${KAFKA_HOME}" bash -c 'exec -a "rg director-events ${KAFKA_HOME}/libs" sleep 30' &
+  MONITOR_STANDIN_PID=$!
+  sleep 0.5
+  kill -0 "$MONITOR_STANDIN_PID" 2>/dev/null || { echo "stand-in failed" >&3; false; }
+
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  run monitor_pids director-events
+  stop_monitor_standin
+
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "monitor_pids honours its topic argument" {
+  # The topic is a parameter, not a constant: asking about a different topic
+  # must not report this checkout's director-events monitor.
+  spawn_monitor_standin
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  run monitor_pids director-slack-raw
+  stop_monitor_standin
+
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "stop_monitor leaves another checkout's monitor alone" {
+  # The reason the reap filters on $KAFKA_HOME, not just the topic: a second
+  # msrouter checkout must never have its monitor killed by this one.
+  spawn_monitor_standin director-events "${TEST_TMPDIR}/other-kafka"
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  run stop_monitor
+  local status_after=$status
+  sleep 0.3
+  local other_alive=0
+  kill -0 "$MONITOR_STANDIN_PID" 2>/dev/null && other_alive=1
+  stop_monitor_standin
+
+  [ "$status_after" -ne 0 ]      # nothing of ours was stopped
+  [ "$other_alive" -eq 1 ]      # and the other checkout's monitor survived
+}
+
+@test "stop_monitor kills this checkout's monitor" {
+  # The other half of the previous test: the $KAFKA_HOME filter must not turn
+  # stop_monitor into a no-op for our OWN monitor.
+  spawn_monitor_standin
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  run stop_monitor
+  local status_after=$status
+  sleep 0.3
+  local alive=0
+  kill -0 "$MONITOR_STANDIN_PID" 2>/dev/null && alive=1
+  MONITOR_STANDIN_PID=""        # already reaped; do not let teardown re-kill
+
+  [ "$status_after" -eq 0 ]
+  [ "$alive" -eq 0 ]
 }
 
 # ---------------------------------------------------------------------------
