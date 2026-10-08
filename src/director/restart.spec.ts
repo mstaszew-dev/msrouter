@@ -202,11 +202,32 @@ describe('startKafkaInIterm', () => {
     process.env['HOME'] = realHome;
   });
 
+  // The broker-down path debounces (2026-10-08): one missed probe is not a dead
+  // broker, and the two misses must be spaced apart (loop.ts probes twice per
+  // tick), so the FIRST call with the broker down opens no tab. Tests that
+  // assert on a recovery tab prime a miss in the past; the call under test is
+  // then the spaced-out second miss.
+  async function primeMisses(): Promise<void> {
+    const realNow = Date.now;
+    const spy = vi.spyOn(Date, 'now').mockReturnValue(realNow() - 70_000);
+    try {
+      await startKafkaInIterm(kafkaOpts);
+    } finally {
+      spy.mockRestore();
+    }
+    // Contract self-check: the priming call must open nothing. If the stub
+    // setup changes so the prime spawns (or probes up), the failing tests
+    // instead throw here first.
+    expect(vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript')).toHaveLength(0);
+  }
+
   it('starts Kafka via start-or-init in an iTerm tab when broker is not running', async () => {
     vi.mocked(execFileSync).mockImplementation((cmd: string) => {
       if (cmd === 'lsof') throw new Error('not found');
       return '';
     });
+    await primeMisses();
+    vi.mocked(execFileSync).mockClear();
     await startKafkaInIterm(kafkaOpts);
     const calls = vi.mocked(execFileSync).mock.calls;
     const osaCalls = calls.filter((c) => c[0] === 'osascript');
@@ -255,6 +276,8 @@ describe('startKafkaInIterm', () => {
   // start. It must now start.
   it('does NOT skip spawn when a non-Kafka process holds the port', async () => {
     await stubKafkaProbe({ listener: 'nc  999  mst  5u  IPv4  *:19092 (LISTEN)\n', brokerUp: false });
+    await primeMisses();
+    vi.mocked(execFileSync).mockClear();
     await startKafkaInIterm(kafkaOpts);
     const osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
     expect(osaCalls.length).toBe(1);
@@ -293,6 +316,8 @@ describe('startKafkaInIterm', () => {
       if (cmd === 'lsof') throw new Error('not found');
       return '';
     });
+    await primeMisses();
+    vi.mocked(execFileSync).mockClear();
     await startKafkaInIterm(kafkaOpts);
     let osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
     expect(osaCalls.length).toBe(1);
@@ -309,6 +334,7 @@ describe('startKafkaInIterm', () => {
     });
     // startKafkaInIterm is async (the broker probe must not block the gateway
     // event loop), so the failure surfaces as a rejected promise.
+    await primeMisses();
     await expect(startKafkaInIterm(kafkaOpts)).rejects.toThrow(
       'iTerm2 launch failed (is iTerm2 installed and running?). Start Kafka manually.',
     );
@@ -322,6 +348,7 @@ describe('startKafkaInIterm', () => {
     const origNow = Date.now;
 
     // Failure #1 at t=0: backoff becomes 120s
+    await primeMisses();
     await startKafkaInIterm(kafkaOpts);
     let osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
     expect(osaCalls.length).toBe(1);
@@ -368,6 +395,7 @@ describe('startKafkaInIterm', () => {
       if (cmd === 'lsof') throw new Error('not found');
       return '';
     });
+    await primeMisses();
     await startKafkaInIterm(kafkaOpts);
     let osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
     expect(osaCalls.length).toBe(1);
@@ -385,7 +413,6 @@ describe('startKafkaInIterm', () => {
 
     // Advance past original cooldown (60s): should open because failures were reset
     const origNow = Date.now;
-    vi.spyOn(Date, 'now').mockReturnValue(origNow() + 65_000);
     vi.mocked(execFileSync).mockClear();
     // Broker is down again; detection must use the async probe to see that.
     await stubKafkaProbe({ listener: '', brokerUp: false });
@@ -393,8 +420,19 @@ describe('startKafkaInIterm', () => {
       if (cmd === 'lsof') throw new Error('not found');
       return '';
     });
+    // t=1s: first miss after the reset, swallowed by the debounce.
+    vi.spyOn(Date, 'now').mockReturnValue(origNow() + 1_000);
     await startKafkaInIterm(kafkaOpts);
-    // After reset, cooldown is back to 60s base; 65s > 60s so it should fire
+    expect(
+      vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript'),
+    ).toHaveLength(0);
+    // t=62s: second miss, 61s after the first. The reset means the base 60s
+    // cooldown applies (62s > 60s) so it fires. Without the reset the ladder
+    // would still be holding 120s and no tab would open.
+    vi.spyOn(Date, 'now').mockReturnValue(origNow() + 62_000);
+    vi.mocked(execFileSync).mockClear();
+    await startKafkaInIterm(kafkaOpts);
+    // After reset, cooldown is back to 60s base; 62s > 60s so it should fire
     osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
     expect(osaCalls.length).toBe(1);
     Date.now = origNow;
@@ -407,12 +445,17 @@ describe('startKafkaInIterm', () => {
     });
 
     // 3 consecutive failures to trigger warning (backoff: 60->120->240s)
+    // Every spawn consumes two consecutive missed probes (a spawn resets the
+    // miss counter), so each failure needs an extra swallowed call after it.
     const origNow = Date.now;
-    await startKafkaInIterm(kafkaOpts); // failure #1
+    await primeMisses();
+    await startKafkaInIterm(kafkaOpts); // failure #1 (second consecutive miss)
+    await startKafkaInIterm(kafkaOpts); // burns a miss so the next call can spawn
     vi.spyOn(Date, 'now').mockReturnValue(origNow() + 121_000);
-    await startKafkaInIterm(kafkaOpts); // failure #2
+    await startKafkaInIterm(kafkaOpts); // failure #2 (second consecutive miss)
+    await startKafkaInIterm(kafkaOpts); // burns a miss so the next call can spawn
     vi.spyOn(Date, 'now').mockReturnValue(origNow() + 362_000);
-    await startKafkaInIterm(kafkaOpts); // failure #3
+    await startKafkaInIterm(kafkaOpts); // failure #3 (second consecutive miss)
 
     expect(silent.warn).toHaveBeenCalledWith(
       expect.objectContaining({ failures: 3 }),

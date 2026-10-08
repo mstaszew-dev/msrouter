@@ -192,6 +192,14 @@ const KAFKA_BACKOFF_MAX_MS = 30 * 60_000; // 30 minutes cap
 let monitorSpawnMisses = 0;
 let lastMonitorSpawnAt = 0;
 
+/** Consecutive broker probes that failed to confirm a broker. */
+let kafkaProbeMisses = 0;
+/** Time of the most recent broker-probe miss (drives the debounce gap). */
+let lastProbeMissAt = 0;
+
+/** Two misses must be this far apart before a recovery tab opens. Chosen so the two call sites in loop.ts tick flow (ensureKafkaRunning + ensureCampaignRunning), which can probe seconds apart under load, cannot both count. */
+const KAFKA_PROBE_DEBOUNCE_GAP_MS = 60_000;
+
 /**
  * Backoff for monitor-only spawns: 60s, 120s, 240s, ... capped at 30min.
  * Separate from the broker backoff because a live broker resets that one on
@@ -222,6 +230,8 @@ export function __resetKafkaFailureState(): void {
   lastKafkaSpawnAt = 0;
   lastMonitorSpawnAt = 0;
   monitorSpawnMisses = 0;
+  kafkaProbeMisses = 0;
+  lastProbeMissAt = 0;
 }
 
 export function startWorkerInIterm(opts: iTermOpts): void {
@@ -256,6 +266,41 @@ export function startWorkerInIterm(opts: iTermOpts): void {
 
 export async function startKafkaInIterm(opts: KafkaItermOpts): Promise<void> {
   const brokerUp = await isKafkaRunningWith(opts.kafkaBootstrap, opts.kafkaHome);
+  if (!brokerUp) {
+    // Debounce (2026-10-08): a healthy `kafka-topics.sh --list` costs ~2.2s
+    // against a 10s timeout on this box, so ONE slow or contended probe was
+    // enough to make the Director type start-or-init + monitor into a fresh tab
+    // for a broker that never went away. Require two misses at least
+    // KAFKA_PROBE_DEBOUNCE_GAP_MS apart, not merely two consecutive calls: the
+    // tick flow probes twice (ensureKafkaRunning + the ensureCampaignRunning
+    // block), and two flaky probes seconds apart under load must not read as an
+    // outage. Cost: a REAL outage opens its recovery tab one tick (5 min)
+    // later. Acceptable because Kafka is observation-only here, and a spurious
+    // tab is exactly the failure this whole path has been fixing.
+    const probedAt = Date.now();
+    kafkaProbeMisses += 1;
+    if (kafkaProbeMisses === 1) {
+      lastProbeMissAt = probedAt;
+    } else if (probedAt - lastProbeMissAt < KAFKA_PROBE_DEBOUNCE_GAP_MS) {
+      // Too soon after the first miss: same flake, keep waiting.
+      kafkaProbeMisses = 1;
+      opts.log.info(
+        { gapMs: probedAt - lastProbeMissAt },
+        'kafka probe miss came too soon after the previous one; treating both as one flake',
+      );
+      return;
+    }
+    if (kafkaProbeMisses < 2) {
+      opts.log.info(
+        { misses: kafkaProbeMisses },
+        'kafka probe did not confirm the broker; waiting for a second miss before opening a recovery tab',
+      );
+      return;
+    }
+  } else {
+    kafkaProbeMisses = 0;
+    lastProbeMissAt = 0;
+  }
   if (brokerUp) {
     kafkaConsecutiveFailures = 0;
     // A live broker does NOT mean the recovery tab is unnecessary: it was also
@@ -308,6 +353,9 @@ export async function startKafkaInIterm(opts: KafkaItermOpts): Promise<void> {
     return;
   }
   lastKafkaSpawnAt = now;
+  // The recovery attempt is now under way; the next miss starts a fresh count.
+  kafkaProbeMisses = 0;
+  lastProbeMissAt = 0;
   // Use start-or-init: if the broker can't start (e.g. KRaft storage wiped
   // from /tmp cleanup), reinitialize KRaft and retry once.
   spawnKafkaTab(

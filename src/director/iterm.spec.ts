@@ -427,14 +427,26 @@ describe('startKafkaInIterm - tab creation follows broker AND monitor state', ()
   });
 
   it('creates the full start-or-init + monitor tab when the broker is down', async () => {
-    const iterm: ItermModule = await import('./iterm.js');
-    await stubKafka({ brokerUp: false, monitorPids: '' });
+    vi.useFakeTimers();
+    try {
+      const iterm: ItermModule = await import('./iterm.js');
+      await stubKafka({ brokerUp: false, monitorPids: '' });
+      const t0 = Date.parse('2026-10-08T12:00:00Z');
+      vi.setSystemTime(t0);
 
-    await iterm.startKafkaInIterm(opts);
+      // First call is the debounced probe miss; a miss 61s later (the two tick
+      // probes are seconds apart, so a spaced-out miss reads as an outage) is
+      // the real recovery.
+      await iterm.startKafkaInIterm(opts);
+      vi.setSystemTime(new Date(t0 + 61_000));
+      await iterm.startKafkaInIterm(opts);
 
-    const [script] = await osascriptScripts();
-    expect(script).toContain('bash scripts/kafka.sh start-or-init');
-    expect(script).toContain('bash scripts/kafka.sh monitor');
+      const [script] = await osascriptScripts();
+      expect(script).toContain('bash scripts/kafka.sh start-or-init');
+      expect(script).toContain('bash scripts/kafka.sh monitor');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('creates NO tab when the monitor probe cannot answer', async () => {
@@ -530,10 +542,12 @@ describe('startKafkaInIterm - tab creation follows broker AND monitor state', ()
       await stubKafka({ brokerUp: false, monitorPids: '' });
       const localLog = localLogger();
 
-      // Three broker-down spawns, an hour apart so the broker cooldown (cap
-      // 30min) never blocks one. The counter must reach 3 and warn; a broker
-      // that keeps failing to start must back off, not retry every tick.
-      for (let i = 0; i < 3; i++) {
+      // Six ticks an hour apart. Every spawn needs TWO consecutive misses (the
+      // debounce) and clears the miss counter, so this yields exactly three
+      // spawns; the broker cooldown (cap 30min) never blocks one. The broker
+      // failure counter must then reach 3 and warn, because a broker that keeps
+      // failing to start has to back off rather than retry every tick.
+      for (let i = 0; i < 6; i++) {
         vi.setSystemTime(t0 + i * 3_600_000);
         await iterm.startKafkaInIterm({ ...opts, log: localLog.log });
       }
@@ -572,6 +586,126 @@ describe('startKafkaInIterm - tab creation follows broker AND monitor state', ()
       await iterm.startKafkaInIterm(opts);
 
       expect(await osascriptScripts()).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// 2026-10-08, after S4 shipped: the only path left that can still open a
+// recovery tab for no reason is a SINGLE failed broker probe. Measured on this
+// box, a healthy `kafka-topics.sh --list` costs 2.16s against a 10s timeout, so
+// one slow or contended run flips the Director to "Kafka is down" and types
+// start-or-init + monitor into a fresh tab. These tests pin the debounce.
+// Review follow-up: loop.ts's tick flow probes twice (ensureKafkaRunning +
+// the ensureCampaignRunning block), so the two misses must also be spaced
+// KAFKA_PROBE_DEBOUNCE_GAP_MS apart, or two flaky probes seconds apart in one
+// tick still opened the tab.
+describe('startKafkaInIterm - one missed probe is not a dead broker', () => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- dynamic-import typing under the fs mock
+  type ItermModule = typeof import('./iterm.js');
+
+  const opts = {
+    entryCommand: '',
+    workspace: '/tmp/does-not-matter',
+    kafkaBootstrap: 'localhost:19092',
+    kafkaHome: '/opt/kafka-3.7.0',
+    log: silent,
+  };
+
+  beforeAll(async () => {
+    fsState.denyAll = false;
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  beforeEach(async () => {
+    const iterm: ItermModule = await import('./iterm.js');
+    iterm.__resetKafkaFailureState();
+  });
+
+  /** Broker down or up, as this tick sees it. Up also reports a live monitor. */
+  async function stubBroker(brokerUp: boolean): Promise<void> {
+    const { execFile } = await import('node:child_process');
+    vi.mocked(execFile).mockImplementation(((...callArgs: unknown[]) => {
+      const file = String(callArgs[0]);
+      const cb = callArgs[callArgs.length - 1] as (
+        e: Error | null,
+        out: string,
+        err: string,
+      ) => void;
+      if (file === 'lsof') {
+        cb(null, 'java 1 1 0x0 0 0 TCP *:19092 (LISTEN)', '');
+        return;
+      }
+      if (file.endsWith('kafka-topics.sh')) {
+        if (brokerUp) cb(null, 'director-events\n', '');
+        else cb(new Error('topics timed out'), '', '');
+        return;
+      }
+      if (file === 'bash') {
+        cb(null, brokerUp ? '54370\n' : '', '');
+        return;
+      }
+      cb(new Error(`unexpected exec: ${file}`), '', '');
+    }) as never);
+  }
+
+  async function osascriptCount(): Promise<number> {
+    const { execFileSync } = await import('node:child_process');
+    return vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript').length;
+  }
+
+  it('waits for a second miss spaced at least a gap apart before opening a recovery tab', async () => {
+    vi.useFakeTimers();
+    try {
+      const iterm: ItermModule = await import('./iterm.js');
+      await stubBroker(false);
+      const t0 = Date.parse('2026-10-08T12:00:00Z');
+      vi.setSystemTime(t0);
+
+      await iterm.startKafkaInIterm(opts);
+      expect(await osascriptCount()).toBe(0);
+
+      // 10s later: the tick flow probes twice (ensureKafkaRunning + the
+      // ensureCampaignRunning block), so a miss seconds after the first is the
+      // same flake under load, not an outage. It must not open a tab.
+      vi.setSystemTime(new Date(t0 + 10_000));
+      await iterm.startKafkaInIterm(opts);
+      expect(await osascriptCount()).toBe(0);
+
+      // Over a minute after the first miss: a genuinely later miss, and the
+      // cooldown from the (suppressed) earlier attempts must not block it.
+      vi.setSystemTime(new Date(t0 + 61_000));
+      await iterm.startKafkaInIterm(opts);
+      expect(await osascriptCount()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('forgets earlier misses as soon as a probe succeeds', async () => {
+    vi.useFakeTimers();
+    try {
+      const iterm: ItermModule = await import('./iterm.js');
+      const t0 = Date.parse('2026-10-08T12:00:00Z');
+      vi.setSystemTime(t0);
+
+      await stubBroker(false);
+      await iterm.startKafkaInIterm(opts); // miss 1
+      await stubBroker(true);
+      await iterm.startKafkaInIterm(opts); // healthy again: counter must clear
+      await stubBroker(false);
+      await iterm.startKafkaInIterm(opts); // miss 1 again, not miss 2
+      expect(await osascriptCount()).toBe(0);
+
+      // A minute later: a second miss in its own right, not the stale one.
+      vi.setSystemTime(new Date(t0 + 61_000));
+      await iterm.startKafkaInIterm(opts); // miss 2
+      expect(await osascriptCount()).toBe(1);
     } finally {
       vi.useRealTimers();
     }
