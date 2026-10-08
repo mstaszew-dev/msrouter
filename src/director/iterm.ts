@@ -139,6 +139,47 @@ export async function isKafkaRunningWith(bootstrap: string, kafkaHome: string): 
   }
 }
 
+/**
+ * PIDs of this checkout's running kafka.sh monitors, or null when the check
+ * could not answer.
+ *
+ * The shell owns that knowledge: a monitor `exec`s ConsoleConsumer and keeps no
+ * pidfile, so kafka.sh identifies it by argv (topic + $KAFKA_HOME + the consumer
+ * class). Re-deriving those three conditions here would be a second copy to
+ * drift, so the Director asks the shell instead.
+ *
+ * null means UNKNOWN, which is not the same as "none running". A caller that
+ * read a broken probe as "no monitor" would open a tab every tick, which is the
+ * exact failure this function exists to prevent.
+ */
+async function runningMonitorPids(kafkaHome: string): Promise<string[] | null> {
+  try {
+    const out = await execFileP('bash', [join(MSROUTER_ROOT, 'scripts', 'kafka.sh'), 'monitor-pids'], {
+      encoding: 'utf8',
+      timeout: 10_000,
+      maxBuffer: 1 << 16,
+      // Pass KAFKA_HOME explicitly, and expand a leading `~` the same way the
+      // broker probe does: the gateway env does not set it (kafka.sh would fall
+      // back to its own $HOME default and inspect a different install), and an
+      // un-expanded `~` would fail kafka.sh's `[[ -d ]]` preflight into the
+      // same silent "cannot answer" state.
+      env: { ...process.env, KAFKA_HOME: expandHome(kafkaHome) },
+    });
+    // Same dual shape as isKafkaRunningWith: promisify resolves {stdout} when
+    // the custom symbol is present and the raw string when it is not.
+    const stdout = typeof out === 'string' ? out : out.stdout;
+    return stdout
+      .split('\n')
+      .map((line) => line.trim())
+      // Only pids count. A monitor is identified by pid, so anything else on
+      // stdout means the script misbehaved, and treating that as "a monitor is
+      // running" would suppress recovery for as long as the process lives.
+      .filter((line) => /^\d+$/.test(line));
+  } catch {
+    return null;
+  }
+}
+
 /** Timestamp of last Kafka spawn attempt (module-level cooldown). */
 let lastKafkaSpawnAt = 0;
 const KAFKA_SPAWN_COOLDOWN_MS = 60_000;
@@ -146,6 +187,21 @@ const KAFKA_SPAWN_COOLDOWN_MS = 60_000;
 /** Consecutive Kafka start attempts (resets when broker detected running). */
 let kafkaConsecutiveFailures = 0;
 const KAFKA_BACKOFF_MAX_MS = 30 * 60_000; // 30 minutes cap
+
+/** Monitor-only spawns that had not produced a monitor by the next tick. */
+let monitorSpawnMisses = 0;
+let lastMonitorSpawnAt = 0;
+
+/**
+ * Backoff for monitor-only spawns: 60s, 120s, 240s, ... capped at 30min.
+ * Separate from the broker backoff because a live broker resets that one on
+ * every tick, which would leave a consumer that refuses to start re-opening a
+ * tab every 5 minutes forever.
+ */
+function getMonitorBackoffMs(): number {
+  const ms = KAFKA_SPAWN_COOLDOWN_MS * Math.pow(2, monitorSpawnMisses);
+  return Math.min(ms, KAFKA_BACKOFF_MAX_MS);
+}
 
 /** Exponential backoff: 60s, 120s, 240s, ... capped at 30min. */
 function getKafkaBackoffMs(): number {
@@ -156,12 +212,16 @@ function getKafkaBackoffMs(): number {
 /** Reset spawn cooldown + failure state (for testing only). */
 export function __resetKafkaSpawnCooldown(): void {
   lastKafkaSpawnAt = 0;
+  lastMonitorSpawnAt = 0;
+  monitorSpawnMisses = 0;
 }
 
 /** Reset failure state (for testing only). */
 export function __resetKafkaFailureState(): void {
   kafkaConsecutiveFailures = 0;
   lastKafkaSpawnAt = 0;
+  lastMonitorSpawnAt = 0;
+  monitorSpawnMisses = 0;
 }
 
 export function startWorkerInIterm(opts: iTermOpts): void {
@@ -195,11 +255,49 @@ export function startWorkerInIterm(opts: iTermOpts): void {
 }
 
 export async function startKafkaInIterm(opts: KafkaItermOpts): Promise<void> {
-  if (
-    await isKafkaRunningWith(opts.kafkaBootstrap, opts.kafkaHome)
-  ) {
+  const brokerUp = await isKafkaRunningWith(opts.kafkaBootstrap, opts.kafkaHome);
+  if (brokerUp) {
     kafkaConsecutiveFailures = 0;
-    opts.log.info('Kafka broker already running; skipping spawn');
+    // A live broker does NOT mean the recovery tab is unnecessary: it was also
+    // carrying the monitor. Ask the shell whether a monitor is already
+    // consuming before opening anything (review finding S4, 2026-10-08: every
+    // broker-probe flake opened a tab running start-or-init against a broker
+    // that was already up, which then adopted it and did nothing).
+    const monitorPids = await runningMonitorPids(opts.kafkaHome);
+    if (monitorPids === null) {
+      // Unknown, not "none". Before this probe the broker-up path spawned
+      // nothing, so keep that on a broken probe rather than risk a tab per tick.
+      opts.log.warn('could not determine whether a kafka monitor is running; skipping spawn');
+      return;
+    }
+    if (monitorPids.length > 0) {
+      monitorSpawnMisses = 0;
+      opts.log.info({ pids: monitorPids }, 'Kafka broker and monitor already running; skipping spawn');
+      return;
+    }
+    const now = Date.now();
+    const backoffMs = getMonitorBackoffMs();
+    if (now - lastMonitorSpawnAt < backoffMs) {
+      const payload = { nextBackoffMs: backoffMs, misses: monitorSpawnMisses };
+      if (backoffMs >= KAFKA_BACKOFF_MAX_MS) {
+        // The ladder has stopped converging. monitor() returns 0 WITHOUT
+        // consuming when it decides Kafka is not running (a lost pidfile is the
+        // easy way to get there), so the Director can be re-trying every 30
+        // minutes forever with nothing on screen. Say so loudly.
+        opts.log.warn(
+          payload,
+          'no kafka monitor after repeated recovery attempts; kafka.sh monitor may be refusing to start',
+        );
+      } else {
+        opts.log.info(payload, 'no kafka monitor and monitor-spawn backoff active; skipping');
+      }
+      return;
+    }
+    lastMonitorSpawnAt = now;
+    monitorSpawnMisses += 1;
+    // Broker is already up: type ONLY the monitor. start-or-init would adopt
+    // the running broker and contribute nothing but a misleading restart.
+    spawnKafkaTab(opts, itermScript(`cd ${MSROUTER_ROOT} && bash scripts/kafka.sh monitor`), true);
     return;
   }
   // Cooldown: exponential backoff when Kafka repeatedly fails to start.
@@ -212,22 +310,39 @@ export async function startKafkaInIterm(opts: KafkaItermOpts): Promise<void> {
   lastKafkaSpawnAt = now;
   // Use start-or-init: if the broker can't start (e.g. KRaft storage wiped
   // from /tmp cleanup), reinitialize KRaft and retry once.
-  const script = itermScript(
-    `cd ${MSROUTER_ROOT} && bash scripts/kafka.sh start-or-init`,
-    `cd ${MSROUTER_ROOT} && bash scripts/kafka.sh monitor`,
+  spawnKafkaTab(
+    opts,
+    itermScript(
+      `cd ${MSROUTER_ROOT} && bash scripts/kafka.sh start-or-init`,
+      `cd ${MSROUTER_ROOT} && bash scripts/kafka.sh monitor`,
+    ),
+    false,
   );
+}
+
+/**
+ * Open one iTerm tab carrying `script`. `brokerWasUp` says whether this tab is
+ * only restoring the monitor: a monitor-only spawn is not a Kafka start
+ * failure, so it must not advance the broker backoff (the broker-up path resets
+ * that counter every tick anyway, which is what made the separate monitor
+ * backoff necessary).
+ */
+function spawnKafkaTab(opts: KafkaItermOpts, script: string, brokerWasUp: boolean): void {
   try {
     execFileSync('osascript', ['-e', script], { encoding: 'utf8', stdio: 'ignore' });
-    kafkaConsecutiveFailures++;
+    if (!brokerWasUp) kafkaConsecutiveFailures++;
     if (kafkaConsecutiveFailures >= 3) {
       opts.log.warn(
         { failures: kafkaConsecutiveFailures, nextBackoffMs: getKafkaBackoffMs() },
         'Kafka has failed to start multiple times; backing off',
       );
     }
-    opts.log.info('started Kafka in iTerm2');
+    opts.log.info({ brokerWasUp }, 'started Kafka in iTerm2');
   } catch (e) {
-    kafkaConsecutiveFailures++;
+    // Same rule as the success path: a monitor-only spawn that AppleScript
+    // refused is not evidence that the BROKER keeps failing to start, and
+    // counting it there would escalate the broker backoff on every flake.
+    if (!brokerWasUp) kafkaConsecutiveFailures++;
     opts.log.error(
       { err: e instanceof Error ? e.message : String(e) },
       'failed to launch Kafka in iTerm2',

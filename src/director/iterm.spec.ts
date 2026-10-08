@@ -314,3 +314,266 @@ describe('isKafkaRunning - port-aware and broker-verified', () => {
     expect(await iterm.isKafkaRunningWith('localhost:19092', 'kafka-home')).toBe(false);
   });
 });
+
+// 2026-10-08 (review finding S4): the recovery path typed BOTH start-or-init and
+// monitor into a new tab on every tick where the broker probe flaked. With the
+// broker already up, start-or-init is pure noise (it adopts the running broker),
+// and with a monitor already up the whole tab is noise. These tests pin the
+// decision: broker+monitor up means no tab, broker up alone means a monitor-only
+// tab, broker down means the full start-or-init+monitor tab.
+describe('startKafkaInIterm - tab creation follows broker AND monitor state', () => {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-imports -- dynamic-import typing under the fs mock
+  type ItermModule = typeof import('./iterm.js');
+
+  const opts = {
+    entryCommand: '',
+    workspace: '/tmp/does-not-matter',
+    kafkaBootstrap: 'localhost:19092',
+    kafkaHome: '/opt/kafka-3.7.0',
+    log: silent,
+  };
+
+  /**
+   * A private logger for assertions. The shared `silent` above is never cleared,
+   * so a test that counted its calls would also count every earlier describe.
+   */
+  function localLogger() {
+    const log = {
+      warn: vi.fn(),
+      info: vi.fn(),
+      error: vi.fn(),
+      debug: vi.fn(),
+    };
+    return { log: log as unknown as pino.Logger, spies: log };
+  }
+
+  beforeAll(async () => {
+    fsState.denyAll = false;
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * Steer both probes. `monitorPids` is what `kafka.sh monitor-pids` prints;
+   * null makes that call fail, which is the "cannot tell" case.
+   */
+  async function stubKafka(o: { brokerUp: boolean; monitorPids: string | null }) {
+    const { execFile } = await import('node:child_process');
+    vi.mocked(execFile).mockImplementation(((...callArgs: unknown[]) => {
+      const file = String(callArgs[0]);
+      const cb = callArgs[callArgs.length - 1] as (
+        e: Error | null,
+        out: string,
+        err: string,
+      ) => void;
+      if (file === 'lsof') {
+        cb(null, o.brokerUp ? 'java 1 1 0x0 0 0 TCP *:19092 (LISTEN)' : '', '');
+        return;
+      }
+      if (file.endsWith('kafka-topics.sh')) {
+        if (o.brokerUp) cb(null, 'director-events\n', '');
+        else cb(new Error('topics failed'), '', '');
+        return;
+      }
+      if (file === 'bash') {
+        if (o.monitorPids === null) cb(new Error('probe failed'), '', '');
+        else cb(null, o.monitorPids, '');
+        return;
+      }
+      cb(new Error(`unexpected exec: ${file}`), '', '');
+    }) as never);
+  }
+
+  /**
+   * Every AppleScript startKafkaInIterm typed, oldest first.
+   * Async because vi.resetModules() hands out a fresh mock instance, so the
+   * child's process import has to be re-taken inside each test.
+   */
+  async function osascriptScripts(): Promise<string[]> {
+    const { execFileSync } = await import('node:child_process');
+    return vi
+      .mocked(execFileSync)
+      .mock.calls.filter((c) => c[0] === 'osascript')
+      .map((c) => ((c[1] as readonly string[])[1]) ?? '');
+  }
+
+  beforeEach(async () => {
+    const iterm: ItermModule = await import('./iterm.js');
+    iterm.__resetKafkaFailureState();
+  });
+
+  it('creates NO tab when the broker and a monitor are both running', async () => {
+    const iterm: ItermModule = await import('./iterm.js');
+    await stubKafka({ brokerUp: true, monitorPids: '54370\n' });
+
+    await iterm.startKafkaInIterm(opts);
+
+    expect(await osascriptScripts()).toHaveLength(0);
+  });
+
+  it('creates a monitor-only tab when the broker runs but no monitor does', async () => {
+    const iterm: ItermModule = await import('./iterm.js');
+    await stubKafka({ brokerUp: true, monitorPids: '' });
+
+    await iterm.startKafkaInIterm(opts);
+
+    const [script] = await osascriptScripts();
+    expect(script).toContain('bash scripts/kafka.sh monitor');
+    // start-or-init against a live broker is what created the duplicate tabs.
+    expect(script).not.toContain('start-or-init');
+  });
+
+  it('creates the full start-or-init + monitor tab when the broker is down', async () => {
+    const iterm: ItermModule = await import('./iterm.js');
+    await stubKafka({ brokerUp: false, monitorPids: '' });
+
+    await iterm.startKafkaInIterm(opts);
+
+    const [script] = await osascriptScripts();
+    expect(script).toContain('bash scripts/kafka.sh start-or-init');
+    expect(script).toContain('bash scripts/kafka.sh monitor');
+  });
+
+  it('creates NO tab when the monitor probe cannot answer', async () => {
+    const iterm: ItermModule = await import('./iterm.js');
+    await stubKafka({ brokerUp: true, monitorPids: null });
+
+    await iterm.startKafkaInIterm(opts);
+
+    // Unknown state must not become a tab per tick; the broker-up case already
+    // returned without spawning before this probe existed.
+    expect(await osascriptScripts()).toHaveLength(0);
+  });
+
+  it('asks kafka.sh with the configured KAFKA_HOME, not the gateway env default', async () => {
+    const iterm: ItermModule = await import('./iterm.js');
+    await stubKafka({ brokerUp: true, monitorPids: '' });
+
+    await iterm.startKafkaInIterm(opts);
+
+    const { execFile } = await import('node:child_process');
+    const probe = vi.mocked(execFile).mock.calls.find((c) => c[0] === 'bash');
+    expect(probe).toBeDefined();
+    // A `~`-prefixed or relative KAFKA_HOME would otherwise resolve to the
+    // script's $HOME default and inspect the WRONG install's monitors.
+    expect((probe![2] as { env?: Record<string, string> }).env?.['KAFKA_HOME']).toBe(
+      '/opt/kafka-3.7.0',
+    );
+    expect((probe![1] as readonly string[]).join(' ')).toContain('monitor-pids');
+  });
+
+  it('backs off instead of opening a fresh monitor tab on every tick', async () => {
+    const iterm: ItermModule = await import('./iterm.js');
+    // The monitor never appears, so the second tick must not open another tab:
+    // a consumer that cannot start would otherwise leak a tab every 5 minutes.
+    await stubKafka({ brokerUp: true, monitorPids: '' });
+
+    await iterm.startKafkaInIterm(opts);
+    await iterm.startKafkaInIterm(opts);
+
+    expect(await osascriptScripts()).toHaveLength(1);
+  });
+
+  // Review finding S1: the brokerWasUp flag was unverified - deleting its use on
+  // the success path kept every test green, so the one semantic thing the
+  // spawnKafkaTab extraction introduced had no coverage at all.
+  it('does not count a monitor-only spawn as a broker start failure', async () => {
+    vi.useFakeTimers();
+    try {
+      const t0 = Date.parse('2026-10-08T12:00:00Z');
+      vi.setSystemTime(t0);
+      const iterm: ItermModule = await import('./iterm.js');
+      await stubKafka({ brokerUp: true, monitorPids: '' });
+      const { execFileSync } = await import('node:child_process');
+      const localLog = localLogger();
+
+      // Six monitor-only spawns, an hour apart. The gap clears the MONITOR
+      // backoff at every rung (its cap is 30min, and each attempt pushes the
+      // ladder one rung further), so nothing blocks a repeat. Do NOT call
+      // __resetKafkaFailureState between them: that would clear the very
+      // counter under test and make the assertions vacuous.
+      for (let i = 0; i < 3; i++) {
+        vi.setSystemTime(t0 + i * 3_600_000);
+        await iterm.startKafkaInIterm({ ...opts, log: localLog.log });
+      }
+      for (let i = 0; i < 3; i++) {
+        vi.setSystemTime(t0 + (3 + i) * 3_600_000);
+        vi.mocked(execFileSync).mockImplementationOnce(() => {
+          throw new Error('iTerm2 is not running');
+        });
+        await expect(iterm.startKafkaInIterm({ ...opts, log: localLog.log })).rejects.toThrow(
+          /iTerm2 launch failed/,
+        );
+      }
+
+      expect(await osascriptScripts()).toHaveLength(6);
+      // HONEST SCOPE: this assertion also holds with the brokerWasUp guard
+      // deleted, because the broker-up branch zeroes kafkaConsecutiveFailures
+      // at the top of every call, so a monitor-only spawn can never reach the
+      // threshold. The guard is defensive, not load-bearing; the next test pins
+      // the half that IS load-bearing.
+      expect(localLog.log.warn).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('still advances the broker backoff when the broker really is down', async () => {
+    vi.useFakeTimers();
+    try {
+      const t0 = Date.parse('2026-10-08T12:00:00Z');
+      vi.setSystemTime(t0);
+      const iterm: ItermModule = await import('./iterm.js');
+      await stubKafka({ brokerUp: false, monitorPids: '' });
+      const localLog = localLogger();
+
+      // Three broker-down spawns, an hour apart so the broker cooldown (cap
+      // 30min) never blocks one. The counter must reach 3 and warn; a broker
+      // that keeps failing to start must back off, not retry every tick.
+      for (let i = 0; i < 3; i++) {
+        vi.setSystemTime(t0 + i * 3_600_000);
+        await iterm.startKafkaInIterm({ ...opts, log: localLog.log });
+      }
+
+      expect(await osascriptScripts()).toHaveLength(3);
+      expect(localLog.log.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ failures: 3 }),
+        expect.stringContaining('backing off'),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Review finding S1, second half: the misses counter must return to its base
+  // once a monitor is actually seen, otherwise a single bad hour permanently
+  // doubles the recovery interval.
+  it('restarts the monitor backoff at the base after a monitor is seen', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-10-08T12:00:00Z'));
+      const iterm: ItermModule = await import('./iterm.js');
+      await stubKafka({ brokerUp: true, monitorPids: '' });
+      await iterm.startKafkaInIterm(opts); // misses 0 -> 1 (next window 120s)
+      vi.setSystemTime(new Date('2026-10-08T12:02:00Z'));
+      await iterm.startKafkaInIterm(opts); // misses 1 -> 2 (next window 240s)
+
+      vi.setSystemTime(new Date('2026-10-08T12:04:00Z'));
+      await stubKafka({ brokerUp: true, monitorPids: '54370\n' });
+      await iterm.startKafkaInIterm(opts); // a monitor is up: misses -> 0
+
+      // 60s after the last spawn attempt. At the base (misses 0) this opens a
+      // tab; at the uncorrected misses of 2 it would wait out a 240s window.
+      vi.setSystemTime(new Date('2026-10-08T12:05:00Z'));
+      await stubKafka({ brokerUp: true, monitorPids: '' });
+      await iterm.startKafkaInIterm(opts);
+
+      expect(await osascriptScripts()).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

@@ -50,17 +50,31 @@ import {
 
 
 /**
- * Stub the async broker probe used by isKafkaRunningWith.
+ * Stub the async probes startKafkaInIterm shells out to.
  * `lsof` reports the listener; `kafka-topics.sh` succeeds only when a real
- * broker answers.
+ * broker answers; `kafka.sh monitor-pids` reports the monitors it finds.
+ *
+ * The three answers are per-file on purpose. They used to share one catch-all
+ * that replied `director-events` to everything, which was harmless while the
+ * broker probe was the only caller but made these broker-up tests pass through
+ * the monitor branch as soon as that probe was added: the topic name was
+ * parsed as a monitor pid, so they no longer proved what their names claim.
  */
-async function stubKafkaProbe(o: { listener: string; brokerUp: boolean }): Promise<void> {
+async function stubKafkaProbe(o: {
+  listener: string;
+  brokerUp: boolean;
+  monitorPids?: string;
+}): Promise<void> {
   const { execFile } = await import('node:child_process');
   vi.mocked(execFile).mockImplementation(((...callArgs: unknown[]) => {
     const file = String(callArgs[0]);
     const cb = callArgs[callArgs.length - 1] as (e: Error | null, out: string) => void;
     if (file === 'lsof') {
       cb(null, o.listener);
+      return;
+    }
+    if (file === 'bash') {
+      cb(null, o.monitorPids ?? '43001\n');
       return;
     }
     if (o.brokerUp) cb(null, 'director-events\n');
@@ -218,6 +232,24 @@ describe('startKafkaInIterm', () => {
     expect(execFileSync).not.toHaveBeenCalledWith('osascript', expect.anything());
   });
 
+  // Sibling of the test above, and the reason stubKafkaProbe answers per file:
+  // broker up but nothing consuming still owes a monitor, so a tab IS opened -
+  // and it must carry only `monitor`, because start-or-init against a live
+  // broker is what piled up tabs on every probe flake (2026-10-08).
+  it('opens a monitor-only tab when the broker is up but nothing is consuming', async () => {
+    await stubKafkaProbe({
+      listener: 'java  12345  mst  5u  IPv4  *:19092 (LISTEN)\n',
+      brokerUp: true,
+      monitorPids: '',
+    });
+    await startKafkaInIterm(kafkaOpts);
+    const osaCalls = vi.mocked(execFileSync).mock.calls.filter((c) => c[0] === 'osascript');
+    expect(osaCalls.length).toBe(1);
+    const script = (osaCalls[0]![1] as readonly string[])[1] ?? '';
+    expect(script).toContain('bash scripts/kafka.sh monitor');
+    expect(script).not.toContain('start-or-init');
+  });
+
   // The bug that produced duplicate broker+monitor tabs: a non-Kafka process
   // holding the port read as "broker running", so the Director skipped the real
   // start. It must now start.
@@ -239,6 +271,14 @@ describe('startKafkaInIterm', () => {
       if (file === 'lsof') {
         if (String(args).includes('19092')) cb(null, ''); // old code probed this
         else cb(null, 'java  12345  mst  5u  IPv4  *:29092 (LISTEN)\n');
+        return;
+      }
+      // Answer per file: `kafka-topics.sh` lists topics, `kafka.sh monitor-pids`
+      // prints pids. One catch-all reply would feed a topic name to the pid
+      // parser (see stubKafkaProbe) and open a monitor tab the broker probe
+      // was supposed to rule out.
+      if (file === 'bash') {
+        cb(null, '43001\n');
         return;
       }
       cb(null, 'director-events\n');

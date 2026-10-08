@@ -10,7 +10,7 @@
 #   scripts/kafka.sh tail <topic>  # stream a topic to stdout (real-time)
 #   scripts/kafka.sh produce <topic> <key> <value>  # one-shot produce
 #   scripts/kafka.sh monitor  # tail director-events; no-op if one is already running
-#                              # (`monitor_pids <topic>` lists the monitors found)
+#   scripts/kafka.sh monitor-pids  # print this checkout's monitor pids (none = empty)
 #
 set -euo pipefail
 
@@ -355,8 +355,14 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     status)  status ;;
     topics)  create_topics ;;
     monitor) monitor ;;
+    # Print this checkout's monitor pids, one per line, nothing else, so a caller
+    # can ask "is a monitor already up?" without re-deriving the argv matching
+    # monitor() depends on. Empty output means none running; a non-zero exit
+    # means the question could not be answered (callers must not read that as
+    # "none running").
+    monitor-pids) shift; monitor_pids "${1:-director-events}" ;;
     tail)    shift; tail_topic "$@" ;;
     produce) shift; produce_one "$@" ;;
-    *) die "unknown: $1 (use: start | start-or-init | stop | restart | status | topics | monitor | tail <topic> | produce <topic> <key> <value>)" ;;
+    *) die "unknown: $1 (use: start | start-or-init | stop | restart | status | topics | monitor | monitor-pids [topic] | tail <topic> | produce <topic> <key> <value>)" ;;
   esac
 fi

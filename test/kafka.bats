@@ -848,3 +848,43 @@ PY
   # The pidfile must now exist and hold a pid.
   [ -f .run/kafka.pid ]
 }
+
+# ---------------------------------------------------------------------------
+# monitor-pids subcommand (added for the Director's S4 tab decision, 2026-10-08)
+#
+# iterm.ts asks "is a monitor already running?" before opening a recovery tab.
+# It shells out to this rather than re-deriving the argv match in TypeScript, so
+# these tests pin the contract it depends on: pids on stdout, one per line, and
+# EMPTY output (not an error) when nothing is running. A non-zero exit must stay
+# reserved for "could not answer", because the Director treats unknown as
+# "spawn nothing" while it treats empty as "a monitor is missing".
+# ---------------------------------------------------------------------------
+
+@test "monitor-pids prints this checkout's monitor pid" {
+  spawn_monitor_standin
+  run bash scripts/kafka.sh monitor-pids
+  local found="$output"
+  stop_monitor_standin
+
+  [ "$status" -eq 0 ]
+  [[ "$found" == *"$MONITOR_STANDIN_PID"* ]]
+}
+
+@test "monitor-pids exits 0 with empty output when no monitor is running" {
+  run bash scripts/kafka.sh monitor-pids
+
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "monitor-pids ignores another checkout's monitor" {
+  local other_home="${TEST_TMPDIR}/other-kafka"
+  mkdir -p "${other_home}/bin"
+  spawn_monitor_standin director-events "$other_home"
+
+  run bash scripts/kafka.sh monitor-pids
+  stop_monitor_standin
+
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}

@@ -194,7 +194,10 @@ export class DirectorLoop {
         kafkaBootstrap: this.opts.env.KAFKA_BOOTSTRAP,
         kafkaHome: expandTilde(this.opts.env.KAFKA_HOME),
       });
-      this.opts.log.info('kafka recovery delegated to iTerm tabs (broker + monitor)');
+      // Wording changed with S4 (2026-10-08): startKafkaInIterm can now decide that
+      // nothing needs opening at all (broker up, a monitor already consuming),
+      // so this line reports what was HANDED OFF, not what a tab did.
+      this.opts.log.info('kafka recovery handled by iTerm (broker + monitor)');
       return true;
     } catch (e) {
       this.opts.log.warn(
