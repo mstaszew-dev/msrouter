@@ -143,6 +143,20 @@ describe('loadEnv - production guard', () => {
     ).not.toThrow();
   });
 
+  it('accepts a cline key+model as the only provider (extra fallback gating)', () => {
+    expect(() =>
+      loadEnv({
+        NODE_ENV: 'production',
+        CLINE_API_KEY: 'sk-cline-test',
+        CLINE_MODEL: 'poolside/laguna-s-2.1:free',
+      }),
+    ).not.toThrow();
+    // Key without model: the slot is retired, so it must NOT satisfy the guard.
+    expect(() =>
+      loadEnv({ NODE_ENV: 'production', CLINE_API_KEY: 'sk-cline-test', CLINE_MODEL: '' }),
+    ).toThrow(/No provider configured/);
+  });
+
   it('rejects a production configuration with no provider at all', () => {
     expect(() => loadEnv({ NODE_ENV: 'production' })).toThrow(/No provider configured/);
   });

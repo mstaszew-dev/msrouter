@@ -44,13 +44,38 @@ export interface UpstreamOptions {
    * the entire walk (2026-10-06). Omit where headers arrive immediately.
    */
   firstByteTimeoutMs?: number;
+  /**
+   * Re-home a wrapped success body: when set and the 200 JSON is
+   * {"data": { ..OpenAI chat-completion body.. }}, forward the inner object to
+   * the client instead of the envelope. Cline (api.cline.bot/api/v1) wraps
+   * non-streaming successes this way (verified live 2026-10-08) but streams
+   * standard OpenAI chunks; no other upstream needs it.
+   */
+  unwrapData?: boolean;
   /** Redacted key tag for logging, e.g. "key3:...a1b2" (never the full key). */
   keyTag: string;
 }
 
 /**
+ * Extract Cline's {"data": { ..OpenAI chat body.. }} inner object, or null.
+ * Enabled only when the provider opts in (unwrapData); an absent or shapeless
+ * "data" passes through untouched.
+ */
+function unwrapEnvelopedData(
+  json: unknown,
+  enabled?: boolean,
+): Record<string, unknown> | null {
+  if (!enabled || !json || typeof json !== 'object') return null;
+  const data = (json as { data?: unknown }).data;
+  if (!data || typeof data !== 'object') return null;
+  if (!Array.isArray((data as { choices?: unknown }).choices)) return null;
+  return data as Record<string, unknown>;
+}
+
+/**
  * Perform one POST /chat/completions attempt. Returns OK with the streaming
- * Response (the caller pipes it), or a classified failure. Never throws -
+ * Response (streaming callers pipe it; non-streaming callers re-serialize
+ * via sendJson), or a classified failure. Never throws -
  * network errors become TRANSIENT.
  */
 export async function postChatCompletion(
@@ -106,22 +131,41 @@ export async function postChatCompletion(
               message: `upstream returned 200 with error: ${truncate(errMsg, 300)}`,
             };
           }
+          // Cline envelope (2026-10-08): {"data": { ..OpenAI chat body.. }}.
+          // Unwrap BEFORE the empty-content check (a reasoning-only inner body
+          // with no content is exactly the empty completion the chain must
+          // skip) and rewrite the served body so clients keep the OpenAI
+          // shape. The error branch above already caught Cline's error
+          // envelope, so a remaining "data" with a choices array is a success
+          // wrapper. No other upstream wraps.
+          const data = unwrapEnvelopedData(json, opts.unwrapData);
+          const effective = data ?? json;
+          const servedText = data ? JSON.stringify(data) : text;
           // Detect empty-content responses (e.g. an upstream model reasoning-only model
           // returns HTTP 200 with empty content and finish_reason=length; a
           // thinking model truncated mid-thought also yields content="" +
           // reasoning_content). Either way the caller gets no deliverable.
           // Classify TRANSIENT so the chain skips to the next model instead of
           // returning a useless response to the caller.
-          if (isEmptyCompletion(json)) {
+          if (isEmptyCompletion(effective)) {
             return {
               kind: 'TRANSIENT',
               status: res.status,
               message: `upstream returned empty completion (model returned no content)`,
             };
           }
+          // Rewriting the body under a forwarded envelope's content-length
+          // strands any future pipe-style consumer (the reviewer's SHOULD):
+          // today's callers all re-serialize via sendJson, but drop the stale
+          // header so a verbatim forwarder cannot ship a truncated body.
+          const outHeaders = new Headers(res.headers);
+          if (data) outHeaders.delete('content-length');
           return {
             kind: 'OK',
-            response: new Response(text, { status: res.status, headers: res.headers }),
+            response: new Response(servedText, {
+              status: res.status,
+              headers: outHeaders,
+            }),
           };
         } catch {
           return {

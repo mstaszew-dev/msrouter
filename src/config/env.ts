@@ -207,6 +207,7 @@ export function loadEnv(raw: NodeJS.ProcessEnv = process.env): ResolvedConfig {
     (!!d.GROQ_API_KEY && !!d.GROQ_MODEL) ||
     (!!d.SAMBANOVA_API_KEY && !!d.SAMBANOVA_MODEL) ||
     (!!d.MISTRAL_API_KEY && !!d.MISTRAL_MODEL) ||
+    (!!d.CLINE_API_KEY && !!d.CLINE_MODEL) ||
     (!!d.CLOUDFLARE_API_KEY && !!d.CLOUDFLARE_ACCOUNT_ID && !!d.CLOUDFLARE_MODEL);
   const hasAnyFallback =
     !!parsed.data.OPENAI_API_KEY ||
@@ -217,7 +218,7 @@ export function loadEnv(raw: NodeJS.ProcessEnv = process.env): ResolvedConfig {
     hasExtra;
   if (parsed.data.NODE_ENV === 'production' && !hasOpenRouter && !hasAnyFallback) {
     throw new Error(
-      'No provider configured: set at least one OPENROUTER_KEY* or OPENAI/ZAI/TOKENROUTER/OPENCODEGO/OPENCODE key, or an extra provider key+model (UNOROUTER/GROQ/SAMBANOVA/MISTRAL/CLOUDFLARE)',
+      'No provider configured: set at least one OPENROUTER_KEY* or OPENAI/ZAI/TOKENROUTER/OPENCODEGO/OPENCODE key, or an extra provider key+model (UNOROUTER/GROQ/SAMBANOVA/MISTRAL/CLINE/CLOUDFLARE)',
     );
   }
   cached = { env: parsed.data, openrouterKeys };

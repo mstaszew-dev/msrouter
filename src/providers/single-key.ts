@@ -19,6 +19,11 @@ export interface SingleKeyConfig {
   defaultModel: string;
   /** Extra headers (e.g. none for OpenAI; OpenCode may add none either). */
   extraHeaders?: Record<string, string>;
+  /**
+   * Unwrap a {"data": {...}} success envelope before serving (2026-10-08;
+   * only the cline slot sets it; see UpstreamOptions.unwrapData).
+   */
+  unwrapData?: boolean;
 }
 
 export class SingleKeyProvider implements Provider {
@@ -27,6 +32,7 @@ export class SingleKeyProvider implements Provider {
   private readonly apiKey?: string;
   private readonly defaultModel: string;
   private readonly extraHeaders?: Record<string, string>;
+  private readonly unwrapData: boolean;
 
   constructor(
     cfg: SingleKeyConfig,
@@ -38,6 +44,7 @@ export class SingleKeyProvider implements Provider {
     this.apiKey = cfg.apiKey;
     this.defaultModel = cfg.defaultModel;
     this.extraHeaders = cfg.extraHeaders;
+    this.unwrapData = cfg.unwrapData ?? false;
   }
 
   get available(): boolean {
@@ -63,6 +70,7 @@ export class SingleKeyProvider implements Provider {
       baseUrl: this.baseUrl,
       authorization: `Bearer ${this.apiKey}`,
       extraHeaders: this.extraHeaders,
+      unwrapData: this.unwrapData,
       signal,
       timeoutMs: this.timeoutMs,
       keyTag: `${this.id}`,

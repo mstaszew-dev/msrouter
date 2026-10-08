@@ -1,9 +1,10 @@
 /**
  * Extra free-tier single-key providers (2026-09-18): UnoRouter, Groq,
- * SambaNova, Mistral, Cloudflare Workers AI. All speak OpenAI-compatible
- * chat completions, so each is a SingleKeyProvider specialization. GitHub
- * Models was evaluated and dropped: its inference endpoint was retired
- * 2026-07-30 (every path now serves a plain-text stub).
+ * SambaNova, Mistral, Cloudflare Workers AI; Cline joined 2026-10-08.
+ * All speak OpenAI-compatible chat completions, so each is a
+ * SingleKeyProvider specialization. GitHub Models was evaluated and dropped:
+ * its inference endpoint was retired 2026-07-30 (every path now serves a
+ * plain-text stub).
  *
  * Gating: a provider joins the walk only when its key is set AND its model
  * env var is non-empty AND (cloudflare) CLOUDFLARE_ACCOUNT_ID is present.
@@ -22,6 +23,7 @@ export const EXTRA_PROVIDER_ORDER = [
   'groq',
   'sambanova',
   'mistral',
+  'cline',
   'cloudflare',
 ] as const;
 
@@ -36,7 +38,7 @@ export function isExtraProvider(id: string): id is ExtraProviderId {
   return (EXTRA_PROVIDER_ORDER as readonly string[]).includes(id);
 }
 
-/** Build all five; each is `available` iff its key is set. */
+/** Build all six; each is `available` iff its key is set. */
 export function buildExtras(log: Logger): Extras {
   const e = env();
   const t = e.UPSTREAM_TIMEOUT_MS;
@@ -72,6 +74,19 @@ export function buildExtras(log: Logger): Extras {
         baseUrl: e.MISTRAL_BASE_URL,
         apiKey: e.MISTRAL_API_KEY,
         defaultModel: e.MISTRAL_MODEL,
+      },
+      t,
+      log,
+    ),
+    cline: new SingleKeyProvider(
+      {
+        id: 'cline',
+        baseUrl: e.CLINE_BASE_URL,
+        apiKey: e.CLINE_API_KEY,
+        defaultModel: e.CLINE_MODEL,
+        // api.cline.bot/api/v1 wraps non-streaming successes in {"data": ...};
+        // without the unwrap clients would receive the envelope verbatim.
+        unwrapData: true,
       },
       t,
       log,
@@ -125,6 +140,9 @@ export function extraRoutingEntries(): RoutingEntry[] {
   }
   if (e.MISTRAL_API_KEY && set(e.MISTRAL_MODEL)) {
     add('mistral', set(e.MISTRAL_MODEL), e.MISTRAL_MODELS);
+  }
+  if (e.CLINE_API_KEY && set(e.CLINE_MODEL)) {
+    add('cline', set(e.CLINE_MODEL), e.CLINE_MODELS);
   }
   if (e.CLOUDFLARE_API_KEY && e.CLOUDFLARE_ACCOUNT_ID && set(e.CLOUDFLARE_MODEL)) {
     add('cloudflare', set(e.CLOUDFLARE_MODEL), e.CLOUDFLARE_MODELS);

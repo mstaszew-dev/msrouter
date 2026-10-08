@@ -77,4 +77,16 @@ export const singleKeyEnvFields = {
   CLOUDFLARE_ACCOUNT_ID: z.string().optional(),
   CLOUDFLARE_MODEL: z.string().default('@cf/meta/llama-3.3-70b-instruct-fp8-fast'),
   CLOUDFLARE_MODELS: csv.default(''),
+
+  // --- Cline (2026-10-08): api.cline.bot single-key aggregator. NOT an
+  // OpenAI-path upstream: chat completions live at /api/v1/chat/completions,
+  // so CLINE_BASE_URL ends in /api/v1 and the success envelope is unwrapped
+  // (unwrapData). ONLY ":free"-suffixed model ids are usable without credits;
+  // any other id fails insufficient_credits (verified live against a $-0.01
+  // balance, including the requested xiaomi/mimo-v2.6-flash). ---
+  CLINE_API_KEY: z.string().optional(),
+  CLINE_BASE_URL: z.string().url().default('https://api.cline.bot/api/v1'),
+  // Verified free-tier id 2026-10-08 (2/2 probes, no reasoning-field quirks).
+  CLINE_MODEL: z.string().default('poolside/laguna-s-2.1:free'),
+  CLINE_MODELS: csv.default(''),
 } satisfies z.ZodRawShape;

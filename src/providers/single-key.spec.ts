@@ -69,6 +69,39 @@ describe('SingleKeyProvider base wiring', () => {
     const res = await p.attempt(body, new AbortController().signal, { model: 'glm-5.3-flash' });
     expect(res).toMatchObject({ kind: 'KEY_FAILURE', status: 0 });
   });
+
+  it('passes unwrapData through to the upstream call (Cline data envelope)', async () => {
+    const withUnwrap = new SingleKeyProvider(
+      {
+        id: 'cline',
+        baseUrl: 'https://api.cline.bot/api/v1',
+        apiKey: 'sk_cline-test',
+        defaultModel: 'poolside/laguna-s-2.1:free',
+        unwrapData: true,
+      },
+      1000,
+      silent,
+    );
+    await withUnwrap.attempt(body, new AbortController().signal, { model: 'poolside/laguna-s-2.1:free' });
+    const [, unwrappedOpts] = vi.mocked(postChatCompletion).mock.calls.at(-1)!;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    expect(unwrappedOpts.unwrapData).toBe(true);
+
+    const plain = new SingleKeyProvider(
+      {
+        id: 'groq',
+        baseUrl: 'https://api.groq.com/openai/v1',
+        apiKey: 'gsk-test',
+        defaultModel: 'openai/gpt-oss-120b',
+      },
+      1000,
+      silent,
+    );
+    await plain.attempt(body, new AbortController().signal, { model: 'openai/gpt-oss-120b' });
+    const [, plainOpts] = vi.mocked(postChatCompletion).mock.calls.at(-1)!;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    expect(plainOpts.unwrapData).toBeFalsy();
+  });
 });
 
 describe('thinking is a client decision (gateway stays neutral)', () => {

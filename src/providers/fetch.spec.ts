@@ -184,6 +184,87 @@ describe('postChatCompletion', () => {
     });
   });
 
+  // Cline (api.cline.bot/api/v1) wraps every non-streaming success in
+  // {"data": { ..OpenAI body.. }} (verified live 2026-10-08); its SSE streams
+  // are standard OpenAI chunks. unwrapData re-homes the body so clients keep
+  // the OpenAI conversation shape.
+  describe('unwrapData (Cline {"data":...} envelope)', () => {
+    const openaiBody = {
+      id: 'gen-1',
+      choices: [{ message: { content: 'ping ok' }, finish_reason: 'stop' }],
+    };
+
+    it('unwraps a wrapped success and empties are detected on the inner body', async () => {
+      fetchSpy = fakeFetch(200, { created: 1, data: openaiBody });
+      setPostFetchForTests(fetchSpy as never);
+
+      const result = await postChatCompletion(body(), opts({ unwrapData: true }));
+
+      expect(result.kind).toBe('OK');
+      const ok = assertOk(result);
+      const served = await ok.response.json();
+      expect(served).toEqual(openaiBody);
+      expect(mockedIsEmpty).toHaveBeenCalledWith(openaiBody);
+    });
+
+    it('returns TRANSIENT when the unwrapped body is an empty completion', async () => {
+      fetchSpy = fakeFetch(200, {
+        data: {
+          choices: [{ message: { content: '' }, finish_reason: 'length' }],
+        },
+      });
+      setPostFetchForTests(fetchSpy as never);
+      mockedIsEmpty.mockReturnValue(true);
+
+      const result = await postChatCompletion(body(), opts({ unwrapData: true }));
+      const outcome = assertFailure(result);
+
+      expect(outcome.kind).toBe('TRANSIENT');
+      expect(outcome.message).toContain('empty completion');
+    });
+
+    it('still treats a top-level error as TRANSIENT before unwrapping', async () => {
+      fetchSpy = fakeFetch(200, {
+        error: 'empty response content',
+        success: false,
+      });
+      setPostFetchForTests(fetchSpy as never);
+
+      const result = await postChatCompletion(body(), opts({ unwrapData: true }));
+      const outcome = assertFailure(result);
+
+      expect(outcome.kind).toBe('TRANSIENT');
+      expect(outcome.message).toContain('empty response content');
+    });
+
+    it('passes a non-wrapped body through verbatim (future no-op)', async () => {
+      fetchSpy = fakeFetch(200, openaiBody);
+      setPostFetchForTests(fetchSpy as never);
+      mockedIsEmpty.mockReturnValue(false);
+
+      const result = await postChatCompletion(body(), opts({ unwrapData: true }));
+
+      expect(result.kind).toBe('OK');
+      const ok = assertOk(result);
+      const served = await ok.response.json();
+      expect(served).toEqual(openaiBody);
+    });
+
+    it('does not unwrap when unwrapData is unset (other providers verbatim)', async () => {
+      fetchSpy = fakeFetch(200, { data: openaiBody });
+      setPostFetchForTests(fetchSpy as never);
+      mockedIsEmpty.mockReset();
+      mockedIsEmpty.mockReturnValue(false);
+
+      const result = await postChatCompletion(body(), opts());
+
+      expect(result.kind).toBe('OK');
+      const ok = assertOk(result);
+      const served = await ok.response.json();
+      expect(served).toEqual({ data: openaiBody });
+    });
+  });
+
   describe('error responses (classifyAttempt)', () => {
     it('returns KEY_FAILURE for 401', async () => {
       fetchSpy = fakeFetch(401, { error: 'unauthorized' });
