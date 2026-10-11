@@ -1,6 +1,7 @@
 /**
  * Extra free-tier single-key providers (2026-09-18): UnoRouter, Groq,
- * SambaNova, Mistral, Cloudflare Workers AI; Cline joined 2026-10-08.
+ * SambaNova, Mistral, Cloudflare Workers AI; Cline joined 2026-10-08, Google
+ * Gemini 2026-10-11.
  * All speak OpenAI-compatible chat completions, so each is a
  * SingleKeyProvider specialization. GitHub Models was evaluated and dropped:
  * its inference endpoint was retired 2026-07-30 (every path now serves a
@@ -23,6 +24,7 @@ export const EXTRA_PROVIDER_ORDER = [
   'groq',
   'sambanova',
   'mistral',
+  'gemini',
   'cline',
   'cloudflare',
 ] as const;
@@ -38,7 +40,7 @@ export function isExtraProvider(id: string): id is ExtraProviderId {
   return (EXTRA_PROVIDER_ORDER as readonly string[]).includes(id);
 }
 
-/** Build all six; each is `available` iff its key is set. */
+/** Build all extras; each is `available` iff its key is set. */
 export function buildExtras(log: Logger): Extras {
   const e = env();
   const t = e.UPSTREAM_TIMEOUT_MS;
@@ -74,6 +76,18 @@ export function buildExtras(log: Logger): Extras {
         baseUrl: e.MISTRAL_BASE_URL,
         apiKey: e.MISTRAL_API_KEY,
         defaultModel: e.MISTRAL_MODEL,
+      },
+      t,
+      log,
+    ),
+    gemini: new SingleKeyProvider(
+      {
+        // Plain OpenAI-compatible upstream: standard Bearer auth and a normal
+        // chat-completions body, so no unwrapData (unlike cline).
+        id: 'gemini',
+        baseUrl: e.GEMINI_BASE_URL,
+        apiKey: e.GEMINI_API_KEY,
+        defaultModel: e.GEMINI_MODEL,
       },
       t,
       log,
@@ -140,6 +154,9 @@ export function extraRoutingEntries(): RoutingEntry[] {
   }
   if (e.MISTRAL_API_KEY && set(e.MISTRAL_MODEL)) {
     add('mistral', set(e.MISTRAL_MODEL), e.MISTRAL_MODELS);
+  }
+  if (e.GEMINI_API_KEY && set(e.GEMINI_MODEL)) {
+    add('gemini', set(e.GEMINI_MODEL), e.GEMINI_MODELS);
   }
   if (e.CLINE_API_KEY && set(e.CLINE_MODEL)) {
     add('cline', set(e.CLINE_MODEL), e.CLINE_MODELS);

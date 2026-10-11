@@ -157,6 +157,20 @@ describe('loadEnv - production guard', () => {
     ).toThrow(/No provider configured/);
   });
 
+  it('accepts a gemini key+model as the only provider (extra fallback gating)', () => {
+    expect(() =>
+      loadEnv({
+        NODE_ENV: 'production',
+        GEMINI_API_KEY: 'AIza-test',
+        GEMINI_MODEL: 'gemini-2.5-flash-lite',
+      }),
+    ).not.toThrow();
+    // Key without model: the slot is retired, so it must NOT satisfy the guard.
+    expect(() =>
+      loadEnv({ NODE_ENV: 'production', GEMINI_API_KEY: 'AIza-test', GEMINI_MODEL: '' }),
+    ).toThrow(/No provider configured/);
+  });
+
   it('rejects a production configuration with no provider at all', () => {
     expect(() => loadEnv({ NODE_ENV: 'production' })).toThrow(/No provider configured/);
   });

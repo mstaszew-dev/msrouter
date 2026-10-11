@@ -4,8 +4,33 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { shortCircuit } from './chain-routing.js';
+import { loadEnv } from '../config/env.js';
+
+import { buildRoutingEntries, shortCircuit } from './chain-routing.js';
+import type { Providers } from './instances.js';
 import { withFree } from './openrouter.js';
+
+/**
+ * Providers stub for buildRoutingEntries: only zai is available, so the walk
+ * contains exactly the zai entries under test. buildRoutingEntries reads
+ * `available` off every provider, so the rest must exist (an omitted key
+ * throws on `.available`) even when it is switched off.
+ */
+function zaiOnlyProviders(): Providers {
+  const stub = (id: string, available: boolean) => ({ id, available });
+  return {
+    openrouter: stub('openrouter', false),
+    openai: stub('openai', false),
+    zai: stub('zai', true),
+    tokenrouter: stub('tokenrouter', false),
+    opencodego: stub('opencodego', false),
+    opencode: stub('opencode', false),
+    extras: {},
+    local: stub('local', false),
+    lmstudio: stub('lmstudio', false),
+    laptop: stub('laptop', false),
+  } as unknown as Providers;
+}
 
 describe('shortCircuit', () => {
   it('returns null for non-direct models', () => {
@@ -161,5 +186,31 @@ describe('withFree - free-tier model naming', () => {
   it('returns model unchanged when force=false', () => {
     expect(withFree('vendor/extra', false)).toBe('vendor/extra');
     expect(withFree('anthropic/claude-3-opus', false)).toBe('anthropic/claude-3-opus');
+  });
+});
+
+describe('ProviderChain - secondary ZAI model', () => {
+  it('builds two ZAI entries when ZAI_MODEL_2 is set (glm-5.3 then glm-4.7 flash)', () => {
+    // When both ZAI_MODEL and ZAI_MODEL_2 are configured, the walk should
+    // attempt both flash models in order, attemptIndex 0 then 1.
+    loadEnv({
+      ZAI_API_KEY: 'sk-test',
+      ZAI_BASE_URL: 'https://api.z.ai/api/coding/paas/v4',
+      ZAI_MODEL: 'glm-5.3-flash',
+      ZAI_MODEL_2: 'glm-4.7-flash',
+    });
+    const zaiEntries = buildRoutingEntries(zaiOnlyProviders()).filter(
+      (e) => e.provider === 'zai',
+    );
+    expect(zaiEntries.map((e) => e.model)).toEqual(['glm-5.3-flash', 'glm-4.7-flash']);
+    expect(zaiEntries.map((e) => e.attemptIndex)).toEqual([0, 1]);
+  });
+
+  it('builds only the primary entry when ZAI_MODEL_2 is empty (retire convention)', () => {
+    loadEnv({ ZAI_API_KEY: 'sk-test', ZAI_MODEL: 'glm-5.3-flash', ZAI_MODEL_2: '' });
+    const zaiEntries = buildRoutingEntries(zaiOnlyProviders()).filter(
+      (e) => e.provider === 'zai',
+    );
+    expect(zaiEntries.map((e) => e.model)).toEqual(['glm-5.3-flash']);
   });
 });

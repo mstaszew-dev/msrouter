@@ -42,6 +42,7 @@ describe('buildExtras - availability gating', () => {
       GROQ_API_KEY: 'gsk-1',
       SAMBANOVA_API_KEY: 'sk-1',
       MISTRAL_API_KEY: 'mk-1',
+      GEMINI_API_KEY: 'AIza-test',
       CLINE_API_KEY: 'sk_cline-test',
       CLOUDFLARE_API_KEY: 'cf-1',
       CLOUDFLARE_ACCOUNT_ID: 'acct-1',
@@ -193,7 +194,12 @@ describe('extraRoutingEntries - additional models (<PROVIDER>_MODELS CSV)', () =
 // Listed order: after the direct free tiers, before cloudflare (last).
 describe('cline (api.cline.bot) slot', () => {
   it('sits between mistral and cloudflare in the declared walk order', () => {
-    expect(EXTRA_PROVIDER_ORDER.indexOf('cline')).toBe(EXTRA_PROVIDER_ORDER.indexOf('mistral') + 1);
+    // gemini joined 2026-10-11 between mistral and cline, so cline is no
+    // longer mistral's immediate neighbour; only the cloudflare-last rule and
+    // "after mistral" still hold.
+    expect(EXTRA_PROVIDER_ORDER.indexOf('cline')).toBeGreaterThan(
+      EXTRA_PROVIDER_ORDER.indexOf('mistral'),
+    );
     expect(EXTRA_PROVIDER_ORDER[EXTRA_PROVIDER_ORDER.length - 1]).toBe('cloudflare');
   });
 

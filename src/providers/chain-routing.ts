@@ -130,6 +130,9 @@ export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
   }
   if (providers.zai.available) {
     list.push({ provider: 'zai', label: 'zai', model: e.ZAI_MODEL, attemptIndex: 0 });
+    if (e.ZAI_MODEL_2) {
+      list.push({ provider: 'zai', label: 'zai', model: e.ZAI_MODEL_2, attemptIndex: 1 });
+    }
   }
   if (providers.tokenrouter.available) {
     list.push({

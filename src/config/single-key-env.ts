@@ -31,6 +31,9 @@ export const singleKeyEnvFields = {
   ZAI_BASE_URL: z.string().url().default('https://api.z.ai/api/coding/paas/v4'),
   // Coding-plan default (verified 200 on /api/coding/paas/v4, 2026-09-18).
   ZAI_MODEL: z.string().default('glm-5.3-flash'),
+  // Secondary ZAI model used when the walk falls through the primary; set
+  // ZAI_MODEL_2 in the environment to enable (e.g. glm-4.7-flash).
+  ZAI_MODEL_2: z.string().default(''),
   // TokenRouter (tokenrouter.com): OpenAI-compatible aggregator. Single key,
   // free GLM tier. Key verified against api.tokenrouter.com 2026-08-30.
   TOKENROUTER_API_KEY: z.string().optional(),
@@ -89,4 +92,24 @@ export const singleKeyEnvFields = {
   // Verified free-tier id 2026-10-08 (2/2 probes, no reasoning-field quirks).
   CLINE_MODEL: z.string().default('poolside/laguna-s-2.1:free'),
   CLINE_MODELS: csv.default(''),
+
+  // --- Google Gemini (2026-10-11): generativelanguage free tier. Plain
+  // OpenAI-compatible surface (/v1beta/openai) with standard Bearer auth, so
+  // this is a bare SingleKeyProvider - no envelope unwrap, no base rewriting.
+  // The key lives on a project with no payment method, so spend is
+  // structurally impossible (billing tier Free). Verified live 2026-10-11:
+  // gemini-3.8/3.6/3.5-flash, gemini-2.5-flash(-lite), gemini-3.5-flash-lite
+  // all 200 with real content; gemini-3.7-flash and gemini-3.1-flash-lite
+  // returned 503 UNAVAILABLE (transient demand) and are NOT configured.
+  // Default is the non-thinking lite model on purpose: the thinking defaults
+  // spend a small max_tokens entirely on reasoning and reply content=None
+  // with finish_reason=length, which isEmptyCompletion treats as TRANSIENT
+  // (chain skips). The -lite models answer even at max_tokens=10. ---
+  GEMINI_API_KEY: z.string().optional(),
+  GEMINI_BASE_URL: z
+    .string()
+    .url()
+    .default('https://generativelanguage.googleapis.com/v1beta/openai'),
+  GEMINI_MODEL: z.string().default('gemini-2.5-flash-lite'),
+  GEMINI_MODELS: csv.default(''),
 } satisfies z.ZodRawShape;

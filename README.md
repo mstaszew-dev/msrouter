@@ -23,6 +23,8 @@ rate-limited entries for a cooldown:
 4. **OpenCodeGo** - `glm-5.3-flash` on `/zen/go/v1` (monthly-capped)
 5. **Extras** - UnoRouter (`glm-5.3-flash:free` + CSV models), Groq
    (`openai/gpt-oss-120b` + CSV), Mistral (`mistral-small-latest` + CSV),
+   Google Gemini (`gemini-2.5-flash-lite` + CSV, free tier, no payment method
+   on file so spend is impossible), Cline (`:free` ids only + CSV),
    Cloudflare Workers AI (4 models). SambaNova is retired: every model 402s
    without a payment method.
 6. **Local tail** - laptop tailnet Ollama `qwen35-2b-64k` (context guard 100K,
@@ -41,6 +43,7 @@ non-OpenCode clients, so it can never serve this gateway.
 direct:openrouter/<model>     direct:zai/<model>          direct:groq/<model>
 direct:opencodego/<model>     direct:tokenrouter/<model>  direct:unorouter/<model>
 direct:mistral/<model>        direct:cloudflare/<model>   direct:sambanova/<model>
+direct:gemini/<model>         direct:cline/<model>
 direct:local/<model>          direct:lmstudio/<model>     direct:laptop/<model>
 ```
 
@@ -96,7 +99,8 @@ template). The load-bearing groups:
 - OpenRouter: `OPENROUTER_KEY1..N`, `OPENROUTER_MODEL`, `OPENROUTER_MODELS` (CSV),
   `FORCE_FREE`.
 - Single-key providers (incl. `ZAI_*`, `TOKENROUTER_*`, `OPENCODEGO_*` and the
-  2026-09-18 extras `UNOROUTER_*/GROQ_*/SAMBANOVA_*/MISTRAL_*/CLOUDFLARE_*`):
+  2026-09-18 extras `UNOROUTER_*/GROQ_*/SAMBANOVA_*/MISTRAL_*/CLOUDFLARE_*`,
+  plus `CLINE_*` (2026-10-08) and `GEMINI_*` (2026-10-11)):
   each joins the walk when key AND model are set; an empty model var retires
   the slot; `<PROVIDER>_MODELS` CSV adds models per provider.
 - Locals: `LOCAL_*` (parked), `LMSTUDIO_*` (parked, port 1235), `LAPTOP_*`

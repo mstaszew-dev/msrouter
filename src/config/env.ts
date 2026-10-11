@@ -200,13 +200,14 @@ export function loadEnv(raw: NodeJS.ProcessEnv = process.env): ResolvedConfig {
   const hasOpenCodeGo = !!parsed.data.OPENCODEGO_API_KEY;
   const hasOpenCode = !!parsed.data.OPENCODE_API_KEY;
   // Extra free-tier providers count when key AND model are set (mirrors
-  // extraRoutingEntries gating; unorouter ships an empty default model).
+  // extraRoutingEntries gating; sambanova ships an empty default model).
   const d = parsed.data;
   const hasExtra =
     (!!d.UNOROUTER_API_KEY && !!d.UNOROUTER_MODEL) ||
     (!!d.GROQ_API_KEY && !!d.GROQ_MODEL) ||
     (!!d.SAMBANOVA_API_KEY && !!d.SAMBANOVA_MODEL) ||
     (!!d.MISTRAL_API_KEY && !!d.MISTRAL_MODEL) ||
+    (!!d.GEMINI_API_KEY && !!d.GEMINI_MODEL) ||
     (!!d.CLINE_API_KEY && !!d.CLINE_MODEL) ||
     (!!d.CLOUDFLARE_API_KEY && !!d.CLOUDFLARE_ACCOUNT_ID && !!d.CLOUDFLARE_MODEL);
   const hasAnyFallback =
@@ -218,7 +219,7 @@ export function loadEnv(raw: NodeJS.ProcessEnv = process.env): ResolvedConfig {
     hasExtra;
   if (parsed.data.NODE_ENV === 'production' && !hasOpenRouter && !hasAnyFallback) {
     throw new Error(
-      'No provider configured: set at least one OPENROUTER_KEY* or OPENAI/ZAI/TOKENROUTER/OPENCODEGO/OPENCODE key, or an extra provider key+model (UNOROUTER/GROQ/SAMBANOVA/MISTRAL/CLINE/CLOUDFLARE)',
+      'No provider configured: set at least one OPENROUTER_KEY* or OPENAI/ZAI/TOKENROUTER/OPENCODEGO/OPENCODE key, or an extra provider key+model (UNOROUTER/GROQ/SAMBANOVA/MISTRAL/GEMINI/CLINE/CLOUDFLARE)',
     );
   }
   cached = { env: parsed.data, openrouterKeys };
