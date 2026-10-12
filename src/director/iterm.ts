@@ -1,22 +1,12 @@
-import { execFile, execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
+import { execFileSync, spawn, type SpawnOptions } from 'node:child_process';
+import { mkdirSync, writeFileSync, existsSync, openSync, closeSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 
 import type { Logger } from 'pino';
 
 import { isStartLocked } from './process.js';
-
-const execFileP = promisify(execFile);
-
-/** Expand a leading `~` so KAFKA_HOME can be configured the way .env writes it.
- *  Without this, join() keeps the literal tilde and execFile fails ENOENT,
- *  which reads as "Kafka is down" and re-spawns duplicate tabs. */
-function expandHome(p: string): string {
-  return p.startsWith('~/') || p === '~' ? join(homedir(), p.slice(1)) : p;
-}
 
 /** Repo root (scripts/kafka.sh lives here). Walks up from this module until
  *  scripts/kafka.sh is found, so it works from both src/ and dist/. */
@@ -37,22 +27,10 @@ function findRoot(): string {
 }
 export const MSROUTER_ROOT = findRoot();
 
-/** Options shared by every iTerm launcher. */
 export interface iTermOpts {
   entryCommand: string;
   workspace: string;
   log: Logger;
-}
-
-/**
- * Kafka adds two REQUIRED fields: they are the single source of truth for which
- * port to probe, and an optional field with a hardcoded default was exactly how
- * the 19092-vs-KAFKA_PORT divergence shipped. Making them required means the
- * compiler rejects any future caller that forgets to pass the loaded env.
- */
-export interface KafkaItermOpts extends iTermOpts {
-  kafkaBootstrap: string;
-  kafkaHome: string;
 }
 
 function startLockPath(): string {
@@ -78,105 +56,19 @@ end tell`;
 }
 
 /**
- * Check if the Kafka broker is already running.
- *
- * Two bugs fixed 2026-10-03 (this is what let duplicate broker+monitor tabs pile
- * up in iTerm):
- *
- *  1. The port was HARDCODED to 19092 while kafka.sh honours KAFKA_PORT. On a
- *     non-default port the Director watched a port nobody listened on, decided
- *     Kafka was down, and spawned a fresh tab on every tick - while the real
- *     broker ran happily on its configured port. The port now comes from the
- *     bootstrap address the rest of the app uses.
- *  2. A bound socket was taken as "broker running". Any listener (nc, a stray
- *     JVM, another app) satisfied the old check, so a hijacked port looked
- *     healthy and the real broker was never started. Detection now requires a
- *     Kafka topic API to answer, which is the same readiness proof kafka.sh
- *     itself uses.
- *
- * `bootstrap` is host:port as configured (KAFKA_BOOTSTRAP); only the port is
- * probed locally, which matches kafka.sh binding 0.0.0.0.
- *
- * ASYNC ON PURPOSE (2026-10-03): the Director loop runs inside the gateway
- * process, so a synchronous probe here freezes the Node event loop and stalls
- * every in-flight SSE streaming response. kafka-topics.sh is a JVM: measured on
- * this box, an unbounded `--list` against a dead broker takes 61s, and even a
- * healthy one pays full JVM startup on every tick. The cheap lsof probe
- * short-circuits first (~65ms) and only a held port pays for the JVM call.
+ * Check if the Kafka broker is already running by testing the fixed port.
+ * The pidfile is unreliable (kafka.sh uses nohup, bash exits immediately).
  */
-export async function isKafkaRunningWith(bootstrap: string, kafkaHome: string): Promise<boolean> {
-  const addr = bootstrap.trim();
-  const port = addr.slice(addr.lastIndexOf(':') + 1);
-  if (!/^\d+$/.test(port)) {
-    return false; // unparseable bootstrap: never claim Kafka is up
-  }
-  let listener: string;
+function isKafkaRunning(): boolean {
   try {
-    const out = await execFileP('lsof', ['-nP', `-iTCP:${port}`, '-sTCP:LISTEN'], {
+    const out = execFileSync('lsof', ['-i', ':19092', '-sTCP:LISTEN'], {
       encoding: 'utf8',
       timeout: 3_000,
+      stdio: 'pipe',
     });
-    // promisify(execFile) resolves to { stdout, stderr } when the child_process
-    // promisify.custom symbol is present (real Node), and to the raw callback's
-    // 2nd argument otherwise. Both shapes appear depending on how execFile is
-    // provided, so accept either rather than trusting one.
-    listener = typeof out === 'string' ? out : out.stdout;
+    return out.trim().length > 0;
   } catch {
     return false;
-  }
-  if (!listener || listener.trim().length === 0) return false;
-  // Something holds the port. Only a real broker counts as running.
-  const topics = join(expandHome(kafkaHome), 'bin', 'kafka-topics.sh');
-  try {
-    await execFileP(topics, ['--bootstrap-server', addr, '--list'], {
-      encoding: 'utf8',
-      timeout: 10_000,
-      maxBuffer: 1 << 20,
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * PIDs of this checkout's running kafka.sh monitors, or null when the check
- * could not answer.
- *
- * The shell owns that knowledge: a monitor `exec`s ConsoleConsumer and keeps no
- * pidfile, so kafka.sh identifies it by argv (topic + $KAFKA_HOME + the consumer
- * class). Re-deriving those three conditions here would be a second copy to
- * drift, so the Director asks the shell instead.
- *
- * null means UNKNOWN, which is not the same as "none running". A caller that
- * read a broken probe as "no monitor" would open a tab every tick, which is the
- * exact failure this function exists to prevent.
- */
-async function runningMonitorPids(kafkaHome: string): Promise<string[] | null> {
-  try {
-    const out = await execFileP('bash', [join(MSROUTER_ROOT, 'scripts', 'kafka.sh'), 'monitor-pids'], {
-      encoding: 'utf8',
-      timeout: 10_000,
-      maxBuffer: 1 << 16,
-      // Pass KAFKA_HOME explicitly, and expand a leading `~` the same way the
-      // broker probe does: the gateway env does not set it (kafka.sh would fall
-      // back to its own $HOME default and inspect a different install), and an
-      // un-expanded `~` would fail kafka.sh's `[[ -d ]]` preflight into the
-      // same silent "cannot answer" state.
-      env: { ...process.env, KAFKA_HOME: expandHome(kafkaHome) },
-    });
-    // Same dual shape as isKafkaRunningWith: promisify resolves {stdout} when
-    // the custom symbol is present and the raw string when it is not.
-    const stdout = typeof out === 'string' ? out : out.stdout;
-    return stdout
-      .split('\n')
-      .map((line) => line.trim())
-      // Only pids count. A monitor is identified by pid, so anything else on
-      // stdout means the script misbehaved, and treating that as "a monitor is
-      // running" would suppress recovery for as long as the process lives.
-      .filter((line) => /^\d+$/.test(line));
-  } catch {
-    return null;
   }
 }
 
@@ -188,29 +80,6 @@ const KAFKA_SPAWN_COOLDOWN_MS = 60_000;
 let kafkaConsecutiveFailures = 0;
 const KAFKA_BACKOFF_MAX_MS = 30 * 60_000; // 30 minutes cap
 
-/** Monitor-only spawns that had not produced a monitor by the next tick. */
-let monitorSpawnMisses = 0;
-let lastMonitorSpawnAt = 0;
-
-/** Consecutive broker probes that failed to confirm a broker. */
-let kafkaProbeMisses = 0;
-/** Time of the most recent broker-probe miss (drives the debounce gap). */
-let lastProbeMissAt = 0;
-
-/** Two misses must be this far apart before a recovery tab opens. Chosen so the two call sites in loop.ts tick flow (ensureKafkaRunning + ensureCampaignRunning), which can probe seconds apart under load, cannot both count. */
-const KAFKA_PROBE_DEBOUNCE_GAP_MS = 60_000;
-
-/**
- * Backoff for monitor-only spawns: 60s, 120s, 240s, ... capped at 30min.
- * Separate from the broker backoff because a live broker resets that one on
- * every tick, which would leave a consumer that refuses to start re-opening a
- * tab every 5 minutes forever.
- */
-function getMonitorBackoffMs(): number {
-  const ms = KAFKA_SPAWN_COOLDOWN_MS * Math.pow(2, monitorSpawnMisses);
-  return Math.min(ms, KAFKA_BACKOFF_MAX_MS);
-}
-
 /** Exponential backoff: 60s, 120s, 240s, ... capped at 30min. */
 function getKafkaBackoffMs(): number {
   const ms = KAFKA_SPAWN_COOLDOWN_MS * Math.pow(2, kafkaConsecutiveFailures);
@@ -220,18 +89,12 @@ function getKafkaBackoffMs(): number {
 /** Reset spawn cooldown + failure state (for testing only). */
 export function __resetKafkaSpawnCooldown(): void {
   lastKafkaSpawnAt = 0;
-  lastMonitorSpawnAt = 0;
-  monitorSpawnMisses = 0;
 }
 
 /** Reset failure state (for testing only). */
 export function __resetKafkaFailureState(): void {
   kafkaConsecutiveFailures = 0;
   lastKafkaSpawnAt = 0;
-  lastMonitorSpawnAt = 0;
-  monitorSpawnMisses = 0;
-  kafkaProbeMisses = 0;
-  lastProbeMissAt = 0;
 }
 
 export function startWorkerInIterm(opts: iTermOpts): void {
@@ -245,6 +108,10 @@ export function startWorkerInIterm(opts: iTermOpts): void {
     writeFileSync(lockPath, `${process.pid}\n${Date.now()}\n`);
   } catch {
     /* best-effort */
+  }
+  if (isHeadlessMode()) {
+    startWorkerHeadless(opts);
+    return;
   }
   const script = itermScript(`cd ${opts.workspace} && ${opts.entryCommand}`);
   try {
@@ -264,85 +131,54 @@ export function startWorkerInIterm(opts: iTermOpts): void {
   }
 }
 
-export async function startKafkaInIterm(opts: KafkaItermOpts): Promise<void> {
-  const brokerUp = await isKafkaRunningWith(opts.kafkaBootstrap, opts.kafkaHome);
-  if (!brokerUp) {
-    // Debounce (2026-10-08): a healthy `kafka-topics.sh --list` costs ~2.2s
-    // against a 10s timeout on this box, so ONE slow or contended probe was
-    // enough to make the Director type start-or-init + monitor into a fresh tab
-    // for a broker that never went away. Require two misses at least
-    // KAFKA_PROBE_DEBOUNCE_GAP_MS apart, not merely two consecutive calls: the
-    // tick flow probes twice (ensureKafkaRunning + the ensureCampaignRunning
-    // block), and two flaky probes seconds apart under load must not read as an
-    // outage. Cost: a REAL outage opens its recovery tab one tick (5 min)
-    // later. Acceptable because Kafka is observation-only here, and a spurious
-    // tab is exactly the failure this whole path has been fixing.
-    const probedAt = Date.now();
-    kafkaProbeMisses += 1;
-    if (kafkaProbeMisses === 1) {
-      lastProbeMissAt = probedAt;
-    } else if (probedAt - lastProbeMissAt < KAFKA_PROBE_DEBOUNCE_GAP_MS) {
-      // Too soon after the first miss: same flake, keep waiting.
-      kafkaProbeMisses = 1;
-      opts.log.info(
-        { gapMs: probedAt - lastProbeMissAt },
-        'kafka probe miss came too soon after the previous one; treating both as one flake',
-      );
-      return;
-    }
-    if (kafkaProbeMisses < 2) {
-      opts.log.info(
-        { misses: kafkaProbeMisses },
-        'kafka probe did not confirm the broker; waiting for a second miss before opening a recovery tab',
-      );
-      return;
-    }
-  } else {
-    kafkaProbeMisses = 0;
-    lastProbeMissAt = 0;
+/**
+ * True when MSROUTER_HEADLESS is "1"/"true": run without iTerm2 (k3s/Linux
+ * container deployments where osascript and tab supervision do not exist).
+ * Gates both the startup guard and worker spawning.
+ */
+export function isHeadlessMode(): boolean {
+  const v = process.env['MSROUTER_HEADLESS'];
+  return v === '1' || v?.toLowerCase() === 'true';
+}
+
+/**
+ * Headless spawn of the campaign worker: detached bash instead of an iTerm2
+ * tab. Output goes to <workspace>/worker-headless.log when that file can be
+ * opened, otherwise stdio is dropped - the worker must never crash the
+ * supervisor just because logging failed.
+ */
+function startWorkerHeadless(opts: iTermOpts): void {
+  let stdio: SpawnOptions['stdio'] = 'ignore';
+  let out: number | null = null;
+  try {
+    out = openSync(join(opts.workspace, 'worker-headless.log'), 'a');
+    stdio = ['ignore', out, out];
+  } catch {
+    /* fall back to stdio ignore */
   }
-  if (brokerUp) {
+  // 'error' must be handled: a spawn failure (missing bash, EACCES, ENOMEM)
+  // emits an unhandled 'error' event that would otherwise kill the process.
+  const child = spawn('/bin/bash', ['-lc', opts.entryCommand], {
+    cwd: opts.workspace,
+    detached: true,
+    stdio,
+  });
+  child.on('error', (err) => {
+    opts.log.error({ err: err.message }, 'headless worker spawn failed');
+  });
+  child.unref();
+  // The child got its dup during spawn(); holding the parent-side fd leaks it.
+  if (out !== null) closeSync(out);
+  opts.log.info(
+    { workspace: opts.workspace, command: opts.entryCommand },
+    'started campaign worker in headless mode',
+  );
+}
+
+export function startKafkaInIterm(opts: iTermOpts): void {
+  if (isKafkaRunning()) {
     kafkaConsecutiveFailures = 0;
-    // A live broker does NOT mean the recovery tab is unnecessary: it was also
-    // carrying the monitor. Ask the shell whether a monitor is already
-    // consuming before opening anything (review finding S4, 2026-10-08: every
-    // broker-probe flake opened a tab running start-or-init against a broker
-    // that was already up, which then adopted it and did nothing).
-    const monitorPids = await runningMonitorPids(opts.kafkaHome);
-    if (monitorPids === null) {
-      // Unknown, not "none". Before this probe the broker-up path spawned
-      // nothing, so keep that on a broken probe rather than risk a tab per tick.
-      opts.log.warn('could not determine whether a kafka monitor is running; skipping spawn');
-      return;
-    }
-    if (monitorPids.length > 0) {
-      monitorSpawnMisses = 0;
-      opts.log.info({ pids: monitorPids }, 'Kafka broker and monitor already running; skipping spawn');
-      return;
-    }
-    const now = Date.now();
-    const backoffMs = getMonitorBackoffMs();
-    if (now - lastMonitorSpawnAt < backoffMs) {
-      const payload = { nextBackoffMs: backoffMs, misses: monitorSpawnMisses };
-      if (backoffMs >= KAFKA_BACKOFF_MAX_MS) {
-        // The ladder has stopped converging. monitor() returns 0 WITHOUT
-        // consuming when it decides Kafka is not running (a lost pidfile is the
-        // easy way to get there), so the Director can be re-trying every 30
-        // minutes forever with nothing on screen. Say so loudly.
-        opts.log.warn(
-          payload,
-          'no kafka monitor after repeated recovery attempts; kafka.sh monitor may be refusing to start',
-        );
-      } else {
-        opts.log.info(payload, 'no kafka monitor and monitor-spawn backoff active; skipping');
-      }
-      return;
-    }
-    lastMonitorSpawnAt = now;
-    monitorSpawnMisses += 1;
-    // Broker is already up: type ONLY the monitor. start-or-init would adopt
-    // the running broker and contribute nothing but a misleading restart.
-    spawnKafkaTab(opts, itermScript(`cd ${MSROUTER_ROOT} && bash scripts/kafka.sh monitor`), true);
+    opts.log.info('Kafka broker already running; skipping spawn');
     return;
   }
   // Cooldown: exponential backoff when Kafka repeatedly fails to start.
@@ -353,44 +189,39 @@ export async function startKafkaInIterm(opts: KafkaItermOpts): Promise<void> {
     return;
   }
   lastKafkaSpawnAt = now;
-  // The recovery attempt is now under way; the next miss starts a fresh count.
-  kafkaProbeMisses = 0;
-  lastProbeMissAt = 0;
+  if (isHeadlessMode()) {
+    // No osascript in a headless pod: spawn the broker script directly
+    // (mirrors ensureKafkaRunning's non-iTerm branch in loop.ts).
+    const child = spawn('bash', [join(MSROUTER_ROOT, 'scripts', 'kafka.sh'), 'start-or-init'], {
+      cwd: MSROUTER_ROOT,
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.on('error', (err) => {
+      opts.log.error({ err: err.message }, 'headless Kafka spawn failed');
+    });
+    child.unref();
+    opts.log.info('started Kafka in headless mode');
+    return;
+  }
   // Use start-or-init: if the broker can't start (e.g. KRaft storage wiped
   // from /tmp cleanup), reinitialize KRaft and retry once.
-  spawnKafkaTab(
-    opts,
-    itermScript(
-      `cd ${MSROUTER_ROOT} && bash scripts/kafka.sh start-or-init`,
-      `cd ${MSROUTER_ROOT} && bash scripts/kafka.sh monitor`,
-    ),
-    false,
+  const script = itermScript(
+    `cd ${MSROUTER_ROOT} && bash scripts/kafka.sh start-or-init`,
+    `cd ${MSROUTER_ROOT} && bash scripts/kafka.sh monitor`,
   );
-}
-
-/**
- * Open one iTerm tab carrying `script`. `brokerWasUp` says whether this tab is
- * only restoring the monitor: a monitor-only spawn is not a Kafka start
- * failure, so it must not advance the broker backoff (the broker-up path resets
- * that counter every tick anyway, which is what made the separate monitor
- * backoff necessary).
- */
-function spawnKafkaTab(opts: KafkaItermOpts, script: string, brokerWasUp: boolean): void {
   try {
     execFileSync('osascript', ['-e', script], { encoding: 'utf8', stdio: 'ignore' });
-    if (!brokerWasUp) kafkaConsecutiveFailures++;
+    kafkaConsecutiveFailures++;
     if (kafkaConsecutiveFailures >= 3) {
       opts.log.warn(
         { failures: kafkaConsecutiveFailures, nextBackoffMs: getKafkaBackoffMs() },
         'Kafka has failed to start multiple times; backing off',
       );
     }
-    opts.log.info({ brokerWasUp }, 'started Kafka in iTerm2');
+    opts.log.info('started Kafka in iTerm2');
   } catch (e) {
-    // Same rule as the success path: a monitor-only spawn that AppleScript
-    // refused is not evidence that the BROKER keeps failing to start, and
-    // counting it there would escalate the broker backoff on every flake.
-    if (!brokerWasUp) kafkaConsecutiveFailures++;
+    kafkaConsecutiveFailures++;
     opts.log.error(
       { err: e instanceof Error ? e.message : String(e) },
       'failed to launch Kafka in iTerm2',
@@ -439,7 +270,10 @@ export function procInfo(pid: number): ProcInfo | null {
       timeout: 3_000,
       stdio: 'pipe',
     });
-    const m = out.trim().split('\n')[0]?.match(/^\s*(\d+)\s+(.+)$/);
+    const m = out
+      .trim()
+      .split('\n')[0]
+      ?.match(/^\s*(\d+)\s+(.+)$/);
     return m ? { ppid: Number(m[1]), comm: m[2]!.trim() } : null;
   } catch {
     return null;
@@ -480,18 +314,15 @@ export function isItermInAncestry(
 export function assertInIterm(
   startPid: number = process.pid,
   lookup: (pid: number) => ProcInfo | null = procInfo,
-  platform: string = process.platform,
 ): void {
-  // Hard platform gate first. iTerm2 only ships on macOS, so the ancestry
-  // check below implies it, but stating it explicitly means the refusal is
-  // unambiguous on Linux/CI instead of a confusing "no iTerm in parent chain"
-  // on a machine that could never have one.
-  if (platform !== 'darwin') {
+  // Headless/container deployments (MSROUTER_HEADLESS=1) have no iTerm2 by
+  // design; the guard below is about preventing silent tab-spawn failures on
+  // the macOS desktop and must not block a deliberate headless run.
+  if (isHeadlessMode()) {
     console.error(
-      `[msrouter] FATAL: unsupported platform "${platform}". ` +
-        `msrouter is macOS-only (it supervises iTerm2 tabs and a local Ollama tail).`,
+      '[msrouter] MSROUTER_HEADLESS set: skipping iTerm2 guard (headless/container mode)',
     );
-    process.exit(1);
+    return;
   }
   if (!isItermInAncestry(startPid, lookup)) {
     const term = process.env['TERM_PROGRAM'] ?? '(unset)';

@@ -9,7 +9,8 @@
 #   scripts/kafka.sh topics   # create/verify the director topics
 #   scripts/kafka.sh tail <topic>  # stream a topic to stdout (real-time)
 #   scripts/kafka.sh produce <topic> <key> <value>  # one-shot produce
-#   scripts/kafka.sh monitor  # tail director-events; no-op if one is already running
+#   scripts/kafka.sh monitor  # tail director-events; exits when the broker goes
+#                             # away (no-op if one is already running)
 #   scripts/kafka.sh monitor-pids  # print this checkout's monitor pids (none = empty)
 #
 set -euo pipefail
@@ -76,6 +77,39 @@ storage_ok() {
   props="$(generate_props)"
   log_dirs="$(grep '^log.dirs=' "$props" | cut -d= -f2- || true)"
   [[ -n "$log_dirs" && -f "$log_dirs/meta.properties" ]]
+}
+
+# Wait for the topic API to answer, gated behind the free port probe so a dead
+# broker does not cost one JVM per attempt (~2s each on this box).
+wait_for_broker() {
+  local tries="${1:-${KAFKA_READINESS_TRIES:-30}}" i
+  for i in $(seq 1 "$tries"); do
+    if port_open && kafka_responding; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+
+# Watchdog for monitor(): kill the consumer once the broker port has been closed
+# for BROKER_MONITOR_MISSES consecutive probes, or once the KRaft storage has
+# been reclaimed from under a still-listening broker. Either way the consumer is
+# watching nothing, and retrying forever is exactly what produced the
+# 2026-10-12 incident (monitor pid 54370 spammed connection-refused WARNs for
+# days, and its live-but-useless pid then blocked every fresh monitor).
+watch_broker() {
+  local target="$1" misses=0
+  while kill -0 "$target" 2>/dev/null; do
+    sleep "${BROKER_MONITOR_PROBE_S:-5}"
+    if port_open && storage_ok; then
+      misses=0
+      continue
+    fi
+    misses=$((misses + 1))
+    if (( misses >= ${BROKER_MONITOR_MISSES:-3} )); then
+      kill "$target" 2>/dev/null || true
+      return 0
+    fi
+  done
 }
 
 log()  { printf '\033[1;34m[kafka]\033[0m %s\n' "$*"; }
@@ -321,8 +355,11 @@ EOF
 }
 
 monitor() {
-  if ! is_running; then
-    log "kafka not running; skipping monitor"
+  # Nothing is listening: return WITHOUT consuming. The Director reads "no
+  # monitor process" on a later tick and recovers Kafka itself; a consumer
+  # started here would only spin against a dead broker.
+  if ! port_in_use; then
+    log "kafka not running; exiting monitor without consuming"
     return 0
   fi
   # A live broker does NOT mean the broker's monitor is missing. The Director's
@@ -336,11 +373,39 @@ monitor() {
     ok "kafka monitor already running (pids ${existing% }); not starting another"
     return 0
   fi
+  # The broker may still be booting: the Director types this command 1s after
+  # start-or-init, which formats storage and boots a JVM. Consuming first is
+  # what produced the UNKNOWN_TOPIC_OR_PARTITION burst on 2026-10-12.
+  if ! wait_for_broker; then
+    log "kafka broker not answering on ${KAFKA_BOOTSTRAP}; exiting monitor without consuming"
+    return 0
+  fi
+  # A freshly (re)initialized cluster has no topics at all. create_topics is
+  # idempotent, so this costs nothing on an established cluster.
+  create_topics
   log "tailing director-events (Ctrl-C to stop)"
-  exec "$KAFKA_HOME/bin/kafka-console-consumer.sh" \
+  "$KAFKA_HOME/bin/kafka-console-consumer.sh" \
     --topic director-events --from-beginning \
     --bootstrap-server "$KAFKA_BOOTSTRAP" \
-    --property print.key=true --property key.separator=$'\t'
+    --property print.key=true --property key.separator=$'\t' &
+  local consumer=$!
+  # Quit when the broker goes away instead of retrying forever (2026-10-12).
+  watch_broker "$consumer" &
+  local watch=$!
+  wait "$consumer" || true
+  kill "$watch" 2>/dev/null || true
+  # Broker gone, or its KRaft storage reclaimed under it: leave nothing stale.
+  # Stopping the broker is what makes the Director's next probe see Kafka down
+  # and run start-or-init, which reformats the disposable /tmp data dir and
+  # recreates the topics. A monitor that merely exited would leave a live broker
+  # whose wiped storage nothing ever reinitializes (the Director's broker-up path
+  # types ONLY `monitor`).
+  if ! port_open || ! storage_ok; then
+    log "broker is gone (or its KRaft storage was wiped); stopping the stale broker"
+    stop || true
+  else
+    log "monitor stopped"
+  fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
