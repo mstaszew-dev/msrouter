@@ -108,6 +108,12 @@ const schema = z.object({
   // long enough for a slow real answer, short enough to catch a dead one.
   // Note WALK_DEADLINE_MS (300s) is checked BETWEEN attempts, not during one,
   // so a slow-but-alive tail can still use its full budget on the last entry.
+  //
+  // The 15-min default is the floor, not a recommendation for this deployment:
+  // once the undici 300s headersTimeout was fixed (2026-10-12, http-agent.ts)
+  // this number became measurable, and a 230KB payload needed MORE than 900s.
+  // .env raises it to 1200000 (20 min). Budget: 300s walk + this + body must
+  // stay inside the campaign agent's 2400s TIMEOUT_SECONDS.
   FIRST_BYTE_TIMEOUT_MS: z.coerce.number().int().positive().default(900_000),
   // Demote after N consecutive successes (local tail must not monopolize).
   SUCCESS_DEMOTE_LIMIT: z.coerce.number().int().positive().default(5),
