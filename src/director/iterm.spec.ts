@@ -118,6 +118,9 @@ describe('startWorkerInIterm - best-effort start-lock write', () => {
   it('still uses an iTerm2 tab on macOS even when MSROUTER_HEADLESS is set', async () => {
     // Same contract from the spawn side: the env var is inert on darwin, so the
     // worker keeps its visible tab instead of a detached bash nobody watches.
+    // Skipped off darwin, where the variable is honoured by design.
+    if (process.platform !== 'darwin') return;
+
     process.env['MSROUTER_HEADLESS'] = '1';
     const iterm = await import('./iterm.js');
     iterm.startWorkerInIterm({
@@ -251,6 +254,11 @@ describe('iTerm ancestry guard', () => {
     // env var into a way to run the gateway with no visible tabs - supervision
     // depends on those tabs. isHeadlessMode therefore ignores the variable on
     // darwin, and this test is what keeps it that way.
+    //
+    // Skipped off darwin because the contract it pins is darwin's: on Linux the
+    // variable genuinely is honoured, and the sibling test below asserts that.
+    if (process.platform !== 'darwin') return;
+
     process.env['MSROUTER_HEADLESS'] = '1';
     expect(iterm.isHeadlessMode()).toBe(false);
 
