@@ -9,7 +9,9 @@
 #   scripts/kafka.sh topics   # create/verify the director topics
 #   scripts/kafka.sh tail <topic>  # stream a topic to stdout (real-time)
 #   scripts/kafka.sh produce <topic> <key> <value>  # one-shot produce
-#   scripts/kafka.sh monitor  # show the first 5 messages of every topic
+#   scripts/kafka.sh monitor  # tail director-events; exits when the broker goes
+#                             # away (no-op if one is already running)
+#   scripts/kafka.sh monitor-pids  # print this checkout's monitor pids (none = empty)
 #
 set -euo pipefail
 
@@ -29,6 +31,36 @@ mkdir -p .run
 # "20s" wait into minutes and stalling the Director's recovery tab.
 port_open() { (exec 3<>"/dev/tcp/127.0.0.1/${KAFKA_PORT}") 2>/dev/null; }
 
+# True when SOMETHING already holds the broker port, whether or not it is ours.
+# Distinct from port_open (does the socket accept?) and from is_running (does
+# our pidfile hold a live pid?). Two manual starts used to race past the pidfile
+# check and both bind, which is how duplicate broker+monitor tabs appeared.
+port_in_use() {
+  local port="${1:-$KAFKA_PORT}"
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
+    return
+  fi
+  # lsof absent: fall back to the dependency-free /dev/tcp probe so the guard
+  # cannot silently disable itself (exit 127 would read as "port free").
+  (exec 3<>"/dev/tcp/127.0.0.1/${port}") 2>/dev/null
+}
+
+# PID of whatever holds the broker port (empty if unknown). `head -1` adopts a
+# single pid, so if duplicates ever exist, stop() kills only one; the guard in
+# start() is what prevents duplicates in the first place.
+broker_pid() {
+  command -v lsof >/dev/null 2>&1 || return 0
+  lsof -nP -tiTCP:"${1:-$KAFKA_PORT}" -sTCP:LISTEN 2>/dev/null | head -1
+}
+
+# True when a real Kafka broker answers on the bootstrap address. A non-Kafka
+# listener (nc, a stray JVM) holds the port but has no topic API, so "the port
+# is bound" must never be taken as "the broker is up".
+kafka_responding() {
+  "$KAFKA_HOME/bin/kafka-topics.sh" --bootstrap-server "$KAFKA_BOOTSTRAP" --list >/dev/null 2>&1
+}
+
 # Generate the port-overridden broker properties (idempotent).
 generate_props() {
   local props=".run/kafka-server.properties"
@@ -47,16 +79,79 @@ storage_ok() {
   [[ -n "$log_dirs" && -f "$log_dirs/meta.properties" ]]
 }
 
+# Wait for the topic API to answer, gated behind the free port probe so a dead
+# broker does not cost one JVM per attempt (~2s each on this box).
+wait_for_broker() {
+  local tries="${1:-${KAFKA_READINESS_TRIES:-30}}" i
+  for i in $(seq 1 "$tries"); do
+    if port_open && kafka_responding; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+
+# Watchdog for monitor(): kill the consumer once the broker port has been closed
+# for BROKER_MONITOR_MISSES consecutive probes, or once the KRaft storage has
+# been reclaimed from under a still-listening broker. Either way the consumer is
+# watching nothing, and retrying forever is exactly what produced the
+# 2026-10-12 incident (monitor pid 54370 spammed connection-refused WARNs for
+# days, and its live-but-useless pid then blocked every fresh monitor).
+watch_broker() {
+  local target="$1" misses=0
+  while kill -0 "$target" 2>/dev/null; do
+    sleep "${BROKER_MONITOR_PROBE_S:-5}"
+    if port_open && storage_ok; then
+      misses=0
+      continue
+    fi
+    misses=$((misses + 1))
+    if (( misses >= ${BROKER_MONITOR_MISSES:-3} )); then
+      kill "$target" 2>/dev/null || true
+      return 0
+    fi
+  done
+}
+
 log()  { printf '\033[1;34m[kafka]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m[ok]\033[0m  %s\n' "$*"; }
 die()  { printf '\033[1;31m[err]\033[0m %s\n' "$*" >&2; exit 1; }
 
+# NOTE on the pidfile (2026-10-03): it IS reliable. kafka-server-start.sh ends in
+# `exec ... kafka.Kafka`, so the shell is replaced by the JVM and `$!` in start()
+# is the broker's real pid. An older comment here claimed the pidfile was
+# unreliable because of nohup; that was wrong and it made stop() look suspect.
+# The genuine gap was that is_running() was the ONLY check, which is what
+# allowed duplicate brokers; see port_in_use in start().
 is_running() {
   [[ -f "$PIDFILE" ]] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
 }
 
 start() {
   if is_running; then die "Kafka already running (pid $(cat "$PIDFILE"))"; fi
+  # Duplicate-broker guard (2026-10-03): the pidfile alone is not enough. A
+  # broker started from another tab (or one whose pidfile was lost) leaves the
+  # port bound with no pid of ours, so start would race it and both would try to
+  # bind. Refuse when the port is taken; if it is OUR broker responding, treat it
+  # as success rather than an error so idempotent callers do not fail.
+  if port_in_use "$KAFKA_PORT"; then
+    if kafka_responding; then
+      # Adopt the running broker's pid so stop()/monitor/restart keep working.
+      # Without this, returning 0 with no pidfile made `restart` a silent no-op
+      # and left an orphan no command could stop.
+      local adopted
+      adopted="$(broker_pid)"
+      if [[ -n "$adopted" ]]; then
+        printf '%s' "$adopted" > "$PIDFILE"
+        ok "Kafka already running on ${KAFKA_BOOTSTRAP} (adopted pid ${adopted})"
+      else
+        ok "Kafka already running on ${KAFKA_BOOTSTRAP} (pid not recoverable)"
+      fi
+      return 0
+    fi
+    die "port ${KAFKA_PORT} is already in use by another process (not a Kafka broker).
+  Refusing to start a second broker. Free the port, or stop that process first:
+    lsof -nP -iTCP:${KAFKA_PORT} -sTCP:LISTEN"
+  fi
   # Override ports in KRaft config so the broker listens on KAFKA_PORT.
   local props
   props="$(generate_props)"
@@ -74,8 +169,7 @@ start() {
   local sleep_s="${KAFKA_READINESS_SLEEP:-1}"
   local i
   for i in $(seq 1 "$tries"); do
-    if port_open && \
-      "$KAFKA_HOME/bin/kafka-topics.sh" --bootstrap-server "$KAFKA_BOOTSTRAP" --list >/dev/null 2>&1; then
+    if port_open && kafka_responding; then
       ok "broker ready"
       return 0
     fi
@@ -121,6 +215,11 @@ reinit_kraft() {
 
 # Try to start; if broker fails to come up, reinitialize KRaft and retry once.
 start_or_init() {
+  # NOTE: start() calls die() when a foreign process holds the port, and die()
+  # exits the whole script. That is deliberate and must not be "fixed": we must
+  # NOT run reinit_kraft (which can rm -rf the KRaft log dir) just because some
+  # unrelated process owns the port. Free the port, then retry.
+  #
   # Preflight: format the KRaft storage BEFORE starting when metadata is
   # missing/corrupt, so the broker doesn't die instantly on every attempt
   # (and the Director doesn't spawn duplicate recovery tabs).
@@ -136,12 +235,57 @@ start_or_init() {
   start
 }
 
+# PIDs of running monitors for THIS checkout, one pid per line. A monitor
+# `exec`s ConsoleConsumer, so it owns no pidfile: the topic is found with pgrep
+# and then narrowed to processes whose command line carries our $KAFKA_HOME and
+# the consumer class. All three halves matter:
+#   - topic alone would suppress our monitor because another checkout consumes
+#     the same topic;
+#   - $KAFKA_HOME alone would match the broker (same install, no topic in argv);
+#   - topic + $KAFKA_HOME alone would match any bystander process (a `rg` over
+#     the repo, an editor).
+#
+# The consumer-class check is STRICT by default because monitor()'s guard is
+# fail-closed on a false positive: a bystander that matched would silently
+# disable monitoring for as long as it lived. Pass "loose" to drop that check -
+# stop_monitor does, because there a miss leaves an orphan consumer alive (the
+# 2026-10-06 bug) while a hit only ever kills a process that mentions this
+# checkout's install and the topic. The two callers want opposite failure modes.
+monitor_pids() {
+  local topic="${1:-director-events}" mode="${2:-strict}" pid cmd
+  for pid in $(pgrep -f -- "$topic" 2>/dev/null || true); do
+    # Defensive: kafka.sh's own argv never carries the topic today, but a future
+    # subcommand might, and stop_monitor would otherwise kill its own shell.
+    [[ "$pid" == "$$" ]] && continue
+    cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    [[ "$cmd" == *"$KAFKA_HOME"* ]] || continue
+    if [[ "$mode" != "loose" ]]; then
+      [[ "$cmd" == *kafka.tools.ConsoleConsumer* ]] || continue
+    fi
+    printf '%s\n' "$pid"
+  done
+}
+
+# Stop the monitor started by `monitor()`. It `exec`s ConsoleConsumer, so it
+# owns no pidfile and stopping only the broker left it consuming against a dead
+# one (observed 2026-10-06: pid 99503 survived `kafka.sh stop`). Loose match on
+# purpose (see monitor_pids); the $KAFKA_HOME filter is what keeps another
+# checkout's monitor alive here.
+stop_monitor() {
+  local pid stopped=0
+  for pid in $(monitor_pids director-events loose); do
+    kill "$pid" 2>/dev/null && { ok "stopped kafka monitor (pid $pid)"; stopped=$((stopped+1)); }
+  done
+  [[ "$stopped" -gt 0 ]]
+}
+
 stop() {
   if is_running; then
     kill "$(cat "$PIDFILE")" && ok "stopped kafka (pid $(cat "$PIDFILE"))"
   else
     log "kafka not running"
   fi
+  stop_monitor || true
   rm -f "$PIDFILE" .run/kafka-server.properties
 }
 
@@ -211,15 +355,57 @@ EOF
 }
 
 monitor() {
-  if ! is_running; then
-    log "kafka not running; skipping monitor"
+  # Nothing is listening: return WITHOUT consuming. The Director reads "no
+  # monitor process" on a later tick and recovers Kafka itself; a consumer
+  # started here would only spin against a dead broker.
+  if ! port_in_use; then
+    log "kafka not running; exiting monitor without consuming"
     return 0
   fi
+  # A live broker does NOT mean the broker's monitor is missing. The Director's
+  # recovery path types start-or-init and monitor into one new tab on every tick
+  # where its Kafka probe flakes, and start-or-init adopts the running broker -
+  # so without this guard every flake left another consumer on director-events
+  # and another tab on screen (observed 2026-10-08, pid 73082).
+  local existing
+  existing="$(monitor_pids director-events | tr '\n' ' ')" || true
+  if [[ -n "${existing// /}" ]]; then
+    ok "kafka monitor already running (pids ${existing% }); not starting another"
+    return 0
+  fi
+  # The broker may still be booting: the Director types this command 1s after
+  # start-or-init, which formats storage and boots a JVM. Consuming first is
+  # what produced the UNKNOWN_TOPIC_OR_PARTITION burst on 2026-10-12.
+  if ! wait_for_broker; then
+    log "kafka broker not answering on ${KAFKA_BOOTSTRAP}; exiting monitor without consuming"
+    return 0
+  fi
+  # A freshly (re)initialized cluster has no topics at all. create_topics is
+  # idempotent, so this costs nothing on an established cluster.
+  create_topics
   log "tailing director-events (Ctrl-C to stop)"
-  exec "$KAFKA_HOME/bin/kafka-console-consumer.sh" \
+  "$KAFKA_HOME/bin/kafka-console-consumer.sh" \
     --topic director-events --from-beginning \
     --bootstrap-server "$KAFKA_BOOTSTRAP" \
-    --property print.key=true --property key.separator=$'\t'
+    --property print.key=true --property key.separator=$'\t' &
+  local consumer=$!
+  # Quit when the broker goes away instead of retrying forever (2026-10-12).
+  watch_broker "$consumer" &
+  local watch=$!
+  wait "$consumer" || true
+  kill "$watch" 2>/dev/null || true
+  # Broker gone, or its KRaft storage reclaimed under it: leave nothing stale.
+  # Stopping the broker is what makes the Director's next probe see Kafka down
+  # and run start-or-init, which reformats the disposable /tmp data dir and
+  # recreates the topics. A monitor that merely exited would leave a live broker
+  # whose wiped storage nothing ever reinitializes (the Director's broker-up path
+  # types ONLY `monitor`).
+  if ! port_open || ! storage_ok; then
+    log "broker is gone (or its KRaft storage was wiped); stopping the stale broker"
+    stop || true
+  else
+    log "monitor stopped"
+  fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
@@ -234,8 +420,14 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     status)  status ;;
     topics)  create_topics ;;
     monitor) monitor ;;
+    # Print this checkout's monitor pids, one per line, nothing else, so a caller
+    # can ask "is a monitor already up?" without re-deriving the argv matching
+    # monitor() depends on. Empty output means none running; a non-zero exit
+    # means the question could not be answered (callers must not read that as
+    # "none running").
+    monitor-pids) shift; monitor_pids "${1:-director-events}" ;;
     tail)    shift; tail_topic "$@" ;;
     produce) shift; produce_one "$@" ;;
-    *) die "unknown: $1 (use: start | start-or-init | stop | restart | status | topics | monitor | tail <topic> | produce <topic> <key> <value>)" ;;
+    *) die "unknown: $1 (use: start | start-or-init | stop | restart | status | topics | monitor | monitor-pids [topic] | tail <topic> | produce <topic> <key> <value>)" ;;
   esac
 fi
