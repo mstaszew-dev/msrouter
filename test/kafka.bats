@@ -225,16 +225,200 @@ MOCK
 
 @test "monitor returns 0 when Kafka is not running" {
   source scripts/kafka.sh </dev/null 2>/dev/null || true
-  is_running() { return 1; }
+  port_in_use() { return 1; }          # nothing holds the broker port
   run monitor
   [ "$status" -eq 0 ]
 }
 
 @test "monitor prints skip message when Kafka is not running" {
   source scripts/kafka.sh </dev/null 2>/dev/null || true
-  is_running() { return 1; }
+  port_in_use() { return 1; }
   run monitor
   [[ "$output" == *"kafka not running"* ]]
+}
+
+@test "monitor does not consume when nothing holds the broker port" {
+  # Negative control for the wait below: with no listener at all the monitor
+  # must return immediately, not spend its whole readiness window probing a
+  # port nobody owns.
+  cat > "${KAFKA_HOME}/bin/kafka-console-consumer.sh" <<'MOCK'
+#!/bin/bash
+echo "started" >> "${KAFKA_HOME}/.consumer_starts"
+MOCK
+  chmod +x "${KAFKA_HOME}/bin/kafka-console-consumer.sh"
+
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  port_in_use() { return 1; }
+  wait_for_broker() { echo "waited" >> "${KAFKA_HOME}/.waited"; return 0; }
+  run monitor
+
+  [ "$status" -eq 0 ]
+  [ ! -f "${KAFKA_HOME}/.consumer_starts" ]
+  [ ! -f "${KAFKA_HOME}/.waited" ]
+}
+
+@test "monitor exits without consuming when the broker never answers" {
+  # The port is bound (another process, or a broker still booting) but no topic
+  # API answers. Consuming here is what produced the 2026-10-12
+  # connection-refused wall, so the monitor must give up and let the Director
+  # recover Kafka on a later tick.
+  cat > "${KAFKA_HOME}/bin/kafka-console-consumer.sh" <<'MOCK'
+#!/bin/bash
+echo "started" >> "${KAFKA_HOME}/.consumer_starts"
+MOCK
+  chmod +x "${KAFKA_HOME}/bin/kafka-console-consumer.sh"
+
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  port_in_use() { return 0; }
+  wait_for_broker() { return 1; }
+  run monitor
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"not answering"* ]]
+  [ ! -f "${KAFKA_HOME}/.consumer_starts" ]
+}
+
+@test "monitor creates the topics before consuming" {
+  # A freshly reinitialized cluster has no topics at all, and subscribing first
+  # is exactly the UNKNOWN_TOPIC_OR_PARTITION burst seen on 2026-10-12.
+  cat > "${KAFKA_HOME}/bin/kafka-console-consumer.sh" <<'MOCK'
+#!/bin/bash
+echo "consumer" >> "${KAFKA_HOME}/.order"
+exit 0
+MOCK
+  chmod +x "${KAFKA_HOME}/bin/kafka-console-consumer.sh"
+
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  port_in_use() { return 0; }
+  wait_for_broker() { return 0; }
+  create_topics() { echo "topics" >> "${KAFKA_HOME}/.order"; }
+  port_open() { return 0; }
+  storage_ok() { return 0; }
+  stop() { :; }
+  run monitor
+
+  [ "$status" -eq 0 ]
+  [ "$(cat "${KAFKA_HOME}/.order")" = $'topics\nconsumer' ]
+}
+
+@test "watch_broker kills the consumer once the broker port stays closed" {
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  port_open() { return 1; }
+  storage_ok() { return 0; }
+  export BROKER_MONITOR_PROBE_S=0.2
+  export BROKER_MONITOR_MISSES=2
+  ( sleep 30 ) &
+  local target=$!
+  watch_broker "$target"
+  local alive=0
+  kill -0 "$target" 2>/dev/null && alive=1
+  kill "$target" 2>/dev/null || true
+
+  [ "$alive" -eq 0 ]
+}
+
+@test "watch_broker leaves a healthy consumer alone" {
+  # The other half: a single slow probe must never tear a working monitor down.
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  port_open() { return 0; }
+  storage_ok() { return 0; }
+  export BROKER_MONITOR_PROBE_S=0.2
+  sleep 30 & local target=$!
+  watch_broker "$target" & local watch=$!
+  sleep 1
+  local alive=0
+  kill -0 "$target" 2>/dev/null && alive=1
+  kill "$watch" "$target" 2>/dev/null || true
+
+  [ "$alive" -eq 1 ]
+}
+
+@test "watch_broker kills the consumer when KRaft storage is wiped under a live broker" {
+  # The residual case: macOS reclaims /tmp, so meta.properties vanishes while
+  # the broker keeps answering on the open socket. Its storage is gone, so the
+  # monitor is watching a cluster that no longer exists.
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  port_open() { return 0; }
+  storage_ok() { return 1; }
+  export BROKER_MONITOR_PROBE_S=0.2
+  export BROKER_MONITOR_MISSES=2
+  sleep 30 & local target=$!
+  watch_broker "$target"
+  local alive=0
+  kill -0 "$target" 2>/dev/null && alive=1
+  kill "$target" 2>/dev/null || true
+
+  [ "$alive" -eq 0 ]
+}
+
+@test "monitor stops the broker when the broker goes away" {
+  # The Director's broker-UP path types ONLY `monitor`, so a monitor that merely
+  # exited would leave a live broker whose wiped KRaft storage nothing ever
+  # reinitializes. Quitting must also drop the broker, so the next probe sees
+  # Kafka down and runs start-or-init (reformat + topics).
+  cat > "${KAFKA_HOME}/bin/kafka-console-consumer.sh" <<'MOCK'
+#!/bin/bash
+exec sleep 30
+MOCK
+  chmod +x "${KAFKA_HOME}/bin/kafka-console-consumer.sh"
+
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  port_in_use() { return 0; }
+  wait_for_broker() { return 0; }
+  create_topics() { :; }
+  watch_broker() { kill "$1" 2>/dev/null || true; }
+  port_open() { return 1; }            # broker vanished
+  storage_ok() { return 0; }
+  stop() { echo "stop" >> "${KAFKA_HOME}/.stop_called"; }
+  run monitor
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"stopping the stale broker"* ]]
+  [ -f "${KAFKA_HOME}/.stop_called" ]
+}
+
+@test "monitor stops the broker when its KRaft storage was wiped under it" {
+  cat > "${KAFKA_HOME}/bin/kafka-console-consumer.sh" <<'MOCK'
+#!/bin/bash
+exec sleep 30
+MOCK
+  chmod +x "${KAFKA_HOME}/bin/kafka-console-consumer.sh"
+
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  port_in_use() { return 0; }
+  wait_for_broker() { return 0; }
+  create_topics() { :; }
+  watch_broker() { kill "$1" 2>/dev/null || true; }
+  port_open() { return 0; }            # still listening
+  storage_ok() { return 1; }           # but meta.properties is gone
+  stop() { echo "stop" >> "${KAFKA_HOME}/.stop_called"; }
+  run monitor
+
+  [ "$status" -eq 0 ]
+  [ -f "${KAFKA_HOME}/.stop_called" ]
+}
+
+@test "monitor does not stop a healthy broker when it exits" {
+  # Ctrl-C (and any other benign exit) must NOT take the broker down with it.
+  cat > "${KAFKA_HOME}/bin/kafka-console-consumer.sh" <<'MOCK'
+#!/bin/bash
+exit 0
+MOCK
+  chmod +x "${KAFKA_HOME}/bin/kafka-console-consumer.sh"
+
+  source scripts/kafka.sh </dev/null 2>/dev/null || true
+  port_in_use() { return 0; }
+  wait_for_broker() { return 0; }
+  create_topics() { :; }
+  watch_broker() { :; }
+  port_open() { return 0; }
+  storage_ok() { return 0; }
+  stop() { echo "stop" >> "${KAFKA_HOME}/.stop_called"; }
+  run monitor
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"monitor stopped"* ]]
+  [ ! -f "${KAFKA_HOME}/.stop_called" ]
 }
 
 @test "monitor tails director-events (not a one-shot)" {
@@ -265,7 +449,12 @@ MOCK
   chmod +x "${KAFKA_HOME}/bin/kafka-console-consumer.sh"
 
   source scripts/kafka.sh </dev/null 2>/dev/null || true
-  is_running() { return 0; }   # broker up, and no monitor running
+  port_in_use() { return 0; }          # something holds the port
+  wait_for_broker() { return 0; }      # and it answers the topic API
+  create_topics() { :; }
+  port_open() { return 0; }
+  storage_ok() { return 0; }
+  stop() { :; }
   run monitor
 
   [ "$status" -eq 0 ]
@@ -287,7 +476,7 @@ MOCK
 
   spawn_monitor_standin
   source scripts/kafka.sh </dev/null 2>/dev/null || true
-  is_running() { return 0; }   # broker up: the pidfile check is not the guard
+  port_in_use() { return 0; }          # broker up: the port check is not the guard
   run monitor
   stop_monitor_standin
 
