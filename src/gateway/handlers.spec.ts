@@ -241,6 +241,58 @@ describe('model-list - CSV extra models', () => {
   });
 });
 
+describe('model-list - secondary single-key models', () => {
+  it('advertises OPENCODEGO_MODEL_2 (owned_by opencodego) and resolves it verbatim', () => {
+    loadEnv({
+      OPENCODEGO_API_KEY: 'sk-test',
+      OPENCODEGO_MODEL: 'beam-free',
+      OPENCODEGO_MODEL_2: 'longcat-2.5-preview-free',
+    });
+    expect(buildModelList()).toContainEqual({
+      id: 'longcat-2.5-preview-free',
+      object: 'model',
+      owned_by: 'opencodego',
+    });
+    expect(resolveModel('longcat-2.5-preview-free')).toBe('longcat-2.5-preview-free');
+  });
+
+  it('omits the opencodego secondary when OPENCODEGO_MODEL_2 is empty (retire convention)', () => {
+    loadEnv({
+      OPENCODEGO_API_KEY: 'sk-test',
+      OPENCODEGO_MODEL: 'beam-free',
+      OPENCODEGO_MODEL_2: '',
+    });
+    const ids = buildModelList().map((m) => m.id);
+    expect(ids).not.toContain('longcat-2.5-preview-free');
+  });
+
+  it('never advertises a secondary without its key (key-gated like the primary)', () => {
+    loadEnv({ OPENCODEGO_MODEL_2: 'longcat-2.5-preview-free' });
+    const ids = buildModelList().map((m) => m.id);
+    expect(ids).not.toContain('longcat-2.5-preview-free');
+    loadEnv({ ZAI_MODEL_2: 'glm-4.7-flash' });
+    expect(buildModelList().map((m) => m.id)).not.toContain('glm-4.7-flash');
+  });
+
+  it('omits the zai secondary when ZAI_MODEL_2 is empty (retire convention)', () => {
+    loadEnv({ ZAI_API_KEY: 'sk-test', ZAI_MODEL: 'glm-5.3-flash', ZAI_MODEL_2: '' });
+    const ids = buildModelList().map((m) => m.id);
+    expect(ids).not.toContain('glm-4.7-flash');
+  });
+
+  it('advertises ZAI_MODEL_2 (owned_by zai) and resolves it verbatim', () => {
+    // Symmetry fix: ZAI_MODEL_2 has been routable since a71e979 but was never
+    // advertised on /v1/models nor accepted on the explicit-model path.
+    loadEnv({ ZAI_API_KEY: 'sk-test', ZAI_MODEL: 'glm-5.3-flash', ZAI_MODEL_2: 'glm-4.7-flash' });
+    expect(buildModelList()).toContainEqual({
+      id: 'glm-4.7-flash',
+      object: 'model',
+      owned_by: 'zai',
+    });
+    expect(resolveModel('glm-4.7-flash')).toBe('glm-4.7-flash');
+  });
+});
+
 // 2026-10-03: parseUpstreamJson used to scrub the raw echo before returning it.
 // Scrubbing was removed (it rewrote real client data); this drives the real
 // POST /v1/chat/completions route and pins that a non-JSON upstream body reaches

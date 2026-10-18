@@ -45,6 +45,9 @@ export const singleKeyEnvFields = {
   OPENCODEGO_API_KEY: z.string().optional(),
   OPENCODEGO_BASE_URL: z.string().url().default('https://opencode.ai/zen/go/v1'),
   OPENCODEGO_MODEL: z.string().default('glm-5.3-flash'),
+  // Secondary go-endpoint model used when the walk falls through the primary;
+  // set OPENCODEGO_MODEL_2 in the environment to enable (mirrors ZAI_MODEL_2).
+  OPENCODEGO_MODEL_2: z.string().default(''),
   OPENCODEGO_SESSION_ID: z.string().optional(),
   // OpenCode Zen (/zen/v1). Re-admitted 2026-10-06 for space-bunny-free ONLY:
   // the other 10 `-free` models still answer FreeTierError for non-OpenCode

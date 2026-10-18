@@ -214,3 +214,53 @@ describe('ProviderChain - secondary ZAI model', () => {
     expect(zaiEntries.map((e) => e.model)).toEqual(['glm-5.3-flash']);
   });
 });
+
+/**
+ * Providers stub with only opencodego available, so the walk contains exactly
+ * the opencodego entries under test (same shape as zaiOnlyProviders).
+ */
+function opencodegoOnlyProviders(): Providers {
+  const stub = (id: string, available: boolean) => ({ id, available });
+  return {
+    openrouter: stub('openrouter', false),
+    openai: stub('openai', false),
+    zai: stub('zai', false),
+    tokenrouter: stub('tokenrouter', false),
+    opencodego: stub('opencodego', true),
+    opencode: stub('opencode', false),
+    extras: {},
+    local: stub('local', false),
+    lmstudio: stub('lmstudio', false),
+    laptop: stub('laptop', false),
+  } as unknown as Providers;
+}
+
+describe('ProviderChain - secondary OpenCode Go model', () => {
+  it('builds two opencodego entries when OPENCODEGO_MODEL_2 is set (beam-free then longcat)', () => {
+    // 2026-10-18: glm-5.3-flash hit GoUsageLimitError, so beam-free becomes
+    // the primary and the verified longcat free preview takes the second
+    // slot (attemptIndex 0 then 1), mirroring ZAI_MODEL_2.
+    loadEnv({
+      OPENCODEGO_API_KEY: 'sk-test',
+      OPENCODEGO_MODEL: 'beam-free',
+      OPENCODEGO_MODEL_2: 'longcat-2.5-preview-free',
+    });
+    const goEntries = buildRoutingEntries(opencodegoOnlyProviders()).filter(
+      (e) => e.provider === 'opencodego',
+    );
+    expect(goEntries.map((e) => e.model)).toEqual(['beam-free', 'longcat-2.5-preview-free']);
+    expect(goEntries.map((e) => e.attemptIndex)).toEqual([0, 1]);
+  });
+
+  it('builds only the primary entry when OPENCODEGO_MODEL_2 is empty (retire convention)', () => {
+    loadEnv({
+      OPENCODEGO_API_KEY: 'sk-test',
+      OPENCODEGO_MODEL: 'beam-free',
+      OPENCODEGO_MODEL_2: '',
+    });
+    const goEntries = buildRoutingEntries(opencodegoOnlyProviders()).filter(
+      (e) => e.provider === 'opencodego',
+    );
+    expect(goEntries.map((e) => e.model)).toEqual(['beam-free']);
+  });
+});

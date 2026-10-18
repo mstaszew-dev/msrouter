@@ -151,6 +151,14 @@ export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
       model: e.OPENCODEGO_MODEL,
       attemptIndex: 0,
     });
+    if (e.OPENCODEGO_MODEL_2) {
+      list.push({
+        provider: 'opencodego',
+        label: 'opencodego',
+        model: e.OPENCODEGO_MODEL_2,
+        attemptIndex: 1,
+      });
+    }
   }
   // OpenCode Zen (/zen/v1): single key, one model (space-bunny-free). Separate
   // from opencodego's /zen/go/v1 pool. Only this one model answers an external
@@ -200,6 +208,10 @@ export function isProviderDefaultModel(model: string): boolean {
   return (
     model === e.OPENAI_MODEL ||
     model === e.ZAI_MODEL ||
+    // Secondary single-key slots. Guarded on non-empty so a retired (emptied)
+    // slot never exempts the empty id.
+    (!!e.ZAI_MODEL_2 && model === e.ZAI_MODEL_2) ||
+    (!!e.OPENCODEGO_MODEL_2 && model === e.OPENCODEGO_MODEL_2) ||
     model === e.TOKENROUTER_MODEL ||
     model === e.OPENCODEGO_MODEL ||
     // OpenCode Zen. Guarded on non-empty so a retired (emptied) slot never
