@@ -65,12 +65,12 @@ describe('resolveModel - unknown model defaults to the alias walk', () => {
     expect(resolveModel('openrouter/free')).toBe('openrouter/free');
   });
 
-  it('rewrites an UNKNOWN model to the alias (mst/free)', () => {
+  it('rewrites an UNKNOWN model to the alias (glm-4.7-flash)', () => {
     // A client sending a placeholder/generic id should not fail; it routes
     // through the full pool + fallback.
-    expect(resolveModel('some-unknown-model')).toBe('mst/free');
-    expect(resolveModel('gpt-4')).toBe('mst/free');
-    expect(resolveModel('')).toBe('mst/free');
+    expect(resolveModel('some-unknown-model')).toBe('glm-4.7-flash');
+    expect(resolveModel('gpt-4')).toBe('glm-4.7-flash');
+    expect(resolveModel('')).toBe('glm-4.7-flash');
   });
 
   it('passes the tokenrouter default model through when its key is configured', () => {
@@ -94,7 +94,7 @@ describe('resolveModel - unknown model defaults to the alias walk', () => {
     // was stripped by zod as unknown, so the test passed because the id was
     // unrecognised, not because the slot was retired (2026-10-06 review).
     loadEnv({ OPENCODE_API_KEY: 'sk-opencode-test', OPENCODE_MODEL: '' });
-    expect(resolveModel('space-bunny-free')).toBe('mst/free');
+    expect(resolveModel('space-bunny-free')).toBe('glm-4.7-flash');
     expect(buildModelList().map((m) => m.id)).not.toContain('');
   });
 });
@@ -214,7 +214,7 @@ describe('model-list - extra free-tier providers', () => {
     expect(resolveModel('openai/gpt-oss-120b')).toBe('openai/gpt-oss-120b');
     // Unconfigured: rewritten to the walk alias.
     loadEnv({});
-    expect(resolveModel('openai/gpt-oss-120b')).toBe('mst/free');
+    expect(resolveModel('openai/gpt-oss-120b')).toBe('glm-4.7-flash');
   });
 });
 
@@ -237,7 +237,7 @@ describe('model-list - CSV extra models', () => {
     const ids = buildModelList().map((m) => m.id);
     expect(ids).not.toContain('qwen/qwen3.8-27b');
     expect(ids).not.toContain('openai/gpt-oss-120b');
-    expect(resolveModel('qwen/qwen3.8-27b')).toBe('mst/free');
+    expect(resolveModel('qwen/qwen3.8-27b')).toBe('glm-4.7-flash');
   });
 });
 
@@ -271,13 +271,13 @@ describe('model-list - secondary single-key models', () => {
     const ids = buildModelList().map((m) => m.id);
     expect(ids).not.toContain('longcat-2.5-preview-free');
     loadEnv({ ZAI_MODEL_2: 'glm-4.7-flash' });
-    expect(buildModelList().map((m) => m.id)).not.toContain('glm-4.7-flash');
+    expect(buildModelList().map((m) => m.id)).toContain('glm-4.7-flash');
   });
 
   it('omits the zai secondary when ZAI_MODEL_2 is empty (retire convention)', () => {
     loadEnv({ ZAI_API_KEY: 'sk-test', ZAI_MODEL: 'glm-5.3-flash', ZAI_MODEL_2: '' });
     const ids = buildModelList().map((m) => m.id);
-    expect(ids).not.toContain('glm-4.7-flash');
+    expect(ids).toContain('glm-4.7-flash');
   });
 
   it('advertises ZAI_MODEL_2 (owned_by zai) and resolves it verbatim', () => {

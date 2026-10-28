@@ -157,12 +157,12 @@ describe('ProviderChain - routing-entry queue construction', () => {
     const labels = chain.queueSnapshot().map((c) => c.label);
     // With OPENROUTER_MODELS=['vendor/extra'], we get 2 models × 2 keys = 4 OpenRouter entries
     expect(labels).toEqual([
+      'zai',
       'openrouter[key1/openrouter/free]',
       'openrouter[key2/openrouter/free]',
       'openrouter[key1/vendor/extra:free]',
       'openrouter[key2/vendor/extra:free]',
       'openai',
-      'zai',
       'tokenrouter',
     ]);
   });
@@ -187,10 +187,10 @@ describe('ProviderChain - stealth/ models in OPENROUTER_MODELS (natively free)',
     const p = makeProviders({ openrouterKeys: 1 });
     const labels = new ProviderChain(p, silentLogger).queueSnapshot().map((c) => c.label);
     expect(labels).toEqual([
+      'zai',
       'openrouter[key1/openrouter/free]',
       'openrouter[key1/stealth/union-alpha]',
       'openai',
-      'zai',
       'tokenrouter',
     ]);
   });
@@ -204,10 +204,10 @@ describe('ProviderChain - default (no additional models)', () => {
     });
     const labels = new ProviderChain(p, silentLogger).queueSnapshot().map((c) => c.label);
     expect(labels).toEqual([
+      'zai',
       'openrouter[key1/openrouter/free]',
       'openrouter[key2/openrouter/free]',
       'openai',
-      'zai',
       'tokenrouter',
     ]);
     // restore the multi-model fixture for later tests
@@ -619,7 +619,7 @@ describe('ProviderChain - adaptive demotion', () => {
     });
     const chain = new ProviderChain(p, silentLogger);
     const before = chain.queueSnapshot().map((c) => c.label);
-    expect(before[0]).toBe('openrouter[key1/openrouter/free]');
+    expect(before[0]).toBe('zai');
 
     const res = await chain.handle(
       { ...baseBody, model: 'mst/free' },
@@ -638,12 +638,16 @@ describe('ProviderChain - adaptive demotion', () => {
     const p = makeProviders({
       openrouterKeys: 1,
       openrouterResults: [{ kind: 'OK', response: okResponse() }],
+      // ZAI fails first (429) and is demoted to back; OpenRouter then succeeds.
+      // Queue order changes: ZAI moves to the back after its failure.
     });
     const chain = new ProviderChain(p, silentLogger);
     const before = chain.queueSnapshot().map((c) => c.label);
     await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
     const after = chain.queueSnapshot().map((c) => c.label);
-    expect(after).toEqual(before);
+    // ZAI (front) fails and is demoted to back; OpenRouter then serves.
+    expect(after[0]).toBe('openrouter[key1/openrouter/free]');
+    expect(after[after.length - 1]).toBe('zai');
   });
 
   it('repeated all-fail calls leave the queue order stable (idempotent demote)', async () => {
@@ -943,6 +947,7 @@ describe('ProviderChain - tryEntry demoteOnKeyFailure=false path', () => {
     ).rejects.toBeInstanceOf(NoProviderAvailableError);
     // The entry should NOT be demoted (demoteOnKeyFailure=false in runSingle)
     const labels = chain.queueSnapshot().map((c) => c.label);
+    // ZAI is disabled in this test, so it's not in the queue; OpenRouter is first.
     expect(labels[0]).toBe('openrouter[key1/openrouter/free]');
   });
 });
@@ -970,13 +975,13 @@ describe('ProviderChain - demoteEntry white-box', () => {
     const p = makeProviders({ openrouterKeys: 1 });
     const chain = new ProviderChain(p, silentLogger);
     const entry = chain.queueSnapshot()[0]!;
-    expect(entry.label).toBe('openrouter[key1/openrouter/free]');
+    expect(entry.label).toBe('zai');
     const before = chain.queueSnapshot().map((c) => c.label);
-    expect(before[0]).toBe('openrouter[key1/openrouter/free]');
+    expect(before[0]).toBe('zai');
     chain.demoteEntry(entry);
     const after = chain.queueSnapshot().map((c) => c.label);
-    expect(after[after.length - 1]).toBe('openrouter[key1/openrouter/free]');
-    expect(after[0]).not.toBe('openrouter[key1/openrouter/free]');
+    expect(after[after.length - 1]).toBe('zai');
+    expect(after[0]).not.toBe('zai');
   });
 });
 
@@ -1163,9 +1168,9 @@ describe('ProviderChain - opencodego routing', () => {
     const chain = new ProviderChain(p, silentLogger);
     const labels = chain.queueSnapshot().map((e) => e.label);
     expect(labels).toEqual([
+      'zai',
       'openrouter[key1/openrouter/free]',
       'openai',
-      'zai',
       'tokenrouter',
       'opencodego',
     ]);

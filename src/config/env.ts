@@ -75,7 +75,6 @@ const schema = z.object({
   SLACK_BOT_TOKEN: z.string().optional(),
   SLACK_CHANNEL: z.string().optional(),
   SLACK_WEBHOOK: z.string().optional(),
-
   // OpenRouter default model when the client sends an alias (e.g. mst/free).
   // `openrouter/free` is OpenRouter's auto-router over free models.
   OPENROUTER_MODEL: z.string().default('openrouter/free'),
@@ -85,7 +84,9 @@ const schema = z.object({
   OPENROUTER_MODELS: csv.default(''),
   // The alias(es) that mean "walk every provider with its own default model".
   // Comma-separated; canonical ones are "mst/free" and "free".
-  WALK_ALIAS: csv.default('mst/free,free'),
+  // glm-4.7-flash is first so ZAI glm-4.7-flash is preferred on walks; if ZAI
+  // rate-limits (429 parked), the walk falls through to OpenRouter and the rest.
+  WALK_ALIAS: csv.default('glm-4.7-flash,mst/free,free'),
   FORCE_FREE: flag('true'),
   UPSTREAM_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
   MAX_TRANSIENT_RETRIES: z.coerce.number().int().min(0).default(2),
