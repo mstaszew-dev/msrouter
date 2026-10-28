@@ -642,7 +642,6 @@ describe('ProviderChain - adaptive demotion', () => {
       // Queue order changes: ZAI moves to the back after its failure.
     });
     const chain = new ProviderChain(p, silentLogger);
-    const before = chain.queueSnapshot().map((c) => c.label);
     await chain.handle({ ...baseBody, model: 'mst/free' }, new AbortController().signal);
     const after = chain.queueSnapshot().map((c) => c.label);
     // ZAI (front) fails and is demoted to back; OpenRouter then serves.
