@@ -109,6 +109,13 @@ export function providerFor(providers: Providers, id: ChainProvider): Provider {
 export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
   const e = env();
   const list: RoutingEntry[] = [];
+  // Prioritize ZAI (glm-4.7-flash) first to avoid getting stuck on OpenRouter
+  if (providers.zai.available) {
+    list.push({ provider: 'zai', label: 'zai', model: e.ZAI_MODEL, attemptIndex: 0 });
+    if (e.ZAI_MODEL_2) {
+      list.push({ provider: 'zai', label: 'zai', model: e.ZAI_MODEL_2, attemptIndex: 1 });
+    }
+  }
   const or = providers.openrouter;
   if (or.available) {
     // Build list of all OpenRouter models: primary + additional
@@ -127,12 +134,6 @@ export function buildRoutingEntries(providers: Providers): RoutingEntry[] {
   }
   if (providers.openai.available) {
     list.push({ provider: 'openai', label: 'openai', model: e.OPENAI_MODEL, attemptIndex: 0 });
-  }
-  if (providers.zai.available) {
-    list.push({ provider: 'zai', label: 'zai', model: e.ZAI_MODEL, attemptIndex: 0 });
-    if (e.ZAI_MODEL_2) {
-      list.push({ provider: 'zai', label: 'zai', model: e.ZAI_MODEL_2, attemptIndex: 1 });
-    }
   }
   if (providers.tokenrouter.available) {
     list.push({
