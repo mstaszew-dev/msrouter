@@ -85,7 +85,7 @@ const schema = z.object({
   OPENROUTER_MODELS: csv.default(''),
   // The alias(es) that mean "walk every provider with its own default model".
   // Comma-separated; canonical ones are "mst/free" and "free".
-  WALK_ALIAS: csv.default('glm-4.7-flash,openrouter/free,free'),
+  WALK_ALIAS: csv.default('mst/free,free'),
   FORCE_FREE: flag('true'),
   UPSTREAM_TIMEOUT_MS: z.coerce.number().int().positive().default(60_000),
   MAX_TRANSIENT_RETRIES: z.coerce.number().int().min(0).default(2),
